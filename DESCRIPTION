@@ -1,0 +1,18 @@
+Package: SpaceMosaic
+Type: Package
+Title: Stratified differential expression analysis on spatial data
+Version: 0.99.0
+Authors@R: c(person("Patrick", "Danaher", role=c("aut", "cre"),
+                    email="patrick.danaher@nanostring.com"),
+             person("Matteo", "Calgaro", role=c("ctb")),
+             person("Robert", "Castelo", role=c("ctb")),
+             person("Pere", "Moles", role=c("ctb")))
+Description: Performs a differential expression analysis on spatial transcriptomics data
+    stratified on patches defined according to a model of interest.
+License: Artistic-2.0
+Encoding: UTF-8
+Depends: R (>= 4.5)
+Imports: cli, SpatialExperiment, Matrix, spatstat.geom, spdep, stats
+Suggests: knitr, MerfishData
+VignetteBuilder: knitr
+RoxygenNote: 7.3.3
