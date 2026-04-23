@@ -1,0 +1,11 @@
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+.Renviron
+.Rproj.user
+src/*.o
+src/*.so
+*~
+*.swp
+*.swo

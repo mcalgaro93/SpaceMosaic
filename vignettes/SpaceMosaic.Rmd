@@ -1,0 +1,93 @@
+---
+title: "Space Mosaic"
+author:
+- name: Patrick Danaher
+  affiliation: Bruker Spatial Biology, Seattle
+  email: patrick.danaher@bruker.com
+- name: Matteo Calgaro
+  affiliation: Università degli Studi di Padova
+  email: matteo.calgaro@unipd.it
+- name: Robert Castelo
+  affiliation:
+    - &idupf Universitat Pompeu Fabra, Barcelona
+  email: robert.castelo@upf.edu
+- name: Pere Moles
+  affiliation: *idupf
+  email: pere.moles@upf.edu
+date: "`r BiocStyle::doc_date()`"
+package: "`r pkg_ver('SpaceMosaic')`"
+vignette: >
+  %\VignetteIndexEntry{Space Mosaic}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteKeywords{GeneExpression, Spatial, Transcriptomics}
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    fig_captions: yes
+---
+
+**License**: `r packageDescription("SpaceMosaic")[["License"]]`
+
+```{r setup, include=FALSE}
+options(width=80)
+knitr::opts_chunk$set(collapse=TRUE,
+                      message=FALSE,
+                      warning=FALSE,
+                      comment="",
+                      fig.align="center",
+                      fig.wide=TRUE)
+```
+
+# Introduction
+
+Here we illustrate how to use the SpaceMosaic package, using the Cadinu et al.
+(2024) MERFIS spatial transcriptomics data available from the Bioconductor
+package `r Biocpkg("MerfishData")`.
+
+```{r load-data, message=FALSE}
+library(SpatialExperiment)
+library(MerfishData)
+
+spe <- MouseColonIbdCadinu2024()
+spe
+```
+Subset the data to sample 1 slice 1.
+
+```{r}
+spe <- spe[, spe$sample_id == "1" & spe$slice_id == "1"]
+dim(spe)
+```
+Calculate patches that split the data into contiguous regions to maximize the
+statistical power of detection.
+
+```{r get-patches, message=FALSE}
+library(SpaceMosaic)
+
+spe <- getPatches(spe, cell_type_column="tier1",
+                  response_cell_type="Epithelial",
+                  explanatory_cell_type="Immune",
+                  mmxpixel=0.000109,
+                  npatches=40, n_iters=25)
+spe
+```
+The patches are stored in a reduced dimension slot, named with the convention
+`patches_<response_cell_type>_<explanatory_cell_type>`.
+
+```{r}
+reducedDimNames(spe)
+cellpatches_epi_imm <- reducedDim(spe, "patches_Epithelial_Immune")
+cellpatches_epi_imm
+```
+The metadata of the previous object contains patch-level information.
+
+```{r}
+metadata(cellpatches_epi_imm)
+```
+Visualize the patches.
+
+```{r plot-patches, fig.width=5, fig.height=7, out.width="600px", fig.cap="Patches for Epithelial cells with respect to Immune cells."}
+plotPatches(spe, "patches_Epithelial_Immune")
+```

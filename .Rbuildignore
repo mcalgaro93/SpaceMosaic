@@ -1,0 +1,6 @@
+^\.github$
+^.*\.Rproj$
+^\.Rproj\.user$
+^docs$
+^\.covrignore
+^\.codecov.yml
