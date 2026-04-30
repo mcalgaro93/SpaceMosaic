@@ -118,10 +118,12 @@ patchDE <- function(spe, patchesID) {
   }
    
   patch_df <- reducedDim(spe, patchesID)
-  use <- which(patch_df$response == TRUE & !is.na(patch_df$X) & !is.na(patch_df$patch))
+  use <- which(as.vector(patch_df$response) == TRUE &
+               !is.na(patch_df$X) &
+               !is.na(as.vector(patch_df$patch)))
   y <- t(assay(spe, "logcounts")[, use, drop = FALSE])
   df <- patch_df[use,"X",drop=FALSE]
-  patches <- patch_df[use,"patch"]
+  patches <- as.vector(patch_df[use,"patch"])
 
   # get DE results per patch:
   results <- list()
