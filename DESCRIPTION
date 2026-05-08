@@ -1,13 +1,25 @@
 Package: SpaceMosaic
 Title: Spatially-Resolved Differential Expression via Elliptical Patch Partitions
 Version: 0.1.0
-Authors@R: person("Patrick", "Danaher", role = c("aut", "cre"),
-                  email = "patrick.danaher@bruker.com")
-Description: Partitions spatial transcriptomics tissue into elliptical patches
-    that maximize within-patch design variable variance, then performs
-    per-patch differential expression with Bayesian meta-analysis and
-    spatial subgroup detection.
-License: GPL-3
+Type: Package
+Title: Stratified differential expression analysis on spatial data
+Version: 0.99.0
+Authors@R: c(person("Patrick", "Danaher", role=c("aut", "cre"),
+                    comment=c(ORCID="0000-0002-2844-5883"),
+                    email="patrick.danaher@bruker.com"),
+             person("Matteo", "Calgaro", role=c("ctb"),
+                    comment=c(ORCID="0000-0002-3056-518X"),
+                    email="matteo.calgaro@unipd.it"),
+             person("Robert", "Castelo", role=c("ctb"),
+                    comment=c(ORCID="0000-0003-2229-4508"),
+                    email="robert.castelo@upf.edu"),
+             person("Pere", "Moles", role=c("ctb"),
+                    comment=c(ORCID="0009-0009-4408-1897"),
+                    email="pere.moles@upf.edu"))
+Description: Performs a differential expression analysis on spatial
+    transcriptomics data stratified on patches defined according to a model
+    of interest.
+License: Artistic-2.0
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
