@@ -1,6 +1,4 @@
 Package: SpaceMosaic
-Title: Spatially-Resolved Differential Expression via Elliptical Patch Partitions
-Version: 0.1.0
 Type: Package
 Title: Stratified differential expression analysis on spatial data
 Version: 0.99.0
