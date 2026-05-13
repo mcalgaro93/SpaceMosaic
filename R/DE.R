@@ -79,10 +79,16 @@ patchDE <- function(y, df, patch) {
   out <- list()
   for (varname in variables) {
     out[[varname]] <- list()
-    out[[varname]]$pvals <- sapply(results, function(tmp){tmp$p})
-    out[[varname]]$ests <- sapply(results, function(tmp){tmp$effect})
-    out[[varname]]$ses <- sapply(results, function(tmp){tmp$se})
-    rownames(out[[varname]]$pvals) <- rownames(out[[varname]]$ests) <- rownames(out[[varname]]$ses) <- rownames(results[[1]][[1]])
+    out[[varname]]$pvals <- sapply(results, function(tmp) {
+      tmp$p[, varname]
+    })
+    out[[varname]]$ests <- sapply(results, function(tmp) {
+      tmp$effect[, varname]
+    })
+    out[[varname]]$ses <- sapply(results, function(tmp) {
+      tmp$se[, varname]
+    })
+   rownames(out[[varname]]$pvals) <- rownames(out[[varname]]$ests) <- rownames(out[[varname]]$ses) <- rownames(results[[1]][[1]])
   }
   return(out)
 }
