@@ -25,4 +25,4 @@ Imports: stats, graphics, grDevices, utils, cli, Matrix, spatstat.geom, spdep,
          SingleCellExperiment, SpatialExperiment
 Suggests: knitr, BiocStyle, HDF5Array, MerfishData, ggplot2, cowplot
 VignetteBuilder: knitr
-RoxygenNote: 7.3.3
+Config/roxygen2/version: 8.0.0
