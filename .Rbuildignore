@@ -5,3 +5,5 @@
 ^\.covrignore
 ^\.codecov.yml
 ^dev$
+^\.positai$
+^\.claude$

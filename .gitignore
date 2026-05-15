@@ -12,3 +12,4 @@ src/*.so
 *.swo
 vignettes/*.html
 dev/runs/moran_toy_example.pdf
+.positai
