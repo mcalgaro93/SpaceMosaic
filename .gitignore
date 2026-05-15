@@ -9,3 +9,7 @@ src/*.so
 *~
 *.swp
 *.swo
+.positai
+
+# DS_Store
+.DS_Store
