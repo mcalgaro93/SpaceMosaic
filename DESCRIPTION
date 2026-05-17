@@ -22,7 +22,7 @@ Encoding: UTF-8
 Depends: R (>= 4.5)
 Imports: stats, graphics, grDevices, utils, cli, Matrix, spatstat.geom, spdep,
          FNN, RColorBrewer, BiocGenerics, S4Vectors, SummarizedExperiment,
-         SingleCellExperiment, SpatialExperiment
+         SingleCellExperiment, SpatialExperiment, limma
 Suggests: knitr, BiocStyle, HDF5Array, MerfishData, ggplot2, cowplot
 VignetteBuilder: knitr
 Config/roxygen2/version: 8.0.0
