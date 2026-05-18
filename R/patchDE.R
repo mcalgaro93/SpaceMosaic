@@ -139,9 +139,9 @@ patchDE <- function(spe, patchesID, method = "hasty", verbose = FALSE) {
   for (patchid in patch_names) {
     # Print some patch-level statistics for debugging
     if(verbose) {
-      cat("Processing patch:", patchid, "\n")
-      cat("Number of cells in patch:", sum(patches == patchid, na.rm = TRUE), "\n")
-      cat("Number of predictors in df:", ncol(df), "\n")
+      cli::cli_inform("Processing patch: {patchid}")
+      cli::cli_inform("Number of cells in patch: {sum(patches == patchid, na.rm = TRUE)}")
+      cli::cli_inform("Number of predictors in df: {ncol(df)}")
     }
     patchinds <- which(patches == patchid & !is.na(patches))
     switch(method,
