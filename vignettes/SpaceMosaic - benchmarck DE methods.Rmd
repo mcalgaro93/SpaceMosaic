@@ -18,7 +18,7 @@ author:
 date: "`r BiocStyle::doc_date()`"
 package: "`r pkg_ver('SpaceMosaic')`"
 vignette: >
-  %\VignetteIndexEntry{Space Mosaic}
+  %\VignetteIndexEntry{Space Mosaic: Benchmarking DE methods}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
   %\VignetteKeywords{GeneExpression, Spatial, Transcriptomics}
