@@ -9,7 +9,7 @@
 #'   - p:      matrix of p-values
 #'   - residuals: matrix of residuals (cells x genes)
 #' 
-#' @importFrom limma lmFit eBayes
+#' @importFrom limma lmFit eBayes residuals.MArrayLM
 #'
 #' @rdname limmaDE
 #'
@@ -32,7 +32,7 @@ limmaDE <- function(y, df) {
   p      <- fit$p.value[, -1, drop = FALSE]
 
   # Residuals: cells x genes
-  residuals <- t(residuals(fit, y = t(y))) 
+  residuals <- t(limma::residuals.MArrayLM(fit, y = t(y))) 
   
   list(
     effect = effect, 

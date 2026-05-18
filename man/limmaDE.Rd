@@ -2,8 +2,7 @@
 % Please edit documentation in R/limmaDE.R
 \name{limmaDE}
 \alias{limmaDE}
-\title{DE based on limma's linear model fitting
-This function performs a linear regression of each gene on the predictors in `df`, returning effect sizes, standard errors, p-values, and residuals.}
+\title{DE based on limma's linear model fitting}
 \usage{
 limmaDE(y, df)
 }
@@ -20,6 +19,5 @@ A list with:
   - residuals: matrix of residuals (cells x genes)
 }
 \description{
-DE based on limma's linear model fitting
 This function performs a linear regression of each gene on the predictors in `df`, returning effect sizes, standard errors, p-values, and residuals.
 }
