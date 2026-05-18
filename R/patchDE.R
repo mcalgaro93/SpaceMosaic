@@ -75,6 +75,13 @@ hastyDE <- function(y, df) {
 #'
 #' @param patchesID The name of the reduced dimension in `spe` that contains the patch assignments. 
 #' This should be the same name obtained in `getPatches()`.
+#' @param method The DE method to use. Currently only "hasty" and "limma" are implemented. Future versions may include additional methods. See details for more information.
+#' @param verbose If TRUE, print additional information about the DE process for each patch.
+#' 
+#' @details
+#' Available DE methods:
+#' - "hasty": A very fast DE method that performs ordinary least squares regression for each gene and predictor using matrix algebra.
+#' - "limma": A DE method that uses limma's linear model fitting and empirical Bayes moderation.
 #' 
 #' @examples
 #'
@@ -105,7 +112,7 @@ hastyDE <- function(y, df) {
 #'
 #' @export
 
-patchDE <- function(spe, patchesID) {
+patchDE <- function(spe, patchesID, method = "hasty", verbose = FALSE) {
 
   if (!patchesID %in% reducedDimNames(spe)) {
     msg <- "Patches ID '{patchesID}' not found in reducedDimNames(spe). Run getPatches() first."
@@ -114,6 +121,11 @@ patchDE <- function(spe, patchesID) {
 
   if (!"logcounts" %in% assayNames(spe)) {
     msg <- "Assay 'logcounts' not found in spe. Ensure normalized log-transformed counts are available."
+    cli_abort(msg)
+  }
+  
+  if (!method %in% c("hasty", "limma")) {
+    msg <- "Method '{method}' not recognized. Available methods: 'hasty', 'limma'."
     cli_abort(msg)
   }
    
@@ -130,9 +142,23 @@ patchDE <- function(spe, patchesID) {
   patch_names <- unique(patches)
 
   for (patchid in patch_names) {
+    # Print some patch-level statistics for debugging
+    if(verbose) {
+      cli::cli_inform("Processing patch: {patchid}")
+      cli::cli_inform("Number of cells in patch: {sum(patches == patchid, na.rm = TRUE)}")
+      cli::cli_inform("Number of predictors in df: {ncol(df)}")
+    }
     patchinds <- which(patches == patchid & !is.na(patches))
-    results[[patchid]] <- hastyDE(y = y[patchinds ,, drop = FALSE],
-                                  df = df[patchinds, , drop = FALSE])
+    switch(method,
+           hasty = {
+             results[[patchid]] <- hastyDE(y = y[patchinds ,, drop = FALSE],
+                                          df = df[patchinds, , drop = FALSE])
+           },
+           limma = {
+             results[[patchid]] <- limmaDE(y = y[patchinds ,, drop = FALSE],
+                                          df = df[patchinds, , drop = FALSE])
+           }
+    )
   }
   variables <- colnames(results[[1]][[1]])
   out <- list()

@@ -4,3 +4,5 @@
 ^docs$
 ^\.covrignore
 ^\.codecov.yml
+^\.positai$
+^\.claude$

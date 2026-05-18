@@ -4,7 +4,7 @@
 \alias{patchDE}
 \title{patchDE: run DE over all patches}
 \usage{
-patchDE(spe, patchesID)
+patchDE(spe, patchesID, method = "hasty", verbose = FALSE)
 }
 \arguments{
 \item{spe}{An
@@ -12,6 +12,10 @@ patchDE(spe, patchesID)
 
 \item{patchesID}{The name of the reduced dimension in `spe` that contains the patch assignments. 
 This should be the same name obtained in `getPatches()`.}
+
+\item{method}{The DE method to use. Currently only "hasty" and "limma" are implemented. Future versions may include additional methods. See details for more information.}
+
+\item{verbose}{If TRUE, print additional information about the DE process for each patch.}
 }
 \value{
 A list of patch-level differential expression results. Each element
@@ -20,6 +24,11 @@ A list of patch-level differential expression results. Each element
 }
 \description{
 patchDE: run DE over all patches
+}
+\details{
+Available DE methods:
+- "hasty": A very fast DE method that performs ordinary least squares regression for each gene and predictor using matrix algebra.
+- "limma": A DE method that uses limma's linear model fitting and empirical Bayes moderation.
 }
 \examples{
 
