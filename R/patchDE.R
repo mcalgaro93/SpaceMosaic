@@ -123,6 +123,11 @@ patchDE <- function(spe, patchesID, method = "hasty", verbose = FALSE) {
     msg <- "Assay 'logcounts' not found in spe. Ensure normalized log-transformed counts are available."
     cli_abort(msg)
   }
+  
+  if (!method %in% c("hasty", "limma")) {
+    msg <- "Method '{method}' not recognized. Available methods: 'hasty', 'limma'."
+    cli_abort(msg)
+  }
    
   patch_df <- reducedDim(spe, patchesID)
   use <- which(as.vector(patch_df$response) == TRUE &
@@ -152,10 +157,6 @@ patchDE <- function(spe, patchesID, method = "hasty", verbose = FALSE) {
            limma = {
              results[[patchid]] <- limmaDE(y = y[patchinds ,, drop = FALSE],
                                           df = df[patchinds, , drop = FALSE])
-           },
-           {
-             msg <- "Unsupported method '{method}'. Choose 'hasty' or 'limma'."
-             cli_abort(msg)
            }
     )
   }
