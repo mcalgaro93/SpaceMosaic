@@ -1,4 +1,5 @@
 #' DE based on limma's linear model fitting
+#'
 #' This function performs a linear regression of each gene on the predictors in `df`, returning effect sizes, standard errors, p-values, and residuals.
 #' @param y the normalized counts matrix (cells x genes)
 #' @param df a data frame of the variables to be modeled
