@@ -4,12 +4,19 @@
 \name{SpaceMosaic-package}
 \alias{SpaceMosaic}
 \alias{SpaceMosaic-package}
-\title{SpaceMosaic: Spatially-Resolved Differential Expression via Elliptical Patch Partitions}
+\title{SpaceMosaic: Stratified differential expression analysis on spatial data}
 \description{
-Partitions spatial transcriptomics tissue into elliptical patches that maximize within-patch design variable variance, then performs per-patch differential expression with Bayesian meta-analysis and spatial subgroup detection.
+Performs a differential expression analysis on spatial transcriptomics data stratified on patches defined according to a model of interest.
 }
 \author{
-\strong{Maintainer}: Patrick Danaher \email{patrick.danaher@bruker.com}
+\strong{Maintainer}: Patrick Danaher \email{patrick.danaher@bruker.com} (\href{https://orcid.org/0000-0002-2844-5883}{ORCID})
+
+Other contributors:
+\itemize{
+  \item Matteo Calgaro \email{matteo.calgaro@unipd.it} (\href{https://orcid.org/0000-0002-3056-518X}{ORCID}) [contributor]
+  \item Robert Castelo \email{robert.castelo@upf.edu} (\href{https://orcid.org/0000-0003-2229-4508}{ORCID}) [contributor]
+  \item Pere Moles \email{pere.moles@upf.edu} (\href{https://orcid.org/0009-0009-4408-1897}{ORCID}) [contributor]
+}
 
 }
 \keyword{internal}
