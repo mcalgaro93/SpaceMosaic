@@ -2,12 +2,22 @@
 #' Compute patch attributes matrix W from Z and patch assignments
 #'
 #' Takes colMeans of Z for each patch.
-#' @param Z Matrix of per-cell features (cells x features).
+#' @param Z Matrix or data.frame of per-cell features (cells x features).
+#'   If a data.frame is supplied, it is converted to a numeric design matrix
+#'   using \\code{model.matrix(~ . - 1, data = Z)}.
 #' @param patch Character vector of patch assignments (may contain NA).
 #' @return Matrix (npatches x features) of per-patch mean attributes.
 #' @export
 getPatchAttributes <- function(Z, patch) {
-  Z <- as.matrix(Z)
+  if (is.data.frame(Z)) {
+    Z <- stats::model.matrix(~ . - 1, data = Z)
+  } else {
+    Z <- as.matrix(Z)
+    storage.mode(Z) <- "numeric"
+  }
+
+  if (length(patch) != nrow(Z)) stop("length(patch) must equal nrow(Z).")
+
   pnames <- sort(unique(patch[!is.na(patch)]))
   W <- t(sapply(pnames, function(p) colMeans(Z[which(patch == p), , drop = FALSE])))
   rownames(W) <- pnames
