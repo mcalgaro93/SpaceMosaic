@@ -1,0 +1,1279 @@
+---
+title: "Case Study: Mouse Colon"
+author: "Matteo Calgaro"
+date: "`r Sys.Date()`"
+output: 
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width=8, fig.height=6)
+devtools::load_all()
+# library(SpaceMosaic)
+library(HDF5Array)
+library(SpatialExperiment)
+
+library(ggplot2)
+library(ComplexHeatmap)
+library(circlize)
+library(patchwork)
+library(viridis)
+
+library(uwot)
+```
+
+# Introduction
+
+This document shows how to apply the **SpaceMosaic** workflow to a spatial transcriptomics dataset of mouse colon. The goal is to identify spatially contiguous "patches" and analyze differential expression (DE) within these patches, further refined by a meta-analysis across similar patches.
+
+## Notation & Concepts
+
+- $X$ (Design Matrix): Predictor variables describing cells (e.g., distance to a specific cell type, expression of a marker gene).
+- $Z$ (Cellular Neighborhoods): Low-dimensional encoding of each cell's spatial context.
+- $W$ (Patch Embeddings): Matrix encoding the spatial context of a patch (typically the average of $Z$ for cells within the patch).
+- **Patch Attributes**: Intelligible variables describing patches (e.g., cell type abundance, tissue region).
+
+------------------------------------------------------------------------
+
+## Example of biological questions
+
+Working with a healthy mouse colon sample provides a good opportunity to study homeostatic spatial gradients and niche-specific cellular states. In a healthy colon, the architecture is highly organized (crypts, lamina propria, muscularis), which makes it ideal for the SpaceMosaic workflow.
+
+Here are three potential biological questions:
+
+1.  **The "Immune Surveillance" Question**: How does the transcriptional state of the colon epithelium change as a function of its proximity to immune cells?
+
+    In a healthy colon, immune cells are distributed throughout the lamina propria. We can investigate whether epithelial cells "sense" the local immune density and alter their expression of MHC molecules, cytokines, or stress-response genes.
+
+    **Response Cell Type**: Epithelial cells.
+
+    **Explanatory Variable (X)**: The abundance of immune cells in the cellular neighborhood (e.g., count of immune cells among the nearest neighbors).
+
+    **Cell Subset**: All epithelial cells.
+
+    **SpaceMosaic Goal**: Identify genes that are significantly up-regulated in epithelial cells located in "immune-rich" areas compared to "immune-poor" areas.
+
+    **Biological Insight**: This reveals the baseline "cross-talk" between the barrier and the immune system in a non-inflamed state.
+
+<!-- -->
+
+2.  **The "Stem Cell Niche" Gradient Question**: Is there a consistent transcriptional response in epithelial cells as they move away from the Lgr5+ stem cell niche at the crypt base?
+
+    The colon has a very strict spatial axis: stem cells at the bottom → transit-amplifying cells → mature goblet/enterocytes at the surface.
+
+    **Response Cell Type**: Epithelial cells.
+
+    **Explanatory Variable (X)**: Distance to the nearest $Lgr5+$ (or $Olfm4+$) stem cell.
+
+    **Cell Subset**: Epithelial cells within the crypts.
+
+    **SpaceMosaic Goal**: Use a log-transformed distance or bins for X. Run patchDE to find genes that vary along this axis. Use patchMetaAnalysis to see if this "maturation gradient" is identical in all crypts or if it varies based on the neighborhood context (W).
+
+    **Biological Insight**: This helps distinguish between a "hard-wired" genetic program of differentiation and one that is modulated by the local microenvironment.
+
+<!-- -->
+
+3.  **The "Barrier vs. Vascular" Macrophage State Question**: Do macrophages residing near the epithelial basement membrane exhibit a different transcriptional profile than those residing near blood vessels?
+
+    Macrophages are highly plastic. Those near the lumen likely deal with commensal bacteria, while those near vessels deal with systemic signals.
+
+    **Response Cell Type**: Macrophages.
+
+    **Explanatory Variable (X)**: Distance to the nearest Epithelial cell (as a proxy for the basement membrane) vs. distance to the nearest Endothelial cell.
+
+    **Cell Subset**: All macrophages.
+
+    **SpaceMosaic Goal**: Define patches based on the ratio of distance to epithelium vs. distance to vessels.
+
+    **Biological Insight**: This would identify "barrier-associated" vs. "vascular-associated" macrophage signatures in health, providing a baseline for how these populations shift during colitis.
+
+# 1. Setup
+
+In this section, we load the data and compute the cellular neighborhood embeddings ($Z$) used across all scenarios.
+
+```{r data-load}
+# 1.1 Load Data
+h5_path <- system.file("extdata", "mouse_colon", package = "SpaceMosaic")
+spe <- HDF5Array::loadHDF5SummarizedExperiment(h5_path)
+spe
+```
+
+The `spe` object contains `r ncol(spe)` cells and `r nrow(spe)` genes. The spatial coordinates are stored in `spatialCoords(spe)`, the cell type annotations are in `spe$tier1` and `spe$tier2` with `spe$tier2` providing more detailed subclass information, and the neighborhood annotations are in `spe$leiden_neigh`.
+
+```{r spatial-annotation-overview, fig.width=20, fig.height=6, fig.cap="Spatial organization of the mouse colon sample: broad cell types (left), epithelial subtypes (center), and tissue neighborhoods (right). Non-epithelial cells are shown in grey in the center panel. Neighborhood prefixes: MU = mucosa, ME = muscularis externa, MES = mesentery, and SM = submucosa."}
+#| fig-width: 20
+#| fig-height: 6
+coords <- as.data.frame(spatialCoords(spe))
+coords$cell_types <- spe$tier1
+coords$cell_types_detailed <- spe$tier2
+coords$neighborhoods <- spe$leiden_neigh
+
+# Plot the spatial distribution of cell types
+p_cell_type <- ggplot(coords, aes(x = x, y = y, color = cell_types)) +
+  geom_point(size = 0.1) +
+  coord_fixed() +
+  theme_minimal() +
+  scale_color_manual(values = spe@metadata$colors_tier1) +
+  labs(title = "Spatial Organization of Cell Types", 
+    subtitle = "Tier 1 Annotations",
+    color = "Cell Type") +
+  theme(legend.position = "right") +
+  guides(color = guide_legend(override.aes = list(size = 3)))
+
+# Plot the spatial distribution of epithelial cell types
+p_epithelial_subtypes <- ggplot(coords[coords$cell_types == "Epithelial", ], aes(x = x, y = y, color = cell_types_detailed)) +
+  geom_point(size = 0.1) +
+  geom_point(data = coords[coords$cell_types != "Epithelial", ], aes(x = x, y = y), 
+        color = "grey", size = 0.1, alpha = 0.5) +
+  coord_fixed() +
+  theme_minimal() +
+  scale_color_manual(values = spe@metadata$epithelial_subtype_colors) +
+  labs(title = "Spatial Organization of Epithelial Cells", 
+    subtitle = "Tier 2 Annotations",
+    color = "Cell Type") +
+  theme(legend.position = "right") +
+  guides(color = guide_legend(override.aes = list(size = 3)))
+
+# Plot the spatial distribution of neighborhoods
+p_neighborhoods <- ggplot(coords, aes(x = x, y = y, color = neighborhoods)) +
+  geom_point(size = 0.1) +
+  coord_fixed() +
+  theme_minimal() +
+  scale_color_manual(values = spe@metadata$neighbor_colors) +
+  labs(title = "Spatial Organization of Neighborhoods", 
+    subtitle = "Leiden Clustering",
+    color = "Neighborhood") +
+  theme(legend.position = "right") +
+  guides(color = guide_legend(override.aes = list(size = 3)))
+
+p_cell_type + p_epithelial_subtypes + p_neighborhoods + plot_layout(ncol = 3)
+```
+
+```{r cellular-neighborhood-embedding}
+# 1.2 Global Setup
+rownames(spatialCoords(spe)) <- spe$cell_id
+xy <- spatialCoords(spe)
+cell_types <- spe$tier1
+cell_types_detailed <- spe$tier2
+
+# Compute Cellular Neighborhoods (Z)
+# Computed globally for all cells first, then subsetted in the core workflow.
+Z <- embedCellNeighborhoods(
+  mat = reducedDim(spe, "PCA"), 
+  xy = xy, 
+  ks = c(5, 50)
+)
+```
+
+# 2. Core Workflow: Patch Identification
+
+We now apply the SpaceMosaic pipeline to each of our biological questions. For each scenario, we define a predictor variable $X$, compute patches, and filter them to retain only those with high biological signal.
+
+## Scenario 1: Immune Surveillance
+
+We analyze how the epithelial transcriptional state varies with local immune cell density.
+
+```{r scenario1-setup}
+# Setup
+is_epithelial <- cell_types == "Epithelial"
+is_immune <- cell_types == "Immune"
+
+k_neighbors <- 100
+nn_indices <- FNN::get.knn(data = as.matrix(xy), k = k_neighbors)$nn.index
+X1 <- apply(nn_indices, 1, function(row) sum(is_immune[row]))
+use1 <- is_epithelial
+```
+
+```{r scenario1-patches}
+set.seed(123)
+# Compute Patches
+patches_res1 <- getPatches(
+  xy = spatialCoords(spe)[use1, ],
+  X = X1[use1], 
+  Z = Z[use1, ],
+  npatches = 100, 
+  n_iters = 15
+)
+patches1 <- patches_res1$patch
+```
+
+For each patch, we compute several summary statistics to filter out patches that may not be biologically meaningful. In this scenario, we consider as an example the minimum distance to immune cells, mean total counts, number of cells per patch, and variance of $X$ within each patch.
+
+```{r scenario1-patch-summary}
+# Diagnostics: Compute patch-level statistics to filter patches with unwanted characteristics.
+
+# 1. Min distance to immune cells
+dist_to_immune <- FNN::get.knnx(
+  data  = as.matrix(xy[is_immune, , drop=FALSE]),
+  query = as.matrix(xy[use1, ]),
+  k = 1
+)$nn.dist[, 1]
+patch_min_dist <- by(dist_to_immune, patches1, min)
+
+# 2. Mean total counts per patch
+# We use log2(total counts) to normalize the scale
+total_counts <- colSums(assay(spe, "counts")[, use1])
+patch_mean_counts <- by(log2(total_counts + 1), patches1, mean)
+
+# 3. Number of cells per patch
+patch_size <- by(rep(1, sum(use1)), patches1, length)
+
+# 4. Variance of X per patch
+patch_var_X <- by(X1[use1], patches1, var)
+
+patch_diagnostics <- data.frame(
+  patch = names(patch_mean_counts),
+  mean_counts = as.numeric(patch_mean_counts),
+  min_dist = as.numeric(patch_min_dist),
+  size = as.numeric(patch_size), 
+  var_X = as.numeric(patch_var_X)
+)
+patch_data1 <- patch_diagnostics
+```
+
+```{r scenario1-patch-summary-plot, fig.width=8, fig.height=6, fig.cap="Patch diagnostics for Scenario 1: Immune Surveillance. Each point represents a patch; point size indicates the number of epithelial cells and color indicates the within-patch variance of local immune-cell density. Dashed lines mark the minimum-count and maximum-distance thresholds used for filtering."}
+# Plot summary to determine filtering thresholds
+ggplot(patch_diagnostics, aes(x = min_dist, y = mean_counts)) +
+  geom_point(aes(size = size, color = var_X, alpha = 0.5)) +
+  geom_vline(xintercept = 15, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = 6.65, linetype = "dashed", color = "red") +
+  scale_color_viridis(option = "plasma") +
+  theme_minimal() +
+  guides(alpha = "none") +
+  labs(title = "Patch Summary",
+       subtitle = "Mean Counts vs. Min Distance to Immune Cells",
+       x = "Minimum Distance to Immune Cells",
+       y = "Mean Log2(Total Counts + 1)")
+```
+
+As shown in the plot above, we can filter patches based on minimum distance to immune cells and mean total counts. Patches that are too far from immune cells or have low counts may not provide meaningful biological insights.
+
+```{r scenario1-patch-filtering}
+# Define thresholds based on the plot
+dist_thresh <- 15
+count_thresh <- 6.65
+
+keep1 <- names(which(patch_mean_counts > count_thresh & patch_min_dist < dist_thresh))
+patches1[!is.element(patches1, keep1)] <- NA
+
+poly_df1 <- getPatchPolys(
+  xy = spatialCoords(spe)[use1, ],
+  patch = patches1,
+  patch_data = patch_data1
+)
+```
+
+```{r scenario1-predictor-map, fig.width=8, fig.height=6, fig.cap="Spatial distribution of the predictor for Scenario 1: Immune Surveillance. Epithelial cells are colored by the number of immune cells among their 100 nearest neighbors; retained patch boundaries are shown in green and non-epithelial cells in grey."}
+#| fig-width: 8
+#| fig-height: 6
+# Visualization
+ggplot(coords[use1, ], aes(x = x, y = y, color = X1[use1])) +
+    geom_point(data = coords[!use1, ], aes(x = x, y = y), 
+        color = "grey", size = 0.1, alpha = 0.5) +
+    geom_point(size = 0.1) +
+    geom_polygon(data = poly_df1, aes(x = x, y = y, group = patch), 
+        fill = NA, color = "green", linewidth = 0.5, show.legend = FALSE) +
+    coord_fixed() +
+    theme_minimal() +
+    scale_color_viridis(option = "plasma") +
+    labs(title = "Spatial Distribution of Predictor Variable (X)", 
+        subtitle = "Scenario: Immune Surveillance", color = "X Value") +
+    theme(legend.position = "right") +
+    guides(color = guide_colorbar(barwidth = 1, barheight = 10))
+```
+
+
+## Scenario 2: Stem Cell Niche
+
+We analyze the epithelial maturation gradient moving away from the crypt base.
+
+```{r scenario2-setup}
+# Setup
+is_stem <- cell_types_detailed == "Stem cells" 
+dist_to_stem <- FNN::get.knnx(data = as.matrix(xy[is_stem, , drop=FALSE]), query = as.matrix(xy), k = 1)$nn.dist[, 1]
+X2 <- log(dist_to_stem + 1)
+use2 <- is_epithelial
+```
+
+```{r scenario2-patches}
+set.seed(123)
+# Compute Patches
+patches_res2 <- getPatches(
+  xy = spatialCoords(spe)[use2, ],
+  X = X2[use2], 
+  Z = Z[use2, ],
+  npatches = 150, 
+  n_iters = 15
+)
+patches2 <- patches_res2$patch
+```
+
+As for scenario 1, we compute several summary statistics for each patch to summarise their characteristics. In this scenario, we consider the average distance to stem cells, mean total counts, number of cells per patch, and variance of $X$ within each patch.
+
+```{r scenario2-patch-summary}
+# Diagnostics: Compute patch-level statistics to filter patches with unwanted characteristics.
+
+# 1. Average distance to stem cells
+dist_to_stem <- FNN::get.knnx(
+  data  = as.matrix(xy[is_stem, , drop=FALSE]),
+  query = as.matrix(xy[use2, ]),
+  k = 1
+)$nn.dist[, 1]
+patch_avg_dist <- by(dist_to_stem, patches2, mean)
+
+# 2. Mean total counts per patch
+# We use log2(total counts) to normalize the scale
+total_counts <- colSums(assay(spe, "counts")[, use2])
+patch_mean_counts <- by(log2(total_counts + 1), patches2, mean)
+
+# 3. Number of cells per patch
+patch_size <- by(rep(1, sum(use2)), patches2, length)
+
+# 4. Variance of X per patch
+patch_var_X <- by(X2[use2], patches2, var)
+
+patch_diagnostics <- data.frame(
+  patch = names(patch_mean_counts),
+  mean_counts = as.numeric(patch_mean_counts),
+  avg_dist = as.numeric(patch_avg_dist),
+  size = as.numeric(patch_size), 
+  var_X = as.numeric(patch_var_X)
+)
+```
+```{r scenario2-patch-summary-plot, fig.width=8, fig.height=6, fig.cap="Patch diagnostics for Scenario 2: Stem Cell Niche. Each point represents a patch; point size indicates the number of epithelial cells and color indicates the within-patch variance of log(distance + 1) from the nearest stem cell. The axes show average distance from stem cells and mean log2(total counts + 1)."}
+# Plot summary to determine filtering thresholds
+ggplot(patch_diagnostics, aes(x = avg_dist, y = mean_counts)) +
+  geom_point(aes(size = size, color = var_X, alpha = 0.5)) +
+  # geom_vline(xintercept = 15, linetype = "dashed", color = "red") +
+  # geom_hline(yintercept = 6.65, linetype = "dashed", color = "red") +
+  scale_color_viridis(option = "plasma") +
+  theme_minimal() +
+  guides(alpha = "none") +
+  labs(title = "Patch Summary",
+       subtitle = "Mean Counts vs. Average Distance to Stem Cells",
+       x = "Average Distance to Stem Cells",
+       y = "Mean Log2(Total Counts + 1)")
+```
+
+The diagnostic plot separates patches close to the stem-cell niche, where the predictor is more variable, from more distant patches with higher mean RNA counts. Because very small patches yield unstable within-patch estimates, we retain patches containing more than 30 epithelial cells; distance and count values are shown for interpretation rather than used as hard thresholds.
+
+```{r scenario2-patch-filtering}
+# Define thresholds based on the plot
+min_cell_thresh <- 30
+
+keep2 <- names(which(patch_size > min_cell_thresh))
+patches2[!is.element(patches2, keep2)] <- NA
+
+poly_df2 <- getPatchPolys(
+  xy = spatialCoords(spe)[use2, ],
+  patch = patches2,
+  patch_data = patch_diagnostics
+)
+```
+
+```{r scenario2-predictor-map, fig.width=8, fig.height=6, fig.cap="Spatial distribution of the predictor for Scenario 2: Stem Cell Niche. Epithelial cells are colored by log(distance + 1) from the nearest stem cell; retained patch boundaries are shown in green and non-epithelial cells in grey."}
+#| fig-width: 8
+#| fig-height: 6
+# Visualization
+ggplot(coords[use2, ], aes(x = x, y = y, color = X2[use2])) +
+    geom_point(data = coords[!use2, ], aes(x = x, y = y), 
+        color = "grey", size = 0.1, alpha = 0.5) +
+    geom_point(size = 0.1) +
+    geom_polygon(data = poly_df2, aes(x = x, y = y, group = patch), 
+        fill = NA, color = "green", linewidth = 0.5, show.legend = FALSE) +
+    coord_fixed() +
+    theme_minimal() +
+    scale_color_viridis(option = "plasma") +
+    labs(title = "Spatial Distribution of Predictor Variable (X)", 
+        subtitle = "Scenario: Stem Cell Niche", color = "X Value") +
+    theme(legend.position = "right") +
+    guides(color = guide_colorbar(barwidth = 1, barheight = 10))
+```
+
+## Scenario 3: Macrophage State
+
+We distinguish between macrophages near the epithelial basement membrane and those near blood vessels. To measure this, we define a predictor variable $X$ as a normalized distance between the nearest epithelial cell and endothelial cell. It is computed as the ratio of the distance to the nearest epithelial cell to the sum of distances to both epithelial and endothelial cells. This will be close to 0 for macrophages near the epithelium and close to 1 for those near blood vessels.
+
+```{r scenario3-setup}
+# Setup
+is_macrophage <- grepl("Macrophage", cell_types_detailed)
+is_epithel_all <- cell_types == "Epithelial"
+is_endo <- cell_types == "Endothelial"
+
+dist_to_epithel <- FNN::get.knnx(data = as.matrix(xy[is_epithel_all, , drop=FALSE]), query = as.matrix(xy), k = 1)$nn.dist[, 1]
+dist_to_endo <- FNN::get.knnx(data = as.matrix(xy[is_endo, , drop=FALSE]), query = as.matrix(xy), k = 1)$nn.dist[, 1]
+X3 <- dist_to_epithel / (dist_to_epithel + dist_to_endo)
+use3 <- is_macrophage
+```
+
+We verify that the normalized predictor reflects the two underlying distances.
+
+```{r scenario3-proximity-diagnostic, fig.width=8, fig.height=6, fig.cap="Macrophage position relative to the epithelial and vascular compartments. Each point is a macrophage; points above the diagonal are closer to epithelium and points below it are closer to endothelium. Color shows normalized endothelial proximity, ranging from epithelium-proximal (0) to vessel-proximal (1)."}
+# Diagnostic representation of the two distances used to define X3.
+# With X3 = d_epithelium / (d_epithelium + d_endothelium), values close
+# to 0 indicate epithelium-proximal macrophages and values close to 1
+# indicate vessel-proximal macrophages.
+distance_df3 <- data.frame(
+  distance_epithelium = dist_to_epithel[use3],
+  distance_endothelium = dist_to_endo[use3],
+  vascular_proximity_index = X3[use3]
+)
+
+distance_df3 <- distance_df3[
+  is.finite(distance_df3$distance_epithelium) &
+    is.finite(distance_df3$distance_endothelium) &
+    is.finite(distance_df3$vascular_proximity_index),
+]
+
+p3_distance_diagnostic <- ggplot(
+  distance_df3,
+  aes(
+    x = distance_epithelium,
+    y = distance_endothelium,
+    color = vascular_proximity_index
+  )
+) +
+  geom_abline(
+    slope = 1,
+    intercept = 0,
+    linetype = "dashed",
+    linewidth = 0.7,
+    color = "grey35"
+  ) +
+  geom_point(size = 1, alpha = 0.65) +
+  coord_equal() +
+  scale_color_viridis_c(
+    option = "plasma",
+    limits = c(0, 1),
+    breaks = c(0, 0.5, 1),
+    labels = c("Epithelium-proximal", "Equidistant", "Vessel-proximal")
+  ) +
+  labs(
+    title = "Macrophage position along the epithelial-vascular axis",
+    subtitle = paste(
+      "Above the diagonal: closer to epithelium;",
+      "below the diagonal: closer to blood vessels"
+    ),
+    x = "Distance to nearest epithelial cell (spatial units)",
+    y = "Distance to nearest endothelial cell (spatial units)",
+    color = "Relative position (X3)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position = "right"
+  )
+
+p3_distance_diagnostic
+```
+
+We then proceed to compute patches of macrophages based on the normalized endothelial proximity index ($X$) and the cellular neighborhood embeddings ($Z$).
+
+```{r scenario3-patches}
+set.seed(123)
+# Compute Patches
+patches_res3 <- getPatches(
+  xy = spatialCoords(spe)[use3, ],
+  X = X3[use3], 
+  Z = Z[use3, ],
+  npatches = 20, 
+  n_iters = 15
+)
+patches3 <- patches_res3$patch
+```
+
+We summarize each macrophage patch by its distance from the epithelial and endothelial compartments, RNA counts, number of cells, and within-patch variance of $X$. These diagnostics assess whether a patch contains enough cells and sufficient positional variation to support differential-expression analysis.
+
+```{r scenario3-patch-summary}
+# Diagnostics: Compute patch-level statistics to filter patches with unwanted characteristics.
+# 1. Average distance to epithelium (representative of the barrier)
+# dist_to_epithel was computed in setup
+patch_avg_dist_epithelial <- by(dist_to_epithel[use3], patches3, mean)
+
+# 2. Average distance to endothelial cells (representative of the vascular system)
+# dist_to_endo was computed in setup
+patch_avg_dist_endo <- by(dist_to_endo[use3], patches3, mean)
+
+# 3. Mean total counts per patch
+total_counts <- colSums(assay(spe, "counts")[, use3])
+patch_mean_counts <- by(log2(total_counts + 1), patches3, mean)
+
+# 4. Number of cells per patch
+patch_size <- by(rep(1, sum(use3)), patches3, length)
+
+# 5. Variance of X per patch
+patch_var_X <- by(X3[use3], patches3, var)
+
+patch_diagnostics <- data.frame(
+  patch = names(patch_mean_counts),
+  mean_counts = as.numeric(patch_mean_counts),
+  avg_dist_epithelial = as.numeric(patch_avg_dist_epithelial),
+  avg_dist_endothelial = as.numeric(patch_avg_dist_endo),
+  size = as.numeric(patch_size), 
+  var_X = as.numeric(patch_var_X)
+)
+```
+
+```{r scenario3-patch-summary-plot, fig.width=8, fig.height=6, fig.cap="Patch diagnostics for Scenario 3: Macrophage State. Each point represents a patch; point size indicates the number of macrophages and color indicates the within-patch variance of the normalized endothelial-proximity index. The axes show average distance from the epithelial and endothelial compartments."}
+#| fig-width: 8
+#| fig-height: 6
+# Plot summary to determine filtering thresholds
+ggplot(patch_diagnostics, aes(x = avg_dist_epithelial, y = avg_dist_endothelial)) +
+  geom_point(aes(size = size, color = var_X, alpha = 0.5)) +
+  scale_color_viridis(option = "plasma") +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  guides(alpha = "none") +
+  labs(title = "Patch Summary",
+       subtitle = "Average Distance to Epithelial vs. Average Distance to Endothelial",
+       x = "Average Distance to Epithelial",
+       y = "Average Distance to Endothelial")
+```
+
+Macrophage patches are smaller than epithelial patches because macrophages are relatively rare in healthy colon. To avoid unstable estimates while preserving adequate spatial coverage, we retain patches containing more than 20 macrophages.
+
+```{r scenario3-patch-filtering}
+# Define thresholds
+patch_size_thresh <- 20
+
+keep3 <- names(which(patch_size > patch_size_thresh))
+patches3[!is.element(patches3, keep3)] <- NA
+
+poly_df3 <- getPatchPolys(
+  xy = spatialCoords(spe)[use3, ],
+  patch = patches3,
+  patch_data = patch_diagnostics
+)
+```
+
+```{r scenario3-predictor-map, fig.width=8, fig.height=6, fig.cap="Spatial distribution of the predictor for Scenario 3: Macrophage State. Macrophages are colored by normalized endothelial proximity, from epithelium-proximal (0) to vessel-proximal (1); retained patch boundaries are shown in green and all other cells in grey."}
+#| fig-width: 8
+#| fig-height: 6
+# Visualization
+ggplot(coords[use3, ], aes(x = x, y = y, color = X3[use3])) +
+    geom_point(data = coords[!use3, ], aes(x = x, y = y), 
+        color = "grey", size = 0.1, alpha = 0.5) +
+    geom_point(size = 0.1) +
+    geom_polygon(data = poly_df3, aes(x = x, y = y, group = patch), 
+        fill = NA, color = "green", linewidth = 0.5, show.legend = FALSE) +
+    coord_fixed() +
+    theme_minimal() +
+    scale_color_viridis(option = "plasma") +
+    labs(title = "Spatial Distribution of Predictor Variable (X)", 
+        subtitle = "Scenario: Macrophage State", color = "X Value") +
+    theme(legend.position = "right") +
+    guides(color = guide_colorbar(barwidth = 1, barheight = 10))
+```
+
+
+# 3. Core Workflow: DE and Meta-analysis
+
+Next, we run differential expression (DE) on each patch and then perform a meta-analysis over patches with similar spatial contexts ($W$). We apply this process to all three scenarios.
+
+## Scenario 1: Immune Surveillance
+
+For Scenario 1, `patchDE` tests the association between epithelial gene expression and local immune-cell density within each patch. We use Pearson residuals (`pearson = TRUE`) to reduce technical variation associated with total counts. Patch embeddings ($W$) are then obtained by averaging the cellular neighborhood embeddings ($Z$), allowing the meta-analysis to borrow information across patches with similar spatial contexts.
+
+```{r scenario1-de-meta}
+# 3.1 Run patchDE
+counts <- assay(spe, "counts")
+de_res1 <- patchDE(
+  y = t(counts[, use1]),
+  df = data.frame(X = X1[use1]), 
+  patch = patches1, 
+  pearson = TRUE,
+  tot = colSums(counts[, use1])
+)
+
+# 3.2 Define Patch Embeddings (W)
+# We average the Z-embeddings of cells within each patch
+Z1 <- Z[use1, ]
+W1 <- c()
+for(p in colnames(de_res1[[1]][[1]])) {
+  inds <- patches1 == p & !is.na(patches1)
+  if(sum(inds) > 0) {
+    W1 <- rbind(W1, colMeans(Z1[inds, , drop=FALSE]))
+  }
+}
+rownames(W1) <- colnames(de_res1[[1]][[1]])
+
+# 3.3 Perform Meta-analysis
+meta_res1 <- patchMetaAnalysis(DEobj = de_res1, W = W1, k = 10)
+```
+
+## Scenario 2: Stem Cell Niche
+
+For Scenario 2, `patchDE` tests the association between epithelial gene expression and log-transformed distance from the nearest stem cell. Log2 total counts are included as a covariate to account for differences in RNA content. As in Scenario 1, we average $Z$ within each patch to define $W$ and then combine results across patches with similar spatial contexts.
+
+```{r scenario2-de-meta}
+# 3.1 Run patchDE
+de_res2 <- patchDE(
+  y = t(counts[, use2]),
+  df = data.frame(X = X2[use2], tot = log2(colSums(counts[, use2]) + 1)), 
+  patch = patches2
+)
+
+# 3.2 Define Patch Embeddings (W)
+# We average the Z-embeddings of cells within each patch
+Z2 <- Z[use2, ]
+W2 <- c()
+for(p in colnames(de_res2[[1]][[1]])) {
+  inds <- patches2 == p & !is.na(patches2)
+  if(sum(inds) > 0) {
+    W2 <- rbind(W2, colMeans(Z2[inds, , drop=FALSE]))
+  }
+}
+rownames(W2) <- colnames(de_res2[[1]][[1]])
+
+# 3.3 Perform Meta-analysis
+meta_res2 <- patchMetaAnalysis(DEobj = de_res2, W = W2, k = 10)
+```
+
+## Scenario 3: Macrophage State
+
+For Scenario 3, `patchDE` tests the association between macrophage gene expression and normalized endothelial proximity. Because macrophage counts are sparse, log2-transformed counts are used as the response. We again average $Z$ within each patch to define $W$; the smaller number of retained macrophage patches motivates using fewer neighbors (`k = 5`) in the meta-analysis.
+
+```{r scenario3-de-meta}
+# 3.1 Run patchDE
+de_res3 <- patchDE(
+  y = log2(t(counts[, use3]) + 1),
+  df = data.frame(X = X3[use3]), 
+  patch = patches3
+)
+
+# 3.2 Define Patch Embeddings (W)
+# We average the Z-embeddings of cells within each patch
+Z3 <- Z[use3, ]
+W3 <- c()
+for(p in colnames(de_res3[[1]][[1]])) {
+  inds <- patches3 == p & !is.na(patches3)
+  if(sum(inds) > 0) {
+    W3 <- rbind(W3, colMeans(Z3[inds, , drop=FALSE]))
+  }
+}
+rownames(W3) <- colnames(de_res3[[1]][[1]])
+
+# 3.3 Perform Meta-analysis
+meta_res3 <- patchMetaAnalysis(DEobj = de_res3, W = W3, k = 5)
+```
+
+# 4. Post-hoc Analysis & Visualization
+
+For each scenario, we convert meta-analysis estimates to Z-scores, rank genes by the fraction of patches with $|Z| > 2$, and visualize the 50 most recurrent associations in a heatmap. Positive and negative Z-scores indicate increasing and decreasing expression with the scenario-specific predictor, respectively. Additional plots are selected to clarify the biological question posed by each scenario.
+
+## Scenario 1: Immune Surveillance (Epithelial $\leftrightarrow$ Immune)
+
+In the healthy colon, epithelial cells in immune-dense neighborhoods up-regulate a gene program consistent with barrier remodeling and engagement with immune/stromal partners, whereas epithelium in immune-sparse neighborhoods maintains stronger intrinsic stress, antiviral, and angiogenic signaling and a distinct tight-junction profile. This is consistent with current knowledge of the colon, where epithelial cells must balance barrier function with ongoing immune surveillance.
+
+```{r scenario1-meta-summary}
+# Get the meta-analysis Z-scores for Scenario 1
+metats1 <- meta_res1[[1]]$ests / meta_res1[[1]]$ses
+
+significance_df1 <- data.frame(
+  gene = rownames(metats1),
+  sig_fraction = rowMeans(abs(metats1) > 2, na.rm = TRUE),
+  up = rowMeans(metats1 > 2, na.rm = TRUE),
+  down = rowMeans(metats1 < -2, na.rm = TRUE)
+)
+
+top_genes1 <- rownames(significance_df1)[
+    order(significance_df1$sig_fraction, decreasing = TRUE)][1:50]
+top_up_genes1 <- rownames(significance_df1)[
+    order(significance_df1$up, decreasing = TRUE)][1:10]
+top_down_genes1 <- rownames(significance_df1)[
+    order(significance_df1$down, decreasing = TRUE)][1:10] 
+```
+
+Top 10 UP-regulated genes across patches:
+
+```{r scenario1-top-up-genes}
+print(top_up_genes1)
+```
+
+Among the UP-regulated genes, we found Il12a, Irf8, Fcgr1, Pdcd1lg2, Tnfsf4, and Mmp12, which are typically linked to local immune activity and immune-cell surveillance. In contrast, genes such as Grem1, Il11, Jag2, and Cldn20 are more related to how the tissue maintains and remodels the epithelial barrier, suggesting that areas with many immune cells are also sites of active tissue support and renewal.
+
+```{r scenario1-top-down-genes}
+print(top_down_genes1)
+```
+
+Among the DOWN-regulated genes, Tnfaip3, Oasl1, and Ppp1r15a are associated with cellular stress and defence responses, suggesting that epithelial cells in immune-poor neighborhoods rely more on their own stress and antiviral control. Meanwhile, lower levels of Vegfa, Fzd5, Crim1, Cldn4, and Cntfr in immune-rich areas indicate reduced emphasis on blood vessel growth, certain growth signals, and specific barrier and nerve-related features compared with immune-poor regions.
+
+In the following plot, we visualize the fraction of patches where each gene is significantly up- or down-regulated. Genes that are significant in a substantial fraction of patches will appear further from the origin.
+
+```{r scenario1-significance-scatter, fig.width=6, fig.height=6, fig.cap="Recurrence of gene-level associations across patches in Scenario 1. Each point is a gene; the axes report the fraction of patches with meta-analysis Z-score above 2 or below -2. Genes farther from the origin show a recurrent positive or negative association with local immune-cell density."}
+#| fig-width: 6
+#| fig-height: 6
+ggplot(significance_df1, aes(x = up, y = down)) +
+    geom_point(alpha = 0.5, color = "darkblue") +
+    ggrepel::geom_text_repel(data = subset(significance_df1, up > 0.2 | down > 0.2),
+              aes(label = gene), size = 2, alpha = 0.5) +
+    theme_minimal() +
+    labs(title = "Gene Significance Across Patches",
+         x = "Fraction of Patches with Z-score > 2",
+         y = "Fraction of Patches with Z-score < -2")
+```
+
+Interestingly, we observe that some genes are often up-regulated in certain patches and down-regulated in others. This reflects the heterogeneity of the epithelial tissue: not all epithelial cells within a patch are the same, and not all spatial contexts have the same composition or depth. In other words, some genes do not follow a single global trend, but instead switch direction depending on the local cellular and spatial environment. 
+
+To better elucidate these patterns, we visualize the meta-analysis results for Scenario 1 using a heatmap. The heatmap shows the Z-scores of the top 50 genes across patches, with annotations for epithelial cell type composition, neighborhood composition, and average immune exposure (the average X value, i.e. number of immune cells among the 100 nearest neighbors).
+
+```{r scenario1-heatmap, fig.width=15, fig.height=10, fig.cap="Meta-analysis heatmap for Scenario 1: Immune Surveillance. Rows are the 50 genes most recurrently associated with local immune-cell density and columns are epithelial patches. Colors show meta-analysis Z-scores, capped at -5 and 5. Top annotations show epithelial-subtype composition, tissue-neighborhood composition, and the mean number of immune cells among the 100 nearest neighbors."}
+#| fig-width: 15
+#| fig-height: 10
+
+# 1. Data Preparation
+metats_plot <- metats1[top_genes1, ]
+metats_plot[is.na(metats_plot)] <- 0
+metats_plot[metats_plot > 5] <- 5
+metats_plot[metats_plot < -5] <- -5
+
+# 2. Prepare Composition
+comp <- table(cell_types_detailed[use1], patches1)
+comp <- prop.table(comp, margin = 2)
+comp <- comp[rowSums(comp) > 0, ]
+comp <- as.matrix(comp)
+
+# Align comp columns and metats_plot columns,
+# then transpose comp to have rows = patches, columns = cell types
+comp <- comp[, colnames(metats_plot), drop = FALSE]
+comp_t <- t(comp)   # righe = patches, colonne = cell types
+stopifnot(identical(rownames(comp_t), colnames(metats_plot)))
+
+# 4. Prepare Neighbor Composition
+compN <- table(spe$leiden_neigh[use1], patches1)
+compN <- prop.table(compN, margin = 2)
+compN <- compN[rowSums(compN) > 0, ]
+compN <- as.matrix(compN)
+
+# Align compN columns and metats_plot columns,
+# then transpose compN to have rows = patches, columns = Neighborhood
+compN <- compN[, colnames(metats_plot), drop = FALSE]
+compN_t <- t(compN)   # righe = patches, colonne = cell types
+stopifnot(identical(rownames(compN_t), colnames(metats_plot)))
+
+# Summarise a cell-level variable by patch and return it in exactly the same
+# order as the columns of the matrix used by ComplexHeatmap. Keeping the patch
+# names is intentional: ComplexHeatmap can then verify the alignment.
+align_patch_annotation <- function(values, patches, matrix_columns, label) {
+  if (length(values) != length(patches)) {
+    stop(label, ": values and patches have different lengths.")
+  }
+
+  patch_summary <- tapply(
+    values,
+    as.character(patches),
+    mean,
+    na.rm = TRUE
+  )
+  missing_patches <- setdiff(matrix_columns, names(patch_summary))
+
+  if (length(missing_patches) > 0) {
+    stop(
+      label,
+      ": missing values for patch(es): ",
+      paste(missing_patches, collapse = ", ")
+    )
+  }
+
+  aligned_summary <- patch_summary[matrix_columns]
+
+  if (!identical(names(aligned_summary), matrix_columns)) {
+    stop(label, ": patch order does not match the heatmap columns.")
+  }
+  if (any(!is.finite(aligned_summary))) {
+    stop(label, ": annotation contains non-finite values after alignment.")
+  }
+
+  aligned_summary
+}
+
+# 4. Prepare Exposure Annotation
+avg_exposure1 <- align_patch_annotation(
+  values = X1[use1],
+  patches = patches1,
+  matrix_columns = colnames(metats_plot),
+  label = "Average Exposure"
+)
+
+# 5. Create Heatmap
+ht1 <- Heatmap(
+  metats_plot,
+  name = "Meta Z-score",
+  col = circlize::colorRamp2(c(-5, 0, 5), c("blue", "white", "red")),
+  cluster_rows = TRUE,
+  row_split = 3,
+  column_split = 5,
+  cluster_columns = TRUE,
+  show_row_names = TRUE,
+  show_column_names = TRUE,
+  top_annotation = HeatmapAnnotation(
+    "Cell type composition" = anno_barplot(
+      comp_t,
+      gp = gpar(fill = spe@metadata$epithelial_subtype_colors[colnames(comp_t)], col = NA),
+      bar_width = 1,
+      bar_height = unit(10, "cm"),
+      border = FALSE
+    ),
+    "Neighborhood composition" = anno_barplot(
+      compN_t,
+      gp = gpar(fill = spe@metadata$neighbor_colors[colnames(compN_t)], col = NA),
+      bar_width = 1,
+      bar_height = unit(10, "cm"),
+      border = FALSE
+    ),
+    "Average Exposure" = anno_simple(
+      avg_exposure1,
+      col = circlize::colorRamp2(c(min(avg_exposure1), max(avg_exposure1)), c("white", "black")),
+      height = unit(0.5, "cm")
+    ),
+    annotation_name_side = "right"
+  )
+)
+
+# Legends
+lgd_composition <- Legend(
+  labels = colnames(comp_t),
+  legend_gp = gpar(fill = spe@metadata$epithelial_subtype_colors[colnames(comp_t)]),
+  title = "Cell type",
+  ncol = 1   # disposizione orizzontale, utile quando le legende stanno sotto
+)
+lgd_compositionN <- Legend(
+  labels = colnames(compN_t),
+  legend_gp = gpar(fill = spe@metadata$neighbor_colors[colnames(compN_t)]),
+  title = "Neighborhood",
+  ncol = 1   # disposizione orizzontale, utile quando le legende stanno sotto
+)
+lgd_exposure <- Legend(
+  title = "Average Exposure (X)",
+  col_fun = circlize::colorRamp2(c(min(avg_exposure1), max(avg_exposure1)), c("white", "black")),
+  legend_height = unit(4, "cm")
+)
+
+# pdf("immune_meta_heatmap.pdf", width = 15, height = 10)
+ht1 <- draw(
+  ht1,
+  heatmap_legend_side = "right",
+  annotation_legend_side = "right",
+  annotation_legend_list = list(lgd_composition, lgd_compositionN, lgd_exposure)
+)
+# dev.off()
+```
+
+Five main patch clusters are visible. Clusters 1, 2, and 5 are enriched in stem cells and transit-amplifying cells and are mainly located in MU1 and MU2 neighborhoods, i.e. more proximal mucosal regions. Cluster 3 contains a mix of transit-amplifying cells and colonocytes and spans MU2 and MU3, whereas cluster 4 is dominated by colonocytes in MU3. Within each cluster, the average immune cell exposure varies substantially from patch to patch, indicating that similar epithelial compositions can experience very different levels of local immune density.
+
+In the following plot, we visualize the spatial distribution of the patch clusters identified in the meta-analysis heatmap. Each patch is colored according to its cluster assignment, allowing us to see how these clusters are distributed across the tissue section.
+
+```{r scenario1-cluster-map, fig.width=8, fig.height=6, fig.cap="Spatial distribution of patch clusters for Scenario 1: Immune Surveillance. Retained epithelial patches are colored by the column cluster assigned in the meta-analysis heatmap; all cells are shown in grey as anatomical context."}
+#| fig-width: 8
+#| fig-height: 6
+# Get the patches cluster assignments from the heatmap
+# Patches where in columns
+patch_clusters <- column_order(ht1)
+names(patch_clusters) <- 1:length(patch_clusters)
+
+# Add cluster labels to the patch-level data and rebuild the polygons. All the
+# diagnostic columns already in patch_data1 are retained.
+patch_data1$cluster <- NA_character_
+for(i in seq_along(patch_clusters)) {
+  patch_data1$cluster[
+    patch_data1$patch %in% colnames(metats_plot)[patch_clusters[[i]]]
+  ] <- paste0("Cluster ", i)
+}
+poly_df1 <- getPatchPolys(
+  xy = spatialCoords(spe)[use1, ],
+  patch = patches1,
+  patch_data = patch_data1
+)
+
+ggplot(coords, aes(x = x, y = y)) +
+    geom_point(size = 0.1, color = "grey") +
+    geom_polygon(data = poly_df1, aes(x = x, y = y, group = patch, fill = cluster), 
+        linewidth = 0.5) +
+    coord_fixed() +
+    theme_minimal() +
+    scale_fill_manual(values = c(
+        "Cluster 1" = "#1f78b4", 
+        "Cluster 2" = "#33a02c", 
+        "Cluster 3" = "#e31a1c", 
+        "Cluster 4" = "#ff7f00", 
+        "Cluster 5" = "#6a3d9a"
+    )) +
+    labs(title = "Spatial Distribution of Patch Clusters", 
+        subtitle = "Scenario: Immune Surveillance") 
+```
+
+To further describe the spatial distribution of the patch clusters, we can use an interactive plotter that allows us to explore the tissue section and visualize the expression of specific genes or other variables of interest. The interactive plotter can be launched using the `runInteractivePlotter` function, which takes the `spe` object, patch assignments, meta-analysis results, and other relevant data as input.
+
+```{r scenario1-interactive-plotter, eval=FALSE}
+#| fig-width: 8
+#| fig-height: 6
+
+# Add X1 to the spe object for interactive plotting
+spe$X1 <- X1
+rownames(coords) <- colnames(spe)
+
+runInteractivePlotter(
+  spe = spe,
+  patches = patches1,
+  metats = metats1,
+  patch_data = patch_data1,
+  meaningful_vars = c("tier1", "tier2", "tier3", "leiden_neigh", "X1")
+)      
+```
+
+## Scenario 2: Stem Cell Niche (Maturation Gradient)
+
+As for scenario 1, we compute the meta-analysis Z-scores for Scenario 2 and identify the top genes that are significantly up- or down-regulated across patches. We then visualize the results using a heatmap, similar to what we did for Scenario 1.
+
+```{r scenario2-meta-summary}
+# Get the meta-analysis Z-scores for Scenario 2
+metats2 <- meta_res2[[1]]$ests / meta_res2[[1]]$ses
+
+significance_df2 <- data.frame(
+  gene = rownames(metats2),
+  sig_fraction = rowMeans(abs(metats2) > 2, na.rm = TRUE),
+  up = rowMeans(metats2 > 2, na.rm = TRUE),
+  down = rowMeans(metats2 < -2, na.rm = TRUE)
+)
+
+top_genes2 <- rownames(significance_df2)[
+    order(significance_df2$sig_fraction, decreasing = TRUE)][1:50]
+top_up_genes2 <- rownames(significance_df2)[
+    order(significance_df2$up, decreasing = TRUE)][1:10]
+top_down_genes2 <- rownames(significance_df2)[
+    order(significance_df2$down, decreasing = TRUE)][1:10] 
+```
+
+```{r scenario2-heatmap, fig.width=25, fig.height=10, fig.cap="Meta-analysis heatmap for Scenario 2: Stem Cell Niche. Rows are the 50 genes most recurrently associated with distance from the stem-cell niche and columns are epithelial patches. Colors show meta-analysis Z-scores, capped at -5 and 5. Top annotations show epithelial-subtype composition, tissue-neighborhood composition, and mean distance from the nearest stem cell in the original spatial scale."}
+#| fig-width: 25
+#| fig-height: 10
+
+# 1. Data Preparation
+metats_plot <- metats2[top_genes2, ]
+metats_plot[is.na(metats_plot)] <- 0
+metats_plot[metats_plot > 5] <- 5
+metats_plot[metats_plot < -5] <- -5
+
+# 2. Prepare Composition
+comp <- table(cell_types_detailed[use2], patches2)
+comp <- prop.table(comp, margin = 2)
+comp <- comp[rowSums(comp) > 0, ]
+comp <- as.matrix(comp)
+
+# Align comp columns and metats_plot columns,
+# then transpose comp to have rows = patches, columns = cell types
+comp <- comp[, colnames(metats_plot), drop = FALSE]
+comp_t <- t(comp)   # righe = patches, colonne = cell types
+stopifnot(identical(rownames(comp_t), colnames(metats_plot)))
+
+# 4. Prepare Neighbor Composition
+compN <- table(spe$leiden_neigh[use2], patches2)
+compN <- prop.table(compN, margin = 2)
+compN <- compN[rowSums(compN) > 0, ]
+compN <- as.matrix(compN)
+
+# Align compN columns and metats_plot columns,
+# then transpose compN to have rows = patches, columns = Neighborhood
+compN <- compN[, colnames(metats_plot), drop = FALSE]
+compN_t <- t(compN)   # righe = patches, colonne = cell types
+stopifnot(identical(rownames(compN_t), colnames(metats_plot)))
+
+# 4. Prepare Distance Annotation. X2 is log(distance + 1), so transform it
+# back to the original spatial scale before computing the patch mean.
+avg_dist2stem <- align_patch_annotation(
+  values = expm1(X2[use2]),
+  patches = patches2,
+  matrix_columns = colnames(metats_plot),
+  label = "Average Distance to Stem Cell"
+)
+
+# 5. Create Heatmap
+ht2 <- Heatmap(
+  metats_plot,
+  name = "Meta Z-score",
+  col = circlize::colorRamp2(c(-5, 0, 5), c("blue", "white", "red")),
+  cluster_rows = TRUE,
+  row_split = 4,
+  column_split = 3,
+  cluster_columns = TRUE,
+  show_row_names = TRUE,
+  show_column_names = TRUE,
+  top_annotation = HeatmapAnnotation(
+    "Cell type composition" = anno_barplot(
+      comp_t,
+      gp = gpar(fill = spe@metadata$epithelial_subtype_colors[colnames(comp_t)], col = NA),
+      bar_width = 1,
+      bar_height = unit(10, "cm"),
+      border = FALSE
+    ),
+    "Neighborhood composition" = anno_barplot(
+      compN_t,
+      gp = gpar(fill = spe@metadata$neighbor_colors[colnames(compN_t)], col = NA),
+      bar_width = 1,
+      bar_height = unit(10, "cm"),
+      border = FALSE
+    ),
+    "Average Distance to Stem Cell" = anno_simple(
+      avg_dist2stem,
+      col = circlize::colorRamp2(c(min(avg_dist2stem), max(avg_dist2stem)), c("white", "black")),
+      height = unit(0.5, "cm")
+    ),
+    annotation_name_side = "right"
+  )
+)
+
+# Legends
+lgd_composition <- Legend(
+  labels = colnames(comp_t),
+  legend_gp = gpar(fill = spe@metadata$epithelial_subtype_colors[colnames(comp_t)]),
+  title = "Cell type",
+  ncol = 1   # disposizione orizzontale, utile quando le legende stanno sotto
+)
+lgd_compositionN <- Legend(
+  labels = colnames(compN_t),
+  legend_gp = gpar(fill = spe@metadata$neighbor_colors[colnames(compN_t)]),
+  title = "Neighborhood",
+  ncol = 1   # disposizione orizzontale, utile quando le legende stanno sotto
+)
+lgd_exposure <- Legend(
+  title = "Average Distance to Stem Cell (X)",
+  col_fun = circlize::colorRamp2(c(min(avg_dist2stem), max(avg_dist2stem)), c("white", "black")),
+  legend_height = unit(4, "cm")
+)
+
+# pdf("stem_meta_heatmap.pdf", width = 25, height = 10)
+ht2 <- draw(
+  ht2,
+  heatmap_legend_side = "right",
+  annotation_legend_side = "right",
+  annotation_legend_list = list(lgd_composition, lgd_compositionN, lgd_exposure)
+)
+# dev.off()
+```
+
+The heatmap reveals both conserved and context-dependent transcriptional associations with distance from the stem-cell niche. Across the three patch groups, several proliferation- and Wnt-associated genes (a pathway that maintains stem-cell identity and proliferation), including Mki67, Mcm2, Foxm1, Axin2, Rnf43, and Znrf3, show predominantly negative Z-scores, indicating higher expression near the stem-cell niche and decreasing expression with increasing distance. This pattern is consistent with the expected transition from stem and transit-amplifying cells toward differentiated epithelial states. 
+
+In contrast, genes such as Vegfa, L1cam, Vil1, and Sdc1 display patch-context-dependent associations. For example, Vegfa is positively associated with distance in patch Clusters 1 and 3 but negatively associated in Cluster 2, whereas L1cam is negatively associated with distance in Clusters 1 and 3 and shows a weaker or different association in Cluster 2. These results suggest that the core proliferative maturation gradient is broadly conserved, while angiogenic, barrier-related, and regenerative components are modulated by the local microenvironment.
+
+```{r scenario2-gene-maps, fig.width=12, fig.height=6, fig.cap="Spatial distribution of Axin2 and Vegfa meta-analysis Z-scores in Scenario 2. Patch color represents the direction and strength of association with distance from the nearest stem cell; stem cells are overlaid in green and non-epithelial cells in grey. Axin2 illustrates the conserved niche-associated gradient, whereas Vegfa illustrates a context-dependent association."}
+#| fig-width: 12
+#| fig-height: 6
+# Add the Vegfa and Axin2 Z-scores to the poly_df2 for visualization
+patch_ord <- match(poly_df2$patch, colnames(metats2))
+poly_df2$Vegfa <- metats2["Vegfa", patch_ord]
+poly_df2$Axin2 <- metats2["Axin2", patch_ord]
+
+p_axin2 <- ggplot(coords, aes(x = x, y = y)) +
+    geom_point(data = coords[!use2, ], aes(x = x, y = y), 
+        color = "grey", size = 0.1) +
+    geom_polygon(data = poly_df2, aes(x = x, y = y, group = patch, fill = Axin2),
+        color = "white", linewidth = 0.5) +
+    geom_point(data = coords[spe$tier2 == "Stem cells", ], aes(x = x, y = y, color = "Stem cell"), size = 0.1, alpha = 0.5) +
+    coord_fixed() +
+    theme_minimal() +
+    scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+    scale_color_manual(values = c("Stem cell" = "green")) +
+    labs(title = "Spatial Distribution of Axin2 Z-scores", 
+        subtitle = "Scenario: Stem Cell Niche", color = "Highlight") +
+    theme(legend.position = "right") +
+    guides(color = guide_legend(override.aes = list(size = 3)))
+
+p_vegfa <- ggplot(coords, aes(x = x, y = y)) +
+    geom_point(data = coords[!use2, ], aes(x = x, y = y), 
+        color = "grey", size = 0.1) +
+    geom_polygon(data = poly_df2, aes(x = x, y = y, group = patch, fill = Vegfa),
+        color = "white", linewidth = 0.5) +
+    geom_point(data = coords[spe$tier2 == "Stem cells", ], aes(x = x, y = y, color = "Stem cell"), size = 0.1, alpha = 0.5) +
+    coord_fixed() +
+    theme_minimal() +
+    scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+    scale_color_manual(values = c("Stem cell" = "green")) +
+    labs(title = "Spatial Distribution of Vegfa Z-scores", 
+        subtitle = "Scenario: Stem Cell Niche", color = "Highlight") +
+    theme(legend.position = "right") +
+    guides(color = guide_legend(override.aes = list(size = 3)))
+
+(p_axin2 | p_vegfa) + 
+    plot_layout(guides = "collect") & 
+    theme(legend.position = "bottom")
+```
+
+## Scenario 3: Macrophage State (Barrier vs Vascular)
+
+Finally, we examine whether macrophage transcriptional state changes along the axis from the epithelial barrier to the vascular compartment. 
+
+We rank genes using the same recurrence criterion applied in the first two scenarios and visualize the leading associations across macrophage patches.
+
+```{r scenario3-meta-summary}
+# Get the meta-analysis Z-scores for Scenario 3
+metats3 <- meta_res3[[1]]$ests / meta_res3[[1]]$ses
+
+significance_df3 <- data.frame(
+  gene = rownames(metats3),
+  sig_fraction = rowMeans(abs(metats3) > 2, na.rm = TRUE),
+  up = rowMeans(metats3 > 2, na.rm = TRUE),
+  down = rowMeans(metats3 < -2, na.rm = TRUE)
+)
+
+top_genes3 <- rownames(significance_df3)[
+    order(significance_df3$sig_fraction, decreasing = TRUE)][1:50]
+top_up_genes3 <- rownames(significance_df3)[
+    order(significance_df3$up, decreasing = TRUE)][1:10]
+top_down_genes3 <- rownames(significance_df3)[
+    order(significance_df3$down, decreasing = TRUE)][1:10] 
+```
+
+```{r scenario3-heatmap, fig.width=10, fig.height=10, fig.cap="Meta-analysis heatmap for Scenario 3: Macrophage State. Rows are the 50 genes most recurrently associated with normalized endothelial proximity and columns are macrophage patches. Colors show meta-analysis Z-scores, capped at -5 and 5. Top annotations show macrophage-subtype composition, tissue-neighborhood composition, and mean normalized endothelial proximity, ranging from epithelium-proximal (0) to vessel-proximal (1)."}
+#| fig-width: 10
+#| fig-height: 10
+
+# 1. Data Preparation
+metats_plot <- metats3[top_genes3, ]
+metats_plot[is.na(metats_plot)] <- 0
+metats_plot[metats_plot > 5] <- 5
+metats_plot[metats_plot < -5] <- -5
+
+# 2. Prepare Composition
+comp <- table(cell_types_detailed[use3], patches3)
+comp <- prop.table(comp, margin = 2)
+comp <- comp[rowSums(comp) > 0, ]
+comp <- as.matrix(comp)
+
+# Align comp columns and metats_plot columns,
+# then transpose comp to have rows = patches, columns = cell types
+comp <- comp[, colnames(metats_plot), drop = FALSE]
+comp_t <- t(comp)   # righe = patches, colonne = cell types
+stopifnot(identical(rownames(comp_t), colnames(metats_plot)))
+
+# 4. Prepare Neighbor Composition
+compN <- table(spe$leiden_neigh[use3], patches3)
+compN <- prop.table(compN, margin = 2)
+compN <- compN[rowSums(compN) > 0, ]
+compN <- as.matrix(compN)
+
+# Align compN columns and metats_plot columns,
+# then transpose compN to have rows = patches, columns = Neighborhood
+compN <- compN[, colnames(metats_plot), drop = FALSE]
+compN_t <- t(compN)   # righe = patches, colonne = cell types
+stopifnot(identical(rownames(compN_t), colnames(metats_plot)))
+
+# 4. Prepare Distance Annotation. 
+avg_normalized_endothelial_proximity <- align_patch_annotation(
+  values = X3[use3],
+  patches = patches3,
+  matrix_columns = colnames(metats_plot),
+  label = "Average Normalized Endothelial Proximity"
+)
+
+# 5. Create Heatmap
+ht3 <- Heatmap(
+  metats_plot,
+  name = "Meta Z-score",
+  col = circlize::colorRamp2(c(-5, 0, 5), c("blue", "white", "red")),
+  cluster_rows = TRUE,
+  row_split = 4,
+  column_split = 3,
+  cluster_columns = TRUE,
+  show_row_names = TRUE,
+  show_column_names = TRUE,
+  top_annotation = HeatmapAnnotation(
+    "Cell type composition" = anno_barplot(
+      comp_t,
+      gp = gpar(fill = setNames(c("darkblue", "lightgreen", "lightcoral"), colnames(comp_t)), col = NA),
+      bar_width = 1,
+      bar_height = unit(10, "cm"),
+      border = FALSE
+    ),
+    "Neighborhood composition" = anno_barplot(
+      compN_t,
+      gp = gpar(fill = spe@metadata$neighbor_colors[colnames(compN_t)], col = NA),
+      bar_width = 1,
+      bar_height = unit(10, "cm"),
+      border = FALSE
+    ),
+    "Average Normalized Endothelial Proximity" = anno_simple(
+      avg_normalized_endothelial_proximity,
+      col = circlize::colorRamp2(c(min(avg_normalized_endothelial_proximity), max(avg_normalized_endothelial_proximity)), c("white", "black")),
+      height = unit(0.5, "cm")
+    ),
+    annotation_name_side = "right"
+  )
+)
+
+# Legends
+lgd_composition <- Legend(
+  labels = colnames(comp_t),
+  legend_gp = gpar(fill = setNames(c("darkblue", "lightgreen", "lightcoral"), colnames(comp_t))),
+  title = "Cell type",
+  ncol = 1   # disposizione orizzontale, utile quando le legende stanno sotto
+)
+lgd_compositionN <- Legend(
+  labels = colnames(compN_t),
+  legend_gp = gpar(fill = spe@metadata$neighbor_colors[colnames(compN_t)]),
+  title = "Neighborhood",
+  ncol = 1   # disposizione orizzontale, utile quando le legende stanno sotto
+)
+lgd_normalized_endothelial_proximity <- Legend(
+  title = "Average Normalized Endothelial Proximity",
+  col_fun = circlize::colorRamp2(c(min(avg_normalized_endothelial_proximity), max(avg_normalized_endothelial_proximity)), c("white", "black")),
+  legend_height = unit(4, "cm")
+)
+
+# pdf("macrophages_heatmap.pdf", width = 10, height = 10)
+ht3 <- draw(
+  ht3,
+  heatmap_legend_side = "right",
+  annotation_legend_side = "right",
+  annotation_legend_list = list(lgd_composition, lgd_compositionN, lgd_normalized_endothelial_proximity)
+)
+# dev.off()
+```
+
+The heatmap reveals a broad transcriptional gradient along the epithelial-to-vascular axis, together with substantial context dependence across the three patch clusters. Because the explanatory variable values increase with relative proximity to endothelial cells, positive meta-analysis Z-scores identify genes whose expression increases toward the vascular compartment, whereas negative Z-scores indicate genes associated with the epithelial side of the axis. 
+
+Several macrophage-lineage and tissue-resident genes, including *Lyve1*, *Csf1r*, *Clec10a*, *Mrc1*, and *Pf4*, show predominantly positive associations, especially in patches of Clusters 2 and 3. Together with the positive signals for *Ednrb*, *Fgfr1*, *Il6ra*, and *Col8a1*, this is consistent with a vessel-associated macrophage state adapted to perivascular trophic, extracellular-matrix, and homeostatic signaling.
+
+In contrast, genes such as *Vil1*, *Yap1*, *Bmp3*, *Bmp5*, and *Il17rc* display broadly negative Z-scores, indicating stronger expression in macrophages positioned toward the epithelial compartment. A second group, including *Cx3cr1*, *Clcf1*, and *Nlrp1b*, is most clearly negative in Cluster 3, suggesting that the epithelial-associated program is also shaped by the local neighborhood rather than representing a single uniform macrophage state.
+
+The comparison among patch clusters further highlights this spatial heterogeneity. For example, *Mrc1*, *Ninj1*, *Ednrb*, *Fgfr1*, and *Pf4* are positively associated with vascular proximity in Clusters 2 and 3 but weakly or negatively associated in Cluster 1. Conversely, *Cxcl12*, *Col4a3*, and *Glg1* show positive associations in Clusters 1 and 3 but little or opposite association in Cluster 2. These reversals indicate that position relative to the epithelium and vasculature does not act independently of macrophage subtype and tissue neighborhood. Overall, the analysis supports a continuum between barrier-associated and vascular-associated macrophage programs, while showing that the transcriptional response along this axis is modulated by the surrounding cellular context.
+
+```{r scenario3-cluster-map, fig.width=8, fig.height=6, fig.cap="Spatial distribution of macrophage states in Scenario 3. Retained patches are colored by the column cluster assigned in the meta-analysis heatmap, macrophages are colored by Tier 2 subtype, and all other cells are shown in grey as anatomical context."}
+#| fig-width: 8
+#| fig-height: 6
+
+# Fill patches by cluster color and color macrophages by their subtype
+# Get the patches cluster assignments from the heatmap
+patch_clusters <- column_order(ht3)
+names(patch_clusters) <- 1:length(patch_clusters)
+
+# Add cluster labels to the poly_df3 object
+poly_df3$cluster <- NA_character_
+for(i in seq_along(patch_clusters)) {
+  poly_df3$cluster[
+    poly_df3$patch %in% colnames(metats_plot)[patch_clusters[[i]]]
+  ] <- paste0("Cluster ", i)
+}
+
+p_macrophages <- ggplot(coords, aes(x = x, y = y)) +
+    geom_point(data = coords[!use3, ], aes(x = x, y = y), 
+        color = "grey", size = 0.1) +
+    geom_polygon(data = poly_df3, aes(x = x, y = y, group = patch, fill = cluster),
+        color = "white", linewidth = 0.5) +
+    geom_point(data = coords[grepl("Macrophage", spe$tier2), ], aes(x = x, y = y, color = spe$tier2[grepl("Macrophage", spe$tier2)]), 
+        size = 1, alpha = 0.5) +
+    coord_fixed() +
+    theme_minimal() +
+    scale_fill_manual(values = c(
+        "Cluster 1" = "#1f78b4", 
+        "Cluster 2" = "#33a02c", 
+        "Cluster 3" = "#e31a1c")) +
+    scale_color_manual(values = setNames(c("darkblue", "lightgreen", "lightcoral"), colnames(comp_t))) +
+    labs(title = "Spatial Distribution of Macrophage Clusters", 
+        subtitle = "Scenario: Macrophage States", color = "Macrophage Subtype") +
+    theme(legend.position = "right") +
+    guides(color = guide_legend(override.aes = list(size = 3)))
+
+p_macrophages
+```
