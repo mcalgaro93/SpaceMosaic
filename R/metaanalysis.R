@@ -52,7 +52,7 @@ patchMetaAnalysis <- function(DEobj, W, k = 15,
                               min_patches = 3) {
   ## restrict to patches present in DE results
   de_patches <- colnames(DEobj[[1]]$ests)
-  shared_patches <- intersect(rownames(W), de_patches)
+  shared_patches <- intersect(de_patches, rownames(W))
   W <- W[shared_patches, , drop = FALSE]
 
   ## cap k
