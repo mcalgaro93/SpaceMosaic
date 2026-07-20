@@ -617,15 +617,10 @@ de_res2 <- patchDE(
 
 # 3.2 Define Patch Embeddings (W)
 # We average the Z-embeddings of cells within each patch
-Z2 <- Z[use2, ]
-W2 <- c()
-for(p in colnames(de_res2[[1]][[1]])) {
-  inds <- patches2 == p & !is.na(patches2)
-  if(sum(inds) > 0) {
-    W2 <- rbind(W2, colMeans(Z2[inds, , drop=FALSE]))
-  }
-}
-rownames(W2) <- colnames(de_res2[[1]][[1]])
+W2 <- getPatchAttributes(
+  Z = Z[use2, , drop = FALSE],
+  patch = patches2
+)
 
 # 3.3 Perform Meta-analysis
 meta_res2 <- patchMetaAnalysis(DEobj = de_res2, W = W2, k = 10)
