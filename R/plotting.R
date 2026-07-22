@@ -1,26 +1,97 @@
-#' Find rough polygon boundaries of patches for visualizations
-#' @param xy Cells' xy positions
-#' @param patch Vector of patch assignments, aligned to the rows of xy
-#' @return A named list of polygons, one per patch
+#' Get patch polygons for visualization
+#'
+#' Computes the convex hull of every patch containing at least three cells and
+#' returns the vertices in a tidy data frame ready for
+#' `ggplot2::geom_polygon()`. Optional patch-level annotations (for example a
+#' cluster, group, size, or a user-computed diagnostic) are joined to every
+#' vertex by patch identifier.
+#'
+#' @param xy Cells' xy positions. The first two columns are used as coordinates.
+#' @param patch Vector of patch assignments, aligned to the rows of `xy`.
+#' @param patch_data Optional data frame containing one row per patch. It must
+#'   contain a `patch` column, or have patch identifiers as row names. Any
+#'   additional columns are included in the result.
+#' @return A data frame with columns `x`, `y`, and `patch`, followed by any
+#'   columns supplied in `patch_data`. Patches with fewer than three cells are
+#'   omitted.
+#' @examples
+#' xy <- matrix(c(0, 0, 1, 0, 0, 1, 3, 3, 4, 3, 3, 4), ncol = 2, byrow = TRUE)
+#' patch <- rep(c("A", "B"), each = 3)
+#' info <- data.frame(patch = c("A", "B"), cluster = c("Cluster 1", "Cluster 2"))
+#' getPatchPolys(xy, patch, patch_data = info)
 #' @export
-getPatchPolys <- function(xy, patch) {
-  polys <- list()
-  cluster_levels <- unique(patch)
-  for (i in seq_along(unique(patch))) {
-    k <- cluster_levels[i]
-    idx <- which(patch == k)
-    
-    # Only attempt hull if >= 3 points
-    if (length(idx) >= 3) {
-      pts_k <- xy[idx, , drop = FALSE]       # M_k × 2 matrix of points in cluster k
-      hull_indices <- chull(pts_k)           # indices (1..M_k) along the convex hull
-      polys[[i]]  <- pts_k[hull_indices, ]       # hull vertices, in order
-      names(polys)[i] <- unique(patch)[i]
-    }
+getPatchPolys <- function(xy, patch, patch_data = NULL) {
+  xy <- as.matrix(xy)
+  if (ncol(xy) < 2L) stop("xy must contain at least two coordinate columns.")
+  if (!is.numeric(xy[, 1]) || !is.numeric(xy[, 2])) {
+    stop("The first two columns of xy must be numeric.")
   }
-  return(polys)
+  if (nrow(xy) != length(patch)) {
+    stop("length(patch) must equal nrow(xy).")
+  }
+
+  patch <- as.character(patch)
+  patch_ids <- unique(patch[!is.na(patch)])
+  polygons <- lapply(patch_ids, function(id) {
+    idx <- which(!is.na(patch) & patch == id)
+    if (length(idx) < 3L) return(NULL)
+
+    points <- xy[idx, 1:2, drop = FALSE]
+    hull <- grDevices::chull(points[, 1], points[, 2])
+    data.frame(
+      x = points[hull, 1],
+      y = points[hull, 2],
+      patch = id,
+      stringsAsFactors = FALSE
+    )
+  })
+  polygons <- Filter(Negate(is.null), polygons)
+  if (length(polygons) == 0L) {
+    out <- data.frame(x = numeric(), y = numeric(), patch = character())
+  } else {
+    out <- do.call(rbind, polygons)
+    rownames(out) <- NULL
+  }
+
+  if (is.null(patch_data)) return(out)
+  patch_data <- .normalizePatchData(patch_data)
+  annotation_names <- setdiff(names(patch_data), "patch")
+  if (length(annotation_names) == 0L) return(out)
+  if (any(annotation_names %in% c("x", "y"))) {
+    stop("patch_data cannot contain columns named 'x' or 'y'.")
+  }
+
+  annotation_rows <- match(out$patch, patch_data$patch)
+  out <- cbind(out, patch_data[annotation_rows, annotation_names, drop = FALSE])
+  rownames(out) <- NULL
+  out
 }
 
+.normalizePatchData <- function(patch_data) {
+  patch_data <- as.data.frame(patch_data, stringsAsFactors = FALSE)
+  if (!"patch" %in% names(patch_data)) {
+    ids <- rownames(patch_data)
+    default_ids <- identical(ids, as.character(seq_len(nrow(patch_data))))
+    if (is.null(ids) || default_ids) {
+      stop("patch_data must contain a 'patch' column or patch identifiers as row names.")
+    }
+    patch_data <- data.frame(
+      patch = ids,
+      patch_data,
+      row.names = NULL,
+      check.names = FALSE
+    )
+  }
+
+  patch_data$patch <- as.character(patch_data$patch)
+  if (anyNA(patch_data$patch) || any(!nzchar(patch_data$patch))) {
+    stop("Patch identifiers in patch_data cannot be missing or empty.")
+  }
+  if (anyDuplicated(patch_data$patch)) {
+    stop("patch_data must contain at most one row per patch.")
+  }
+  patch_data
+}
 
 #' Plot patch assignments at each iteration
 #'
@@ -65,9 +136,10 @@ plotPatchIterations <- function(xy, result, iters = NULL,
     graphics::plot(xy, pch = 16, cex = cex, col = cellcols,
                    main = paste0("Iteration ", it),
                    xlab = "", ylab = "", asp = 1)
-    polys <- getPatchPolys(xy, patches)
-    for (p in polys) {
-      if (!is.null(p)) graphics::polygon(p[, 1], p[, 2], border = "black", lwd = 1.5)
+    polygons <- getPatchPolys(xy, patches)
+    for (id in unique(polygons$patch)) {
+      p <- polygons[polygons$patch == id, , drop = FALSE]
+      graphics::polygon(p$x, p$y, border = "black", lwd = 1.5)
     }
   }
 }
