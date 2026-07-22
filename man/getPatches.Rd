@@ -17,6 +17,12 @@ getPatches(
   mahal_radius = 3,
   n_candidates = 20,
   n_iters = 15,
+  init_method = c("kmeans", "gradient_ellipse"),
+  init_gradient_k = 30,
+  init_gradient_elongation = 4,
+  x_weighted_ellipse_second_pass = FALSE,
+  x_ellipse_gamma = 1,
+  x_ellipse_wmax = 3,
   log_iters = TRUE,
   verbose = TRUE
 )
@@ -68,6 +74,28 @@ slower. Rarely needs tuning unless npatches is very large (>1000).}
 \item{n_iters}{Number of outer iterations. Typical range 10--30; default 15.
 Convergence is usually reached by 10--15; raise if patches are still
 shifting at the final iteration (check membership_log).}
+
+\item{init_method}{Initialization method for patch seeds. "kmeans" uses
+isotropic k-means seeding (default). "gradient_ellipse" orients initial
+ellipses along the local spatial gradient of X. The gradient_ellipse
+option currently requires ncol(X) = 1.}
+
+\item{init_gradient_k}{Number of nearest neighbors used to estimate local
+spatial gradients of X when init_method = "gradient_ellipse".}
+
+\item{init_gradient_elongation}{Target initial ellipse elongation ratio
+(major/minor eigenvalue ratio) for init_method = "gradient_ellipse".}
+
+\item{x_weighted_ellipse_second_pass}{Logical; if TRUE, the ellipse re-fit in
+step (c) up-weights cells whose X is farther from their patch mean. This
+can encourage elongated patches along smooth X gradients while keeping step
+(d) spatial-only. Applied only when ncol(X) = 1.}
+
+\item{x_ellipse_gamma}{Strength of X-based up-weighting in second-pass
+ellipse fitting. 0 disables weighting; typical range 0.5--1.5.}
+
+\item{x_ellipse_wmax}{Cap on standardized X-deviation used in the weighting
+rule to limit outlier influence. Typical range 2--4.}
 
 \item{log_iters}{If TRUE, return a list with patch assignments plus
 per-iteration diagnostics (SS per patch and membership). Default TRUE.}

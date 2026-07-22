@@ -4,7 +4,7 @@
 #   Rscript dev/getPatches_tuning_sandbox.R
 
 
-runname <- "oldpass2-alpha0beta1hunger2mahal12"
+runname <- "initgrad-newpass2-alpha0beta1hunger2mahal12"
 
 
 npatches <- 80
@@ -15,7 +15,10 @@ alpha <- 0           #.3
 beta <- 1            #.5
 hunger_weight <- 2   #.3
 mahal_radius <- 12    #3
-x_weighted_ellipse_second_pass <- FALSE
+init_method <- "gradient_ellipse"
+init_gradient_k <- 30
+init_gradient_elongation <- 8
+x_weighted_ellipse_second_pass <- TRUE
 x_ellipse_gamma <- 1
 x_ellipse_wmax <- 3
 
@@ -97,12 +100,15 @@ message(
   sprintf(
     paste0(
       "Running getPatches | alpha=%.2f beta=%.2f hunger=%.2f mahal=%.2f ",
-      "xw2=%s gamma=%.2f wmax=%.2f"
+      "init=%s gk=%d gelong=%.2f xw2=%s gamma=%.2f wmax=%.2f"
     ),
     alpha,
     beta,
     hunger_weight,
     mahal_radius,
+    init_method,
+    init_gradient_k,
+    init_gradient_elongation,
     as.character(x_weighted_ellipse_second_pass),
     x_ellipse_gamma,
     x_ellipse_wmax
@@ -123,6 +129,9 @@ result <- getPatches(
   mahal_radius = mahal_radius,
   n_candidates = n_candidates,
   n_iters = n_iters,
+  init_method = init_method,
+  init_gradient_k = init_gradient_k,
+  init_gradient_elongation = init_gradient_elongation,
   x_weighted_ellipse_second_pass = x_weighted_ellipse_second_pass,
   x_ellipse_gamma = x_ellipse_gamma,
   x_ellipse_wmax = x_ellipse_wmax,
