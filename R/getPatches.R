@@ -50,9 +50,11 @@
 #'   ellipses along the local spatial gradient of X. The gradient_ellipse
 #'   option currently requires ncol(X) = 1.
 #' @param init_gradient_k Number of nearest neighbors used to estimate local
-#'   spatial gradients of X when init_method = "gradient_ellipse".
+#'   spatial gradients of X when init_method = "gradient_ellipse". Must be a
+#'   finite integer greater than or equal to 3.
 #' @param init_gradient_elongation Target initial ellipse elongation ratio
-#'   (major/minor eigenvalue ratio) for init_method = "gradient_ellipse".
+#'   (major/minor eigenvalue ratio) for init_method = "gradient_ellipse". Must
+#'   be finite and greater than or equal to 1.
 #' @param x_weighted_ellipse_second_pass Logical; if TRUE, the ellipse re-fit in
 #'   step (c) up-weights cells whose X is farther from their patch mean. This
 #'   can encourage elongated patches along smooth X gradients while keeping step
@@ -290,6 +292,22 @@ getPatches <- function(xy, X, npatches,
 .initGradientEllipse <- function(xy, x, npatches, max_elongation,
                                  gradient_k = 30,
                                  target_elongation = 4) {
+  if (length(gradient_k) != 1L ||
+      !is.numeric(gradient_k) ||
+      !is.finite(gradient_k) ||
+      gradient_k < 3 ||
+      gradient_k != floor(gradient_k)) {
+    stop("gradient_k must be a single finite integer greater than or equal to 3.",
+         call. = FALSE)
+  }
+  if (length(target_elongation) != 1L ||
+      !is.numeric(target_elongation) ||
+      !is.finite(target_elongation) ||
+      target_elongation < 1) {
+    stop("target_elongation must be a single finite number greater than or equal to 1.",
+         call. = FALSE)
+  }
+
   patch <- .initKmeans(xy, npatches)
   params <- .estimateEllipses(xy, patch, max_elongation)
 
@@ -324,7 +342,9 @@ getPatches <- function(xy, X, npatches,
     S_oriented <- R %*% diag(c(lam_major, lam_minor)) %*% t(R)
     S_oriented <- .regularizeCov(S_oriented, max_elongation)
     params$inv_covmats[[p]] <- solve(S_oriented)
-    params$log_det[p] <- log(det(S_oriented))
+    params$log_det[p] <- as.numeric(
+      determinant(S_oriented, logarithm = TRUE)$modulus
+    )
   }
 
   list(patch = patch, params = params)
@@ -427,7 +447,9 @@ getPatches <- function(xy, X, npatches,
     }
     S <- .regularizeCov(S, max_elongation)
     inv_covmats[[pnames[j]]] <- solve(S)
-    log_det[pnames[j]] <- log(det(S))
+    log_det[pnames[j]] <- as.numeric(
+      determinant(S, logarithm = TRUE)$modulus
+    )
   }
   list(centroids = centroids_mat, inv_covmats = inv_covmats,
        log_det = log_det, pnames = pnames)

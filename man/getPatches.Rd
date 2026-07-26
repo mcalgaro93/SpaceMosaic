@@ -81,10 +81,12 @@ ellipses along the local spatial gradient of X. The gradient_ellipse
 option currently requires ncol(X) = 1.}
 
 \item{init_gradient_k}{Number of nearest neighbors used to estimate local
-spatial gradients of X when init_method = "gradient_ellipse".}
+spatial gradients of X when init_method = "gradient_ellipse". Must be a
+finite integer greater than or equal to 3.}
 
 \item{init_gradient_elongation}{Target initial ellipse elongation ratio
-(major/minor eigenvalue ratio) for init_method = "gradient_ellipse".}
+(major/minor eigenvalue ratio) for init_method = "gradient_ellipse". Must
+be finite and greater than or equal to 1.}
 
 \item{x_weighted_ellipse_second_pass}{Logical; if TRUE, the ellipse re-fit in
 step (c) up-weights cells whose X is farther from their patch mean. This
