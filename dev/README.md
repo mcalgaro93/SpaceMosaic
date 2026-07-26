@@ -13,7 +13,7 @@ This folder is for ad hoc method development and tuning experiments.
 - getPatches_tuning_sandbox.R: main ad hoc tuning script.
 - tune_stem_cell_niche_patches.R: parameter sweep and biological/geometric
   diagnostics for long crypt-villus patches in vignette Scenario 2. Performance
-  is summarized directly by two biological metrics without a weighted score;
+  is summarized directly by two biological metrics;
   near-optimal runs are in the top 10% for both. An interpretable decision tree
   identifies parameter rules associated with those results. Independent
   configurations run in parallel on macOS/Linux; set `SPACEMOSAIC_WORKERS` to
