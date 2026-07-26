@@ -28,6 +28,11 @@ Imports:
     igraph,
     Matrix,
     spatstat.geom,
-    stats
+    stats,
+    utils
 Suggests:
+    ggplot2,
+    shiny,
+    SpatialExperiment,
+    SummarizedExperiment,
     testthat (>= 3.0.0)

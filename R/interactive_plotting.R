@@ -26,17 +26,13 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
     stop("Package 'SpatialExperiment' is required for this function. Please install it.")
   }
 
-  library(shiny)
-  library(ggplot2)
-  library(SpatialExperiment)
-
   # Extract coordinates and metadata
-  xy <- spatialCoords(spe)
+  xy <- SpatialExperiment::spatialCoords(spe)
   if (is.null(rownames(xy))) {
     rownames(xy) <- paste0("cell_", seq_len(nrow(xy)))
   }
 
-  meta <- as.data.frame(colData(spe))
+  meta <- as.data.frame(SummarizedExperiment::colData(spe))
 
   # Determine available variables for coloring and highlighting
   avail_vars <- if (!is.null(meaningful_vars)) {
@@ -160,14 +156,14 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
     grDevices::hcl.colors(n, palette = palette)
   }
 
-  ui <- fluidPage(
-    tags$head(
-      tags$script(HTML("
+  ui <- shiny::fluidPage(
+    shiny::tags$head(
+      shiny::tags$script(shiny::HTML("
         Shiny.addCustomMessageHandler('spaceMosaicDarkMode', function(enabled) {
           document.body.classList.toggle('space-mosaic-dark', enabled);
         });
       ")),
-      tags$style(HTML("
+      shiny::tags$style(shiny::HTML("
           body,
           .well,
           .form-control,
@@ -329,42 +325,42 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
           }
         "))
     ),
-    titlePanel("SpaceMosaic Interactive Plotter"),
-    sidebarLayout(
-      sidebarPanel(
-        wellPanel(
-          h4("Layer Management"),
-          p("Define the order of visual layers from bottom to top to control occlusion."),
-          selectInput("layer_order", "Layer Order (Bottom to Top)", 
+    shiny::titlePanel("SpaceMosaic Interactive Plotter"),
+    shiny::sidebarLayout(
+      shiny::sidebarPanel(
+        shiny::wellPanel(
+          shiny::h4("Layer Management"),
+          shiny::p("Define the order of visual layers from bottom to top to control occlusion."),
+          shiny::selectInput("layer_order", "Layer Order (Bottom to Top)",
                       choices = available_layers, 
                       selected = available_layers, 
                       multiple = TRUE)
         ),
 
-        wellPanel(
-          h4("Appearance"),
-          div(
+        shiny::wellPanel(
+          shiny::h4("Appearance"),
+          shiny::div(
             class = "dark-mode-control",
-            checkboxInput("dark_mode", "Dark Mode", value = FALSE)
+            shiny::checkboxInput("dark_mode", "Dark Mode", value = FALSE)
           ),
-          p("Use a dark background for the interface, spatial map, and legend."),
-          tags$hr(),
-          div(
+          shiny::p("Use a dark background for the interface, spatial map, and legend."),
+          shiny::tags$hr(),
+          shiny::div(
             class = "export-buttons",
-            downloadButton(
+            shiny::downloadButton(
               "download_plot_code", "Export R code",
               class = "btn-primary"
             ),
-            downloadButton(
+            shiny::downloadButton(
               "download_plot_png", "Export PNG",
               class = "btn-success"
             ),
-            downloadButton(
+            shiny::downloadButton(
               "download_plot_pdf", "Export PDF",
               class = "btn-danger"
             )
           ),
-          helpText(
+          shiny::helpText(
             paste0(
               "Download the current view as reproducible ggplot2 code, ",
               "a high-resolution PNG, or a vector PDF."
@@ -372,48 +368,48 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
           )
         ),
 
-        wellPanel(
-          h4("Cell Coloring"),
-          p("Choose a metadata variable to color all cells and adjust their opacity."),
-          selectInput("color_var", "Color Cells By", 
+        shiny::wellPanel(
+          shiny::h4("Cell Coloring"),
+          shiny::p("Choose a metadata variable to color all cells and adjust their opacity."),
+          shiny::selectInput("color_var", "Color Cells By",
                       choices = avail_vars, 
                       selected = avail_vars[1]),
-          uiOutput("color_palette_ui"),
-          sliderInput("cell_alpha", "Cell Opacity", 0, 1, 0.5, 0.1)
+          shiny::uiOutput("color_palette_ui"),
+          shiny::sliderInput("cell_alpha", "Cell Opacity", 0, 1, 0.5, 0.1)
         ),
 
-        wellPanel(
-          h4("Cell Highlighting"),
-          p("Isolate specific cell categories and customize their highlight color."),
-          selectInput("highlight_var", "Highlight Variable", 
+        shiny::wellPanel(
+          shiny::h4("Cell Highlighting"),
+          shiny::p("Isolate specific cell categories and customize their highlight color."),
+          shiny::selectInput("highlight_var", "Highlight Variable",
                       choices = avail_vars, 
                       selected = avail_vars[1]),
-          uiOutput("highlight_categories_ui"),
-          selectInput("highlight_color", "Highlight Color", 
+          shiny::uiOutput("highlight_categories_ui"),
+          shiny::selectInput("highlight_color", "Highlight Color",
                       choices = c("Black" = "black", "Red" = "red", "Blue" = "blue", 
                                   "Green" = "green", "Yellow" = "yellow", "Magenta" = "magenta"), 
                       selected = "black"),
-          checkboxInput("grey_background", "Grey out other cells", value = TRUE)
+          shiny::checkboxInput("grey_background", "Grey out other cells", value = TRUE)
         ),
 
-        wellPanel(
-          h4("Patch Overlay"),
-          p("Color patches by a gene Z-score or any supplied patch annotation."),
-          checkboxInput("show_patches", "Show Patches", value = TRUE),
-          selectInput("patch_fill_var", "Color Patches By",
+        shiny::wellPanel(
+          shiny::h4("Patch Overlay"),
+          shiny::p("Color patches by a gene Z-score or any supplied patch annotation."),
+          shiny::checkboxInput("show_patches", "Show Patches", value = TRUE),
+          shiny::selectInput("patch_fill_var", "Color Patches By",
                       choices = patch_fill_choices,
                       selected = unname(patch_fill_choices[1])),
-          uiOutput("patch_fill_controls_ui"),
-          sliderInput("patch_alpha", "Patch Opacity", 0, 1, 0.5, 0.1)
+          shiny::uiOutput("patch_fill_controls_ui"),
+          shiny::sliderInput("patch_alpha", "Patch Opacity", 0, 1, 0.5, 0.1)
         )
       ),
-      mainPanel(
-        div(id = "main_panel_container",
-            div(id = "spatial_plot_container",
-                plotOutput("spatialPlot")
+      shiny::mainPanel(
+        shiny::div(id = "main_panel_container",
+            shiny::div(id = "spatial_plot_container",
+                shiny::plotOutput("spatialPlot")
             ),
-            div(id = "legend_panel",
-                uiOutput("legend_ui")
+            shiny::div(id = "legend_panel",
+                shiny::uiOutput("legend_ui")
             )
         )
       )
@@ -421,35 +417,35 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
   )
 
   server <- function(input, output, session) {
-    observe({
+    shiny::observe({
       session$sendCustomMessage(
         "spaceMosaicDarkMode",
         isTRUE(input$dark_mode)
       )
     })
 
-    output$color_palette_ui <- renderUI({
+    output$color_palette_ui <- shiny::renderUI({
       values <- meta[[input$color_var]]
 
       if (is.numeric(values)) {
-        return(tagList(
-          selectInput(
+        return(shiny::tagList(
+          shiny::selectInput(
             "color_palette", "Continuous Palette",
             choices = continuous_palette_choices,
             selected = "Viridis"
           ),
-          helpText("The palette is applied continuously across the observed range.")
+          shiny::helpText("The palette is applied continuously across the observed range.")
         ))
       }
 
       n_categories <- length(unique(values[!is.na(values)]))
-      tagList(
-        selectInput(
+      shiny::tagList(
+        shiny::selectInput(
           "color_palette", "Qualitative Palette",
           choices = qualitative_palette_choices,
           selected = "Automatic"
         ),
-        helpText(sprintf(
+        shiny::helpText(sprintf(
           paste0(
             "%d observed categories. Automatic uses Okabe-Ito up to 8, ",
             "Set 3 up to 12, and a dynamically generated HCL palette beyond 12."
@@ -460,20 +456,20 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
     })
 
     # Dynamic UI for highlight categories based on the selected variable
-    output$highlight_categories_ui <- renderUI({
+    output$highlight_categories_ui <- shiny::renderUI({
       var <- input$highlight_var
       cats <- sort(unique(meta[[var]]))
-      selectInput("highlight_cats", "Categories to Highlight", 
+      shiny::selectInput("highlight_cats", "Categories to Highlight",
                   choices = cats, 
                   multiple = TRUE)
     })
 
-    output$patch_fill_controls_ui <- renderUI({
+    output$patch_fill_controls_ui <- shiny::renderUI({
       fill_var <- input$patch_fill_var
       if (is.null(fill_var)) return(NULL)
 
       if (identical(fill_var, ".zscore")) {
-        return(selectInput(
+        return(shiny::selectInput(
           "gene_select", "Gene for Patch Fill",
           choices = rownames(metats),
           selected = rownames(metats)[1]
@@ -482,14 +478,14 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
 
       values <- poly_df[[fill_var]]
       if (is.numeric(values)) {
-        return(selectInput(
+        return(shiny::selectInput(
           "patch_palette", "Patch Palette",
           choices = continuous_palette_choices,
           selected = "Viridis"
         ))
       }
 
-      selectInput(
+      shiny::selectInput(
         "patch_palette", "Patch Palette",
         choices = qualitative_palette_choices,
         selected = "Automatic"
@@ -497,31 +493,31 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
     })
 
     # Reactive expression to build the base ggplot object
-    base_plot <- reactive({
+    base_plot <- shiny::reactive({
       is_dark <- isTRUE(input$dark_mode)
       background <- if (is_dark) "#161A1D" else "white"
       foreground <- if (is_dark) "#E8ECEF" else "#222222"
       grid_major <- if (is_dark) "#394047" else "#D9D9D9"
       grid_minor <- if (is_dark) "#292F34" else "#EEEEEE"
 
-      p <- ggplot() +
-        theme_minimal() +
-        coord_fixed() +
-        theme(
-          plot.background = element_rect(fill = background, color = NA),
-          panel.background = element_rect(fill = background, color = NA),
-          legend.background = element_rect(fill = background, color = NA),
-          legend.box.background = element_rect(fill = background, color = NA),
-          legend.key = element_rect(fill = background, color = NA),
-          text = element_text(color = foreground),
-          axis.text = element_text(color = foreground),
-          axis.title = element_text(color = foreground),
-          plot.title = element_text(color = foreground),
-          plot.subtitle = element_text(color = foreground),
-          legend.title = element_text(color = foreground),
-          legend.text = element_text(color = foreground),
-          panel.grid.major = element_line(color = grid_major),
-          panel.grid.minor = element_line(color = grid_minor)
+      p <- ggplot2::ggplot() +
+        ggplot2::theme_minimal() +
+        ggplot2::coord_fixed() +
+        ggplot2::theme(
+          plot.background = ggplot2::element_rect(fill = background, color = NA),
+          panel.background = ggplot2::element_rect(fill = background, color = NA),
+          legend.background = ggplot2::element_rect(fill = background, color = NA),
+          legend.box.background = ggplot2::element_rect(fill = background, color = NA),
+          legend.key = ggplot2::element_rect(fill = background, color = NA),
+          text = ggplot2::element_text(color = foreground),
+          axis.text = ggplot2::element_text(color = foreground),
+          axis.title = ggplot2::element_text(color = foreground),
+          plot.title = ggplot2::element_text(color = foreground),
+          plot.subtitle = ggplot2::element_text(color = foreground),
+          legend.title = ggplot2::element_text(color = foreground),
+          legend.text = ggplot2::element_text(color = foreground),
+          panel.grid.major = ggplot2::element_line(color = grid_major),
+          panel.grid.minor = ggplot2::element_line(color = grid_minor)
         )
 
       order <- input$layer_order
@@ -533,11 +529,11 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
           if (length(input$highlight_cats) > 0 && input$grey_background) {
             cell_df$bg_color <- ifelse(cell_df[[input$highlight_var]] %in% input$highlight_cats, 
                                        "highlight", "grey80")
-            p <- p + geom_point(data = cell_df, aes(x = x, y = y, color = bg_color), 
+            p <- p + ggplot2::geom_point(data = cell_df, ggplot2::aes(x = x, y = y, color = bg_color),
                                 size = 0.1, alpha = input$cell_alpha) +
-                  scale_color_manual(values = c("highlight" = "transparent", "grey80" = "grey80"), guide = "none")
+                  ggplot2::scale_color_manual(values = c("highlight" = "transparent", "grey80" = "grey80"), guide = "none")
           } else {
-            p <- p + geom_point(data = cell_df, aes(x = x, y = y, color = .data[[color_var]]), 
+            p <- p + ggplot2::geom_point(data = cell_df, ggplot2::aes(x = x, y = y, color = .data[[color_var]]),
                                 size = 0.1, alpha = input$cell_alpha)
 
             values <- meta[[color_var]]
@@ -547,7 +543,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
                   !selected_palette %in% continuous_palette_choices) {
                 selected_palette <- "Viridis"
               }
-              p <- p + scale_color_gradientn(
+              p <- p + ggplot2::scale_color_gradientn(
                 colors = grDevices::hcl.colors(256, selected_palette),
                 name = color_var,
                 na.value = "grey80"
@@ -566,12 +562,12 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
                 length(categories), selected_palette, dark = is_dark
               )
               names(colors) <- categories
-              p <- p + scale_color_manual(
+              p <- p + ggplot2::scale_color_manual(
                 values = colors,
                 name = color_var,
                 na.value = "grey80",
                 drop = TRUE,
-                guide = guide_legend(
+                guide = ggplot2::guide_legend(
                   override.aes = list(size = 3, alpha = 1)
                 )
               )
@@ -588,7 +584,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
               if (is.null(gene)) gene <- rownames(metats)[1]
               patch_columns <- match(plot_poly_df$patch, colnames(metats))
               plot_poly_df$.patch_value <- metats[gene, patch_columns]
-              fill_scale <- scale_fill_gradient2(
+              fill_scale <- ggplot2::scale_fill_gradient2(
                 low = "blue", mid = "white", high = "red", midpoint = 0,
                 name = paste0(gene, " Z-score"), na.value = "grey80"
               )
@@ -601,7 +597,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
                     !selected_palette %in% continuous_palette_choices) {
                   selected_palette <- "Viridis"
                 }
-                fill_scale <- scale_fill_gradientn(
+                fill_scale <- ggplot2::scale_fill_gradientn(
                   colors = grDevices::hcl.colors(256, selected_palette),
                   name = fill_var,
                   na.value = "grey80"
@@ -619,7 +615,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
                   length(categories), selected_palette, dark = is_dark
                 )
                 names(colors) <- categories
-                fill_scale <- scale_fill_manual(
+                fill_scale <- ggplot2::scale_fill_manual(
                   values = colors,
                   name = fill_var,
                   na.value = "grey80",
@@ -629,9 +625,9 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
             }
 
             p <- p +
-              geom_polygon(
+              ggplot2::geom_polygon(
                 data = plot_poly_df,
-                aes(x = x, y = y, group = patch, fill = .patch_value),
+                ggplot2::aes(x = x, y = y, group = patch, fill = .patch_value),
                 color = "white", linewidth = 0.2,
                 alpha = input$patch_alpha
               ) +
@@ -644,7 +640,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
             if (is_dark && identical(highlight_color, "black")) {
               highlight_color <- "white"
             }
-            p <- p + geom_point(data = hi_df, aes(x = x, y = y), 
+            p <- p + ggplot2::geom_point(data = hi_df, ggplot2::aes(x = x, y = y),
                                 color = highlight_color, size = 0.2, alpha = 1)
           }
         }
@@ -659,7 +655,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
       } else {
         paste("Patch annotation:", active_fill)
       }
-      p + labs(title = "SpaceMosaic Interactive Spatial Map",
+      p + ggplot2::labs(title = "SpaceMosaic Interactive Spatial Map",
                subtitle = patch_focus,
                x = "X", y = "Y")
     })
@@ -668,9 +664,9 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
     # Data are deliberately not embedded: the downloaded script expects the
     # same canonical input objects used by this app (spe, patches, and, when
     # applicable, metats and patch_data) to exist in the R session.
-    export_plot_code <- reactive({
+    export_plot_code <- shiny::reactive({
       literal <- function(x) {
-        paste(capture.output(dput(x)), collapse = "\n")
+        paste(utils::capture.output(dput(x)), collapse = "\n")
       }
 
       is_dark <- isTRUE(input$dark_mode)
@@ -726,24 +722,24 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
         paste0("grid_major <- ", literal(grid_major)),
         paste0("grid_minor <- ", literal(grid_minor)),
         "",
-        "p <- ggplot() +",
-        "  theme_minimal() +",
-        "  coord_fixed() +",
-        "  theme(",
-        "    plot.background = element_rect(fill = background, color = NA),",
-        "    panel.background = element_rect(fill = background, color = NA),",
-        "    legend.background = element_rect(fill = background, color = NA),",
-        "    legend.box.background = element_rect(fill = background, color = NA),",
-        "    legend.key = element_rect(fill = background, color = NA),",
-        "    text = element_text(color = foreground),",
-        "    axis.text = element_text(color = foreground),",
-        "    axis.title = element_text(color = foreground),",
-        "    plot.title = element_text(color = foreground),",
-        "    plot.subtitle = element_text(color = foreground),",
-        "    legend.title = element_text(color = foreground),",
-        "    legend.text = element_text(color = foreground),",
-        "    panel.grid.major = element_line(color = grid_major),",
-        "    panel.grid.minor = element_line(color = grid_minor)",
+        "p <- ggplot2::ggplot() +",
+        "  ggplot2::theme_minimal() +",
+        "  ggplot2::coord_fixed() +",
+        "  ggplot2::theme(",
+        "    plot.background = ggplot2::element_rect(fill = background, color = NA),",
+        "    panel.background = ggplot2::element_rect(fill = background, color = NA),",
+        "    legend.background = ggplot2::element_rect(fill = background, color = NA),",
+        "    legend.box.background = ggplot2::element_rect(fill = background, color = NA),",
+        "    legend.key = ggplot2::element_rect(fill = background, color = NA),",
+        "    text = ggplot2::element_text(color = foreground),",
+        "    axis.text = ggplot2::element_text(color = foreground),",
+        "    axis.title = ggplot2::element_text(color = foreground),",
+        "    plot.title = ggplot2::element_text(color = foreground),",
+        "    plot.subtitle = ggplot2::element_text(color = foreground),",
+        "    legend.title = ggplot2::element_text(color = foreground),",
+        "    legend.text = ggplot2::element_text(color = foreground),",
+        "    panel.grid.major = ggplot2::element_line(color = grid_major),",
+        "    panel.grid.minor = ggplot2::element_line(color = grid_minor)",
         "  )"
       )
 
@@ -763,10 +759,10 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
               "  \"highlight\", \"grey80\"",
               ")",
               paste0(
-                "p <- p + geom_point(data = cell_df, aes(x, y, color = .background_group), ",
+                "p <- p + ggplot2::geom_point(data = cell_df, ggplot2::aes(x, y, color = .background_group), ",
                 "size = 0.1, alpha = ", literal(input$cell_alpha), ") +"
               ),
-              "  scale_color_manual(",
+              "  ggplot2::scale_color_manual(",
               "    values = c(highlight = \"transparent\", grey80 = \"grey80\"),",
               "    guide = \"none\"",
               "  )"
@@ -778,7 +774,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
               code, "",
               paste0("color_var <- ", literal(color_var)),
               paste0(
-                "p <- p + geom_point(data = cell_df, aes(x, y, color = .data[[color_var]]), ",
+                "p <- p + ggplot2::geom_point(data = cell_df, ggplot2::aes(x, y, color = .data[[color_var]]), ",
                 "size = 0.1, alpha = ", literal(input$cell_alpha), ")"
               )
             )
@@ -791,7 +787,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
               code <- c(
                 code,
                 paste0("cell_palette <- ", literal(selected_palette)),
-                "p <- p + scale_color_gradientn(",
+                "p <- p + ggplot2::scale_color_gradientn(",
                 "  colors = grDevices::hcl.colors(256, cell_palette),",
                 "  name = color_var, na.value = \"grey80\"",
                 ")"
@@ -813,10 +809,10 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
               code <- c(
                 code,
                 paste0("cell_colors <- ", literal(colors)),
-                "p <- p + scale_color_manual(",
+                "p <- p + ggplot2::scale_color_manual(",
                 "  values = cell_colors, name = color_var, na.value = \"grey80\",",
                 "  drop = TRUE,",
-                "  guide = guide_legend(override.aes = list(size = 3, alpha = 1))",
+                "  guide = ggplot2::guide_legend(override.aes = list(size = 3, alpha = 1))",
                 ")"
               )
             }
@@ -830,7 +826,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
               paste0("gene <- ", literal(gene)),
               "patch_columns <- match(poly_df$patch, colnames(metats))",
               "poly_df$.patch_value <- metats[gene, patch_columns]",
-              "fill_scale <- scale_fill_gradient2(",
+              "fill_scale <- ggplot2::scale_fill_gradient2(",
               "  low = \"blue\", mid = \"white\", high = \"red\", midpoint = 0,",
               "  name = paste0(gene, \" Z-score\"), na.value = \"grey80\"",
               ")"
@@ -848,7 +844,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
               code <- c(
                 code,
                 paste0("patch_palette <- ", literal(selected_palette)),
-                "fill_scale <- scale_fill_gradientn(",
+                "fill_scale <- ggplot2::scale_fill_gradientn(",
                 "  colors = grDevices::hcl.colors(256, patch_palette),",
                 "  name = fill_var, na.value = \"grey80\"",
                 ")"
@@ -869,7 +865,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
                 code,
                 "poly_df$.patch_value <- as.character(poly_df$.patch_value)",
                 paste0("patch_colors <- ", literal(colors)),
-                "fill_scale <- scale_fill_manual(",
+                "fill_scale <- ggplot2::scale_fill_manual(",
                 "  values = patch_colors, name = fill_var,",
                 "  na.value = \"grey80\", drop = TRUE",
                 ")"
@@ -880,8 +876,8 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
           code <- c(
             code,
             paste0(
-              "p <- p + geom_polygon(data = poly_df, ",
-              "aes(x, y, group = patch, fill = .patch_value), "
+              "p <- p + ggplot2::geom_polygon(data = poly_df, ",
+              "ggplot2::aes(x, y, group = patch, fill = .patch_value), "
             ),
             paste0(
               "  color = \"white\", linewidth = 0.2, alpha = ",
@@ -902,7 +898,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
               paste0("highlight_cats <- ", literal(input$highlight_cats)),
               "highlight_df <- cell_df[cell_df[[highlight_var]] %in% highlight_cats, ]",
               paste0(
-                "p <- p + geom_point(data = highlight_df, aes(x, y), color = ",
+                "p <- p + ggplot2::geom_point(data = highlight_df, ggplot2::aes(x, y), color = ",
                 literal(highlight_color), ", size = 0.2, alpha = 1)"
               )
             )
@@ -917,7 +913,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
       }
       code <- c(
         code, "",
-        "p <- p + labs(",
+        "p <- p + ggplot2::labs(",
         "  title = \"SpaceMosaic Interactive Spatial Map\",",
         paste0("  subtitle = ", literal(patch_focus), ","),
         "  x = \"X\", y = \"Y\"",
@@ -929,7 +925,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
       paste(code, collapse = "\n")
     })
 
-    output$download_plot_code <- downloadHandler(
+    output$download_plot_code <- shiny::downloadHandler(
       filename = function() {
         paste0("spacemosaic_plot_", format(Sys.Date(), "%Y%m%d"), ".R")
       },
@@ -938,16 +934,16 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
       }
     )
 
-    plot_with_legend <- reactive({
+    plot_with_legend <- shiny::reactive({
       base_plot() +
-        theme(
+        ggplot2::theme(
           legend.position = "right",
           legend.box = "vertical",
           legend.direction = "vertical",
-          legend.title = element_text(size = 10),
-          legend.text = element_text(size = 8),
+          legend.title = ggplot2::element_text(size = 10),
+          legend.text = ggplot2::element_text(size = 8),
           legend.key.height = grid::unit(16, "pt"),
-          legend.margin = margin(6, 6, 6, 6)
+          legend.margin = ggplot2::margin(6, 6, 6, 6)
         )
     })
 
@@ -955,7 +951,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
     # drawing. Measuring the rendered grob accounts for titles, font metrics,
     # multiple guides, keys, and spacing without relying on label-count
     # approximations.
-    legend_grob <- reactive({
+    legend_grob <- shiny::reactive({
       g <- ggplot2::ggplotGrob(plot_with_legend())
       leg_idx <- which(grepl("^guide-box", g$layout$name))
 
@@ -972,13 +968,13 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
       g$grobs[[leg_idx[1]]]
     })
 
-    legend_spec <- reactive({
+    legend_spec <- shiny::reactive({
       legend <- legend_grob()
       if (is.null(legend)) {
         return(list(visible = FALSE, width = 0, height = 0))
       }
 
-      # renderPlot() interprets dimensions as pixels at the requested
+      # shiny::renderPlot() interprets dimensions as pixels at the requested
       # resolution. Convert the grob's actual physical dimensions to pixels
       # and retain a small safety margin for device/font rounding.
       resolution <- 150
@@ -997,7 +993,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
       )
     })
 
-    export_dimensions <- reactive({
+    export_dimensions <- shiny::reactive({
       legend <- legend_grob()
       if (is.null(legend)) {
         return(list(width = 9, height = 7))
@@ -1035,7 +1031,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
       )
     }
 
-    output$download_plot_png <- downloadHandler(
+    output$download_plot_png <- shiny::downloadHandler(
       filename = function() {
         paste0("spacemosaic_plot_", format(Sys.Date(), "%Y%m%d"), ".png")
       },
@@ -1045,7 +1041,7 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
       contentType = "image/png"
     )
 
-    output$download_plot_pdf <- downloadHandler(
+    output$download_plot_pdf <- shiny::downloadHandler(
       filename = function() {
         paste0("spacemosaic_plot_", format(Sys.Date(), "%Y%m%d"), ".pdf")
       },
@@ -1055,27 +1051,27 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
       contentType = "application/pdf"
     )
 
-    output$spatialPlot <- renderPlot({
+    output$spatialPlot <- shiny::renderPlot({
       # Remove legend from the main map
       base_plot() +
-        theme(
+        ggplot2::theme(
           legend.position = "none",
-          plot.margin = margin(8, 12, 12, 8)
+          plot.margin = ggplot2::margin(8, 12, 12, 8)
         )
     }, res = 150, bg = "transparent")
 
-    output$legend_ui <- renderUI({
+    output$legend_ui <- shiny::renderUI({
       spec <- legend_spec()
       if (!spec$visible) return(NULL)
 
-      plotOutput(
+      shiny::plotOutput(
         "legendPlot",
         width = paste0(spec$width, "px"),
         height = paste0(spec$height, "px")
       )
     })
 
-    output$legendPlot <- renderPlot({
+    output$legendPlot <- shiny::renderPlot({
       legend <- legend_grob()
       if (is.null(legend)) return(NULL)
 
@@ -1087,5 +1083,5 @@ runInteractivePlotter <- function(spe, patches, metats = NULL,
        bg = "transparent")
   }
 
-  shinyApp(ui = ui, server = server)
+  shiny::shinyApp(ui = ui, server = server)
 }
