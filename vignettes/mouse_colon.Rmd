@@ -6,16 +6,27 @@ output:
   BiocStyle::html_document:
     toc: true
     toc_float: true
+vignette: >
+  %\VignetteIndexEntry{Mouse colon case study}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width=8, fig.height=6)
-devtools::load_all()
-# library(SpaceMosaic)
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6
+)
+library(SpaceMosaic)
 library(HDF5Array)
 library(SpatialExperiment)
 
 library(ggplot2)
+library(tidyr)
+library(ggrepel)
 library(ComplexHeatmap)
 library(circlize)
 library(patchwork)
@@ -304,66 +315,70 @@ patches_res2 <- getPatches(
   xy = spatialCoords(spe)[use2, ],
   X = X2[use2], 
   Z = Z[use2, ],
-  npatches = 150, 
-  n_iters = 15
+  alpha = 0, # ignore Z entirely
+  npatches = 80,
+  n_iters = 15,
+  max_elongation = 8,
+  mahal_radius = 4,
+  hunger_weight = 0.7,
+  init_method = "gradient_ellipse"
 )
 patches2 <- patches_res2$patch
 ```
 
-As for scenario 1, we compute several summary statistics for each patch to summarise their characteristics. In this scenario, we consider the average distance to stem cells, mean total counts, number of cells per patch, and variance of $X$ within each patch.
+As for scenario 1, we compute several summary statistics for each patch to summarise their characteristics. In this scenario, we consider the number of stem cells, transit-amplifying cells, and mature colonocytes within each patch, as well as the variance of $X$ within each patch.
 
 ```{r scenario2-patch-summary}
 # Diagnostics: Compute patch-level statistics to filter patches with unwanted characteristics.
 
-# 1. Average distance to stem cells
-dist_to_stem <- FNN::get.knnx(
-  data  = as.matrix(xy[is_stem, , drop=FALSE]),
-  query = as.matrix(xy[use2, ]),
-  k = 1
-)$nn.dist[, 1]
-patch_avg_dist <- by(dist_to_stem, patches2, mean)
+# 1. Number of stem cells, TA, and colonocytes per patch
+patch_stem_cells <- by(is_stem[use2], patches2, sum)
 
-# 2. Mean total counts per patch
-# We use log2(total counts) to normalize the scale
-total_counts <- colSums(assay(spe, "counts")[, use2])
-patch_mean_counts <- by(log2(total_counts + 1), patches2, mean)
+is_TA <- cell_types_detailed == "TA"
+patch_TA <- by(is_TA[use2], patches2, sum)
 
-# 3. Number of cells per patch
-patch_size <- by(rep(1, sum(use2)), patches2, length)
+is_colonocytes <- cell_types_detailed == "Colonocytes"
+patch_colonocytes <- by(is_colonocytes[use2], patches2, sum)
 
 # 4. Variance of X per patch
 patch_var_X <- by(X2[use2], patches2, var)
 
 patch_diagnostics <- data.frame(
-  patch = names(patch_mean_counts),
-  mean_counts = as.numeric(patch_mean_counts),
-  avg_dist = as.numeric(patch_avg_dist),
-  size = as.numeric(patch_size), 
+  patch = names(patch_stem_cells),
+  stem_cells = as.numeric(patch_stem_cells),
+  transit_amplifying = as.numeric(patch_TA),
+  colonocytes = as.numeric(patch_colonocytes),
   var_X = as.numeric(patch_var_X)
 )
 ```
-```{r scenario2-patch-summary-plot, fig.width=8, fig.height=6, fig.cap="Patch diagnostics for Scenario 2: Stem Cell Niche. Each point represents a patch; point size indicates the number of epithelial cells and color indicates the within-patch variance of log(distance + 1) from the nearest stem cell. The axes show average distance from stem cells and mean log2(total counts + 1)."}
-# Plot summary to determine filtering thresholds
-ggplot(patch_diagnostics, aes(x = avg_dist, y = mean_counts)) +
-  geom_point(aes(size = size, color = var_X, alpha = 0.5)) +
-  # geom_vline(xintercept = 15, linetype = "dashed", color = "red") +
-  # geom_hline(yintercept = 6.65, linetype = "dashed", color = "red") +
-  scale_color_viridis(option = "plasma") +
+
+```{r scenario2-patch-composition, fig.width=15, fig.height=6, fig.cap="Patch composition by main cell types for Scenario 2: Stem Cell Niche. Each bar represents a patch; colors indicate the number of stem cells, transit-amplifying cells, and colonocytes within each patch. The dashed line marks a threshold of 10 cells per patch."}
+#| fig-width: 15
+#| fig-height: 6
+
+patch_diagnostics |>
+  tidyr::pivot_longer(cols = c("stem_cells", "transit_amplifying", "colonocytes"),
+                      names_to = "cell_type", values_to = "count") |>
+ggplot(aes(x = patch, y = count)) +
+  geom_col(aes(fill = cell_type), position = "dodge") +
   theme_minimal() +
-  guides(alpha = "none") +
-  labs(title = "Patch Summary",
-       subtitle = "Mean Counts vs. Average Distance to Stem Cells",
-       x = "Average Distance to Stem Cells",
-       y = "Mean Log2(Total Counts + 1)")
+  labs(title = "Patch Composition by main cell types",
+       x = "Cell Type",
+       y = "Count per Patch") +
+  geom_hline(yintercept = 10, linetype = "dashed") +
+  theme(legend.position = "top")
 ```
 
-The diagnostic plot separates patches close to the stem-cell niche, where the predictor is more variable, from more distant patches with higher mean RNA counts. Because very small patches yield unstable within-patch estimates, we retain patches containing more than 30 epithelial cells; distance and count values are shown for interpretation rather than used as hard thresholds.
+The plot above shows the composition of each patch in terms of stem cells, transit-amplifying cells, and colonocytes. Patches with less than 10 cells of any of the three types may not provide reliable estimates for differential expression analysis and we will filter them out in the next step.
 
 ```{r scenario2-patch-filtering}
 # Define thresholds based on the plot
-min_cell_thresh <- 30
+min_cell_thresh <- 10
 
-keep2 <- names(which(patch_size > min_cell_thresh))
+keep2 <- patch_diagnostics$patch[which(
+  patch_diagnostics$stem_cells > min_cell_thresh &
+  patch_diagnostics$transit_amplifying > min_cell_thresh &
+  patch_diagnostics$colonocytes > min_cell_thresh)]
 patches2[!is.element(patches2, keep2)] <- NA
 
 poly_df2 <- getPatchPolys(
@@ -979,8 +994,8 @@ ht2 <- Heatmap(
   name = "Meta Z-score",
   col = circlize::colorRamp2(c(-5, 0, 5), c("blue", "white", "red")),
   cluster_rows = TRUE,
-  row_split = 4,
-  column_split = 3,
+  row_split = 2,
+  column_split = NULL,
   cluster_columns = TRUE,
   show_row_names = TRUE,
   show_column_names = TRUE,
@@ -1037,16 +1052,16 @@ ht2 <- draw(
 # dev.off()
 ```
 
-The heatmap reveals both conserved and context-dependent transcriptional associations with distance from the stem-cell niche. Across the three patch groups, several proliferation- and Wnt-associated genes (a pathway that maintains stem-cell identity and proliferation), including Mki67, Mcm2, Foxm1, Axin2, Rnf43, and Znrf3, show predominantly negative Z-scores, indicating higher expression near the stem-cell niche and decreasing expression with increasing distance. This pattern is consistent with the expected transition from stem and transit-amplifying cells toward differentiated epithelial states. 
+The heatmap reveals a highly consistent transcriptional gradient with increasing distance from the stem-cell niche. Across patches with different epithelial and neighborhood compositions, genes associated with crypt-base signaling, stem-cell maintenance, and proliferation—including Axin2, Ascl2, Foxm1, Cenpf, Fgfr4, Fzd7, and Fzd8—show predominantly negative meta-analysis Z-scores. Their expression is therefore higher near the stem-cell niche and decreases with increasing distance, consistent with the progressive loss of stem and transit-amplifying programs along the crypt axis.
 
-In contrast, genes such as Vegfa, L1cam, Vil1, and Sdc1 display patch-context-dependent associations. For example, Vegfa is positively associated with distance in patch Clusters 1 and 3 but negatively associated in Cluster 2, whereas L1cam is negatively associated with distance in Clusters 1 and 3 and shows a weaker or different association in Cluster 2. These results suggest that the core proliferative maturation gradient is broadly conserved, while angiogenic, barrier-related, and regenerative components are modulated by the local microenvironment.
+Conversely, a second group of genes, including Fos, Fosl2, Dusp1, Dusp5, Gadd45a, Areg, Bmp2, and Cldn23, shows broadly positive associations with distance across patches. These genes encompass immediate-early and stress-response signaling, epithelial remodeling, and barrier-related functions, suggesting the acquisition of a distinct transcriptional state away from the crypt base. Although the magnitude of individual associations varies among patches, their direction is remarkably stable despite differences in cell-type and neighborhood composition.
 
-```{r scenario2-gene-maps, fig.width=12, fig.height=6, fig.cap="Spatial distribution of Axin2 and Vegfa meta-analysis Z-scores in Scenario 2. Patch color represents the direction and strength of association with distance from the nearest stem cell; stem cells are overlaid in green and non-epithelial cells in grey. Axin2 illustrates the conserved niche-associated gradient, whereas Vegfa illustrates a context-dependent association."}
+```{r scenario2-gene-maps, fig.width=12, fig.height=6, fig.cap="Spatial distribution of Axin2 and Fos meta-analysis Z-scores in Scenario 2. Patch color represents the direction and strength of association with distance from the nearest stem cell; stem cells are overlaid in green and non-epithelial cells in grey. Axin2 and Fos illustrate the conserved niche-associated gradient."}
 #| fig-width: 12
 #| fig-height: 6
-# Add the Vegfa and Axin2 Z-scores to the poly_df2 for visualization
+# Add the Fos and Axin2 Z-scores to the poly_df2 for visualization
 patch_ord <- match(poly_df2$patch, colnames(metats2))
-poly_df2$Vegfa <- metats2["Vegfa", patch_ord]
+poly_df2$Fos <- metats2["Fos", patch_ord]
 poly_df2$Axin2 <- metats2["Axin2", patch_ord]
 
 p_axin2 <- ggplot(coords, aes(x = x, y = y)) +
@@ -1064,22 +1079,22 @@ p_axin2 <- ggplot(coords, aes(x = x, y = y)) +
     theme(legend.position = "right") +
     guides(color = guide_legend(override.aes = list(size = 3)))
 
-p_vegfa <- ggplot(coords, aes(x = x, y = y)) +
+p_fos <- ggplot(coords, aes(x = x, y = y)) +
     geom_point(data = coords[!use2, ], aes(x = x, y = y), 
         color = "grey", size = 0.1) +
-    geom_polygon(data = poly_df2, aes(x = x, y = y, group = patch, fill = Vegfa),
+    geom_polygon(data = poly_df2, aes(x = x, y = y, group = patch, fill = Fos),
         color = "white", linewidth = 0.5) +
     geom_point(data = coords[spe$tier2 == "Stem cells", ], aes(x = x, y = y, color = "Stem cell"), size = 0.1, alpha = 0.5) +
     coord_fixed() +
     theme_minimal() +
     scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
     scale_color_manual(values = c("Stem cell" = "green")) +
-    labs(title = "Spatial Distribution of Vegfa Z-scores", 
+    labs(title = "Spatial Distribution of Fos Z-scores",
         subtitle = "Scenario: Stem Cell Niche", color = "Highlight") +
     theme(legend.position = "right") +
     guides(color = guide_legend(override.aes = list(size = 3)))
 
-(p_axin2 | p_vegfa) + 
+(p_axin2 | p_fos) +
     plot_layout(guides = "collect") & 
     theme(legend.position = "bottom")
 ```
