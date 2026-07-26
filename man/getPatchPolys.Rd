@@ -2,18 +2,34 @@
 % Please edit documentation in R/plotting.R
 \name{getPatchPolys}
 \alias{getPatchPolys}
-\title{Find rough polygon boundaries of patches for visualizations}
+\title{Get patch polygons for visualization}
 \usage{
-getPatchPolys(xy, patch)
+getPatchPolys(xy, patch, patch_data = NULL)
 }
 \arguments{
-\item{xy}{Cells' xy positions}
+\item{xy}{Cells' xy positions. The first two columns are used as coordinates.}
 
-\item{patch}{Vector of patch assignments, aligned to the rows of xy}
+\item{patch}{Vector of patch assignments, aligned to the rows of \code{xy}.}
+
+\item{patch_data}{Optional data frame containing one row per patch. It must
+contain a \code{patch} column, or have patch identifiers as row names. Any
+additional columns are included in the result.}
 }
 \value{
-A named list of polygons, one per patch
+A data frame with columns \code{x}, \code{y}, and \code{patch}, followed by any
+columns supplied in \code{patch_data}. Patches with fewer than three cells are
+omitted.
 }
 \description{
-Find rough polygon boundaries of patches for visualizations
+Computes the convex hull of every patch containing at least three cells and
+returns the vertices in a tidy data frame ready for
+\code{ggplot2::geom_polygon()}. Optional patch-level annotations (for example a
+cluster, group, size, or a user-computed diagnostic) are joined to every
+vertex by patch identifier.
+}
+\examples{
+xy <- matrix(c(0, 0, 1, 0, 0, 1, 3, 3, 4, 3, 3, 4), ncol = 2, byrow = TRUE)
+patch <- rep(c("A", "B"), each = 3)
+info <- data.frame(patch = c("A", "B"), cluster = c("Cluster 1", "Cluster 2"))
+getPatchPolys(xy, patch, patch_data = info)
 }

@@ -7,7 +7,9 @@
 getPatchAttributes(Z, patch)
 }
 \arguments{
-\item{Z}{Matrix of per-cell features (cells x features).}
+\item{Z}{Matrix or data.frame of per-cell features (cells x features).
+If a data.frame is supplied, it is converted to a numeric design matrix
+using \code{model.matrix(~ . - 1, data = Z)}.}
 
 \item{patch}{Character vector of patch assignments (may contain NA).}
 }

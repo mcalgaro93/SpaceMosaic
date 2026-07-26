@@ -4,7 +4,7 @@
 #' Takes colMeans of Z for each patch.
 #' @param Z Matrix or data.frame of per-cell features (cells x features).
 #'   If a data.frame is supplied, it is converted to a numeric design matrix
-#'   using \\code{model.matrix(~ . - 1, data = Z)}.
+#'   using `model.matrix(~ . - 1, data = Z)`.
 #' @param patch Character vector of patch assignments (may contain NA).
 #' @return Matrix (npatches x features) of per-patch mean attributes.
 #' @export

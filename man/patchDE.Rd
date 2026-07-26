@@ -4,7 +4,15 @@
 \alias{patchDE}
 \title{patchDE: run DE over all patches}
 \usage{
-patchDE(y, df, patch)
+patchDE(
+  y,
+  df,
+  patch,
+  pearson = FALSE,
+  tot = NULL,
+  resid_mse = FALSE,
+  verbose = TRUE
+)
 }
 \arguments{
 \item{y}{Expression matrix, cells * genes}
@@ -12,6 +20,14 @@ patchDE(y, df, patch)
 \item{df}{Data frame to be used as DE predictors}
 
 \item{patch}{Vector of patch IDs}
+
+\item{pearson}{Logical; if TRUE, transform y to Pearson residuals before DE}
+
+\item{tot}{Numeric vector of total counts per cell (required if pearson = TRUE)}
+
+\item{resid_mse}{Logical; if TRUE, include per-gene residual MSE in output}
+
+\item{verbose}{Show progress. Default TRUE.}
 }
 \description{
 patchDE: run DE over all patches
