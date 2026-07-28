@@ -1,7 +1,7 @@
 Package: SpaceMosaic
 Type: Package
 Title: Stratified differential expression analysis on spatial data
-Version: 0.99.0
+Version: 0.99.1
 Authors@R: c(person("Patrick", "Danaher", role=c("aut", "cre"),
                     comment=c(ORCID="0000-0002-2844-5883"),
                     email="patrick.danaher@bruker.com"),
