@@ -45,6 +45,24 @@
 #' @param n_iters Number of outer iterations. Typical range 10--30; default 15.
 #'   Convergence is usually reached by 10--15; raise if patches are still
 #'   shifting at the final iteration (check membership_log).
+#' @param init_method Initialization method for patch seeds. "kmeans" uses
+#'   isotropic k-means seeding (default). "gradient_ellipse" orients initial
+#'   ellipses along the local spatial gradient of X. The gradient_ellipse
+#'   option currently requires ncol(X) = 1.
+#' @param init_gradient_k Number of nearest neighbors used to estimate local
+#'   spatial gradients of X when init_method = "gradient_ellipse". Must be a
+#'   finite integer greater than or equal to 3.
+#' @param init_gradient_elongation Target initial ellipse elongation ratio
+#'   (major/minor eigenvalue ratio) for init_method = "gradient_ellipse". Must
+#'   be finite and greater than or equal to 1.
+#' @param x_weighted_ellipse_second_pass Logical; if TRUE, the ellipse re-fit in
+#'   step (c) up-weights cells whose X is farther from their patch mean. This
+#'   can encourage elongated patches along smooth X gradients while keeping step
+#'   (d) spatial-only. Applied only when ncol(X) = 1.
+#' @param x_ellipse_gamma Strength of X-based up-weighting in second-pass
+#'   ellipse fitting. 0 disables weighting; typical range 0.5--1.5.
+#' @param x_ellipse_wmax Cap on standardized X-deviation used in the weighting
+#'   rule to limit outlier influence. Typical range 2--4.
 #' @param log_iters If TRUE, return a list with patch assignments plus
 #'   per-iteration diagnostics (SS per patch and membership). Default TRUE.
 #' @param verbose Show progress. Default TRUE.
@@ -64,12 +82,19 @@ getPatches <- function(xy, X, npatches,
                        mahal_radius = 3,
                        n_candidates = 20,
                        n_iters = 15,
+                       init_method = c("kmeans", "gradient_ellipse"),
+                       init_gradient_k = 30,
+                       init_gradient_elongation = 4,
+                       x_weighted_ellipse_second_pass = FALSE,
+                       x_ellipse_gamma = 1,
+                       x_ellipse_wmax = 3,
                        log_iters = TRUE,
                        verbose = TRUE) {
 
   ## coerce X to matrix
   if (is.null(dim(X))) X <- matrix(X, ncol = 1)
   X <- as.matrix(X)
+  init_method <- match.arg(init_method)
   stopifnot(nrow(xy) == nrow(X))
   stopifnot(!is.null(rownames(xy)))
   n <- nrow(xy)
@@ -77,6 +102,22 @@ getPatches <- function(xy, X, npatches,
 
   ## scale X column-wise
   X <- scale(X, center = FALSE, scale = apply(X, 2, sd, na.rm = TRUE))
+
+  if (init_method == "gradient_ellipse" && ncol(X) != 1L) {
+    stop(
+      "init_method = 'gradient_ellipse' currently requires ncol(X) = 1.",
+      call. = FALSE
+    )
+  }
+
+  use_x_weighted_ellipse <- x_weighted_ellipse_second_pass && ncol(X) == 1L &&
+    is.finite(x_ellipse_gamma) && x_ellipse_gamma > 0 &&
+    is.finite(x_ellipse_wmax) && x_ellipse_wmax > 0
+  if (x_weighted_ellipse_second_pass && ncol(X) != 1L && verbose) {
+    cli::cli_alert_warning(
+      "x_weighted_ellipse_second_pass is enabled but ncol(X) != 1; falling back to unweighted ellipse fitting."
+    )
+  }
 
   ## auto-compute Euclidean radius cap if not supplied
   if (is.null(max_radius)) {
@@ -96,7 +137,21 @@ getPatches <- function(xy, X, npatches,
 
   ## initialize with kmeans on xy
   if (verbose) cli::cli_alert_info("Initializing patches...")
-  patch <- .initKmeans(xy, npatches)
+  init_params <- NULL
+  if (init_method == "gradient_ellipse") {
+    init_obj <- .initGradientEllipse(
+      xy = xy,
+      x = X[, 1],
+      npatches = npatches,
+      max_elongation = max_elongation,
+      gradient_k = init_gradient_k,
+      target_elongation = init_gradient_elongation
+    )
+    patch <- init_obj$patch
+    init_params <- init_obj$params
+  } else {
+    patch <- .initKmeans(xy, npatches)
+  }
 
   ## set up iteration logs
   if (log_iters) {
@@ -110,7 +165,11 @@ getPatches <- function(xy, X, npatches,
   for (iter in seq_len(n_iters)) {
 
     ## (a) estimate ellipse parameters
-    params <- .estimateEllipses(xy, patch, max_elongation)
+    if (iter == 1L && !is.null(init_params)) {
+      params <- init_params
+    } else {
+      params <- .estimateEllipses(xy, patch, max_elongation)
+    }
 
     ## (b) assign using spatial + X + Z + hunger
     patch <- .assignCells(xy, X, patch, params,
@@ -122,7 +181,14 @@ getPatches <- function(xy, X, npatches,
                           use_xz = TRUE)
 
     ## (c) re-estimate ellipse parameters
-    params <- .estimateEllipses(xy, patch, max_elongation)
+    params <- .estimateEllipses(
+      xy,
+      patch,
+      max_elongation,
+      X = if (use_x_weighted_ellipse) X[, 1] else NULL,
+      x_ellipse_gamma = x_ellipse_gamma,
+      x_ellipse_wmax = x_ellipse_wmax
+    )
 
     ## (d) assign using spatial only
     patch <- .assignCells(xy, X, patch, params,
@@ -215,21 +281,129 @@ getPatches <- function(xy, X, npatches,
 }
 
 
+#' Initialize patches with ellipses oriented by local X gradient
+#' @param xy n x 2 coordinate matrix.
+#' @param x Numeric vector of length n (scalar X).
+#' @param npatches Number of patches.
+#' @param max_elongation Max eigenvalue ratio for covariance regularization.
+#' @param gradient_k Number of neighbors for local gradient estimation.
+#' @param target_elongation Desired initial elongation ratio.
+#' @return List with initial patch assignments and ellipse parameters.
+.initGradientEllipse <- function(xy, x, npatches, max_elongation,
+                                 gradient_k = 30,
+                                 target_elongation = 4) {
+  if (length(gradient_k) != 1L ||
+      !is.numeric(gradient_k) ||
+      !is.finite(gradient_k) ||
+      gradient_k < 3 ||
+      gradient_k != floor(gradient_k)) {
+    stop("gradient_k must be a single finite integer greater than or equal to 3.",
+         call. = FALSE)
+  }
+  if (length(target_elongation) != 1L ||
+      !is.numeric(target_elongation) ||
+      !is.finite(target_elongation) ||
+      target_elongation < 1) {
+    stop("target_elongation must be a single finite number greater than or equal to 1.",
+         call. = FALSE)
+  }
+
+  patch <- .initKmeans(xy, npatches)
+  params <- .estimateEllipses(xy, patch, max_elongation)
+
+  n <- nrow(xy)
+  k <- max(3L, min(as.integer(gradient_k), n - 1L))
+  if (k < 3L || n < 4L) {
+    return(list(patch = patch, params = params))
+  }
+
+  grad <- .estimateLocalXGradient(xy, x, k = k)
+  target_elongation <- max(1, min(max_elongation, target_elongation))
+
+  for (p in params$pnames) {
+    cells <- which(patch == p)
+    if (length(cells) < 3) next
+
+    g <- colMeans(grad[cells, , drop = FALSE], na.rm = TRUE)
+    if (any(!is.finite(g))) next
+    g_norm <- sqrt(sum(g^2))
+    if (!is.finite(g_norm) || g_norm < 1e-8) next
+
+    u <- g / g_norm
+    v <- c(-u[2], u[1])
+    R <- cbind(u, v)
+
+    S <- solve(params$inv_covmats[[p]])
+    evals <- eigen(S, symmetric = TRUE, only.values = TRUE)$values
+    lam_major <- max(evals)
+    lam_minor <- max(min(evals), 1e-10)
+    lam_major <- max(lam_major, target_elongation * lam_minor)
+
+    S_oriented <- R %*% diag(c(lam_major, lam_minor)) %*% t(R)
+    S_oriented <- .regularizeCov(S_oriented, max_elongation)
+    params$inv_covmats[[p]] <- solve(S_oriented)
+    params$log_det[p] <- as.numeric(
+      determinant(S_oriented, logarithm = TRUE)$modulus
+    )
+  }
+
+  list(patch = patch, params = params)
+}
+
+
+#' Estimate local spatial gradients for scalar X
+#' @param xy n x 2 coordinate matrix.
+#' @param x Numeric vector of length n.
+#' @param k Number of nearest neighbors per cell.
+#' @return Matrix (n x 2) of local gradients.
+.estimateLocalXGradient <- function(xy, x, k) {
+  n <- nrow(xy)
+  knn <- FNN::get.knn(xy, k = k)
+  grad <- matrix(0, nrow = n, ncol = 2)
+
+  for (i in seq_len(n)) {
+    nbr <- knn$nn.index[i, ]
+    A <- cbind(xy[nbr, 1] - xy[i, 1], xy[nbr, 2] - xy[i, 2])
+    y <- x[nbr] - x[i]
+
+    XtX <- crossprod(A) + diag(2) * 1e-8
+    Xty <- crossprod(A, y)
+    g <- tryCatch(solve(XtX, Xty), error = function(e) c(0, 0))
+    grad[i, ] <- as.numeric(g)
+  }
+
+  colnames(grad) <- c("gx", "gy")
+  grad
+}
+
+
 #' Estimate per-patch centroid and covariance from xy
 #' @param xy n x 2 coordinate matrix.
 #' @param patch Character vector of patch assignments (may contain NA).
 #' @param max_elongation Max eigenvalue ratio for covariance regularization.
+#' @param X Optional numeric vector (length n) used for second-pass
+#'   X-weighted ellipse fitting.
+#' @param x_ellipse_gamma Strength of X-based up-weighting.
+#' @param x_ellipse_wmax Cap on standardized X-deviation for weighting.
 #' @return List with components:
 #'   \item{centroids}{Matrix (npatches x 2) of patch centroids.}
 #'   \item{inv_covmats}{Named list of 2x2 inverse covariance matrices.}
 #'   \item{log_det}{Named numeric vector of log-determinants.}
 #'   \item{pnames}{Sorted patch names.}
-.estimateEllipses <- function(xy, patch, max_elongation) {
+.estimateEllipses <- function(xy, patch, max_elongation,
+                              X = NULL,
+                              x_ellipse_gamma = 1,
+                              x_ellipse_wmax = 3) {
   pnames <- sort(unique(patch[!is.na(patch)]))
   np <- length(pnames)
   ## pre-split indices
   cell_lists <- split(seq_len(length(patch)), patch)
   cell_lists <- cell_lists[pnames]
+  use_x_weights <- !is.null(X)
+  if (use_x_weights) {
+    X <- as.numeric(X)
+    stopifnot(length(X) == nrow(xy))
+  }
 
   centroids_mat <- matrix(NA_real_, nrow = np, ncol = 2)
   rownames(centroids_mat) <- pnames
@@ -241,18 +415,66 @@ getPatches <- function(xy, X, npatches,
 
   for (j in seq_len(np)) {
     cells <- cell_lists[[j]]
-    centroids_mat[j, ] <- colMeans(xy[cells, , drop = FALSE])
+    points <- xy[cells, , drop = FALSE]
+
+    weights <- NULL
+    if (use_x_weights && length(cells) >= 3) {
+      weights <- .xEllipseWeights(
+        X[cells],
+        gamma = x_ellipse_gamma,
+        wmax = x_ellipse_wmax
+      )
+    }
+
+    if (is.null(weights)) {
+      centroids_mat[j, ] <- colMeans(points)
+    } else {
+      sw <- sum(weights)
+      centroids_mat[j, ] <- colSums(points * weights) / sw
+    }
+
     if (length(cells) < 3) {
       S <- diag(2) * global_var
     } else {
-      S <- stats::cov(xy[cells, , drop = FALSE])
+      if (is.null(weights)) {
+        S <- stats::cov(points)
+      } else {
+        centered <- sweep(points, 2, centroids_mat[j, ], "-")
+        sqrtw <- sqrt(weights)
+        weighted_centered <- centered * sqrtw
+        S <- crossprod(weighted_centered) / sum(weights)
+      }
     }
     S <- .regularizeCov(S, max_elongation)
     inv_covmats[[pnames[j]]] <- solve(S)
-    log_det[pnames[j]] <- log(det(S))
+    log_det[pnames[j]] <- as.numeric(
+      determinant(S, logarithm = TRUE)$modulus
+    )
   }
   list(centroids = centroids_mat, inv_covmats = inv_covmats,
        log_det = log_det, pnames = pnames)
+}
+
+
+#' Build X-deviation weights for second-pass ellipse fitting
+#' @param xvals Numeric vector of X values for cells in one patch.
+#' @param gamma Weighting strength parameter.
+#' @param wmax Cap for standardized X deviation.
+#' @return Numeric vector of positive weights.
+.xEllipseWeights <- function(xvals, gamma, wmax) {
+  x_center <- mean(xvals, na.rm = TRUE)
+  x_scale <- stats::mad(xvals, center = x_center, constant = 1, na.rm = TRUE)
+  if (!is.finite(x_scale) || x_scale <= 0) {
+    x_scale <- stats::sd(xvals, na.rm = TRUE)
+  }
+  if (!is.finite(x_scale) || x_scale <= 0) {
+    return(rep(1, length(xvals)))
+  }
+
+  z <- abs(xvals - x_center) / (x_scale + 1e-8)
+  weights <- 1 + gamma * pmin(z, wmax)
+  weights[!is.finite(weights) | weights <= 0] <- 1
+  weights
 }
 
 
