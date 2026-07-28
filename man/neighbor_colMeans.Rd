@@ -12,7 +12,8 @@ neighbor_colMeans(x, neighbors)
 \item{neighbors}{A sparse adjacency matrix.}
 }
 \value{
-Matrix of the same dimensions as \code{x}.
+Matrix of the same dimensions as \code{x}. Rows without neighbors
+are returned as zero rows.
 }
 \description{
 For each cell, compute the mean of each column of \code{x} across its

@@ -9,23 +9,50 @@
 #'
 #' @param x Spatial coordinate.
 #' @param y Spatial coordinate.
-#' @param N Number of nearest neighbors.
-#' @param subset Same length as x, y. Only cells sharing a subset value become
-#'   neighbors.
+#' @param N Positive integer giving the number of nearest neighbors. Every
+#'   subset must contain at least `N + 1` cells.
+#' @param subset Either a scalar or a vector with the same length as `x` and
+#'   `y`. Only cells sharing a subset value become neighbors.
 #' @return Sparse adjacency matrix with distances.
 #' @importFrom data.table data.table rbindlist
 #' @importFrom spatstat.geom nnwhich nndist
 #' @importFrom Matrix sparseMatrix
 #' @export
 nearestNeighborGraph <- function(x, y, N, subset = 1) {
+  if (length(x) != length(y)) {
+    stop("x and y must have the same length.")
+  }
+  if (length(N) != 1L || !is.finite(N) || N < 1 || N != floor(N)) {
+    stop("N must be a positive integer.")
+  }
+  N <- as.integer(N)
+  if (length(subset) == 1L) {
+    subset <- rep(subset, length(x))
+  }
+  if (length(subset) != length(x)) {
+    stop("subset must be a scalar or have the same length as x and y.")
+  }
+  if (anyNA(x) || anyNA(y) || anyNA(subset)) {
+    stop("x, y, and subset must not contain missing values.")
+  }
+
   DT <- data.table::data.table(x = x, y = y, subset = subset)
   nearestNeighbor <- function(i) {
     subset_dt <- DT[DT[["subset"]] == i]
     idx <- which(DT[["subset"]] == i)
+    if (nrow(subset_dt) <= N) {
+      stop(
+        sprintf(
+          "Each subset must contain at least N + 1 cells; subset '%s' contains %d.",
+          as.character(i),
+          nrow(subset_dt)
+        )
+      )
+    }
     ndist <- spatstat.geom::nndist(subset_dt[, list(x, y)], k = 1:N)
     nwhich <- spatstat.geom::nnwhich(subset_dt[, list(x, y)], k = 1:N)
     ij <- data.table::data.table(
-      i = idx[1:nrow(subset_dt)],
+      i = rep(idx, times = N),
       j = idx[as.vector(nwhich)],
       x = as.vector(ndist)
     )
@@ -45,14 +72,27 @@ nearestNeighborGraph <- function(x, y, N, subset = 1) {
 #'
 #' @param x A numeric matrix.
 #' @param neighbors A sparse adjacency matrix.
-#' @return Matrix of the same dimensions as \code{x}.
+#' @return Matrix of the same dimensions as \code{x}. Rows without neighbors
+#'   are returned as zero rows.
 #' @importFrom Matrix rowSums Diagonal
 #' @export
 neighbor_colMeans <- function(x, neighbors) {
-  neighbors@x <- rep(1, length(neighbors@x))
-  neighbors <- Matrix::Diagonal(x = 1 / Matrix::rowSums(neighbors)) %*% neighbors
-  neighbors@x[neighbors@x == 0] <- 1
-  out <- neighbors %*% x
+  if (nrow(neighbors) != ncol(neighbors)) {
+    stop("neighbors must be a square adjacency matrix.")
+  }
+  if (nrow(x) != nrow(neighbors)) {
+    stop("nrow(x) must equal nrow(neighbors).")
+  }
+
+  binary_neighbors <- neighbors
+  binary_neighbors@x <- rep(1, length(binary_neighbors@x))
+  neighbor_counts <- Matrix::rowSums(binary_neighbors)
+  inverse_counts <- numeric(length(neighbor_counts))
+  has_neighbors <- neighbor_counts > 0
+  inverse_counts[has_neighbors] <- 1 / neighbor_counts[has_neighbors]
+  normalized_neighbors <-
+    Matrix::Diagonal(x = inverse_counts) %*% binary_neighbors
+  out <- normalized_neighbors %*% x
   return(out)
 }
 

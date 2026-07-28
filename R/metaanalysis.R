@@ -19,8 +19,25 @@ getPatchAttributes <- function(Z, patch) {
   if (length(patch) != nrow(Z)) stop("length(patch) must equal nrow(Z).")
 
   pnames <- sort(unique(patch[!is.na(patch)]))
-  W <- t(sapply(pnames, function(p) colMeans(Z[which(patch == p), , drop = FALSE])))
+  if (length(pnames) == 0L) {
+    W <- matrix(
+      numeric(0),
+      nrow = 0L,
+      ncol = ncol(Z),
+      dimnames = list(character(), colnames(Z))
+    )
+    return(W)
+  }
+
+  W <- do.call(
+    rbind,
+    lapply(
+      pnames,
+      function(p) colMeans(Z[which(patch == p), , drop = FALSE])
+    )
+  )
   rownames(W) <- pnames
+  colnames(W) <- colnames(Z)
   W
 }
 
@@ -35,7 +52,8 @@ getPatchAttributes <- function(Z, patch) {
 #'   $ests, $ses, $pvals matrices (genes x patches).
 #' @param W Matrix of patch attributes (patches x features). Rownames must
 #'   match the column names of the DE matrices.
-#' @param k Number of nearest neighbors to use. Default 15.
+#' @param k Positive integer giving the number of nearest neighbors to use.
+#'   It is capped at one less than the number of shared patches. Default 15.
 #' @param min_effect Minimum absolute posterior estimate for a patch to be
 #'   considered significant in subgroup detection. Default 0.
 #' @param max_pval Maximum posterior p-value for significance. Default 0.05.
@@ -50,14 +68,23 @@ getPatchAttributes <- function(Z, patch) {
 patchMetaAnalysis <- function(DEobj, W, k = 15,
                               min_effect = 0, max_pval = 0.05,
                               min_patches = 3) {
+  if (length(k) != 1L || !is.finite(k) || k < 1 || k != floor(k)) {
+    stop("k must be a positive integer.")
+  }
+
   ## restrict to patches present in DE results
   de_patches <- colnames(DEobj[[1]]$ests)
   shared_patches <- intersect(de_patches, rownames(W))
+  if (length(shared_patches) < 2L) {
+    stop(
+      "patchMetaAnalysis() requires at least two patches shared between DEobj and W."
+    )
+  }
   W <- W[shared_patches, , drop = FALSE]
 
   ## cap k
 
-  k <- min(k, nrow(W) - 1)
+  k <- min(as.integer(k), nrow(W) - 1L)
 
   ## find k nearest neighbors for each patch in W-space
   patch_names <- rownames(W)
@@ -73,7 +100,7 @@ patchMetaAnalysis <- function(DEobj, W, k = 15,
     shared <- intersect(colnames(ests), patch_names)
     ests <- ests[, shared, drop = FALSE]
     ses <- ses[, shared, drop = FALSE]
-    nn_aligned <- nn[shared, ]
+    nn_aligned <- nn[shared, , drop = FALSE]
 
     post <- .bayesianUpdate(ests, ses, nn_aligned, shared)
 

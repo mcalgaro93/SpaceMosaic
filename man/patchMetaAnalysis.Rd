@@ -20,7 +20,8 @@ $ests, $ses, $pvals matrices (genes x patches).}
 \item{W}{Matrix of patch attributes (patches x features). Rownames must
 match the column names of the DE matrices.}
 
-\item{k}{Number of nearest neighbors to use. Default 15.}
+\item{k}{Positive integer giving the number of nearest neighbors to use.
+It is capped at one less than the number of shared patches. Default 15.}
 
 \item{min_effect}{Minimum absolute posterior estimate for a patch to be
 considered significant in subgroup detection. Default 0.}

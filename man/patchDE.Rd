@@ -29,6 +29,12 @@ patchDE(
 
 \item{verbose}{Show progress. Default TRUE.}
 }
+\value{
+A list keyed by model variable. Each element contains \code{pvals},
+\code{ests}, and \code{ses} matrices with genes in rows and patches in columns.
+If \code{resid_mse = TRUE}, the list also contains a \code{resid_mse} matrix with
+the same orientation.
+}
 \description{
 patchDE: run DE over all patches
 }

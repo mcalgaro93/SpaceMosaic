@@ -9,7 +9,8 @@ pearsonResiduals(y, tot)
 \arguments{
 \item{y}{Raw counts matrix (cells x genes)}
 
-\item{tot}{Numeric vector of total counts per cell (length = nrow(y))}
+\item{tot}{Numeric vector of total counts per cell (length = nrow(y))
+containing finite, non-negative values.}
 }
 \value{
 Matrix of Pearson residuals (same dimensions as y)

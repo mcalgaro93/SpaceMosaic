@@ -11,10 +11,11 @@ nearestNeighborGraph(x, y, N, subset = 1)
 
 \item{y}{Spatial coordinate.}
 
-\item{N}{Number of nearest neighbors.}
+\item{N}{Positive integer giving the number of nearest neighbors. Every
+subset must contain at least \code{N + 1} cells.}
 
-\item{subset}{Same length as x, y. Only cells sharing a subset value become
-neighbors.}
+\item{subset}{Either a scalar or a vector with the same length as \code{x} and
+\code{y}. Only cells sharing a subset value become neighbors.}
 }
 \value{
 Sparse adjacency matrix with distances.

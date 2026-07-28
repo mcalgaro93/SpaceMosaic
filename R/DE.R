@@ -119,14 +119,35 @@ hastyDE <- function(y, df) {
 #' Convert a raw counts matrix to Pearson residuals
 #' @param y Raw counts matrix (cells x genes)
 #' @param tot Numeric vector of total counts per cell (length = nrow(y))
+#'   containing finite, non-negative values.
 #' @return Matrix of Pearson residuals (same dimensions as y)
 #' @export
 pearsonResiduals <- function(y, tot) {
   if (length(tot) != nrow(y)) stop("length(tot) must equal nrow(y).")
+  if (any(!is.finite(tot)) || any(tot < 0)) {
+    stop("tot must contain finite, non-negative values.")
+  }
+
+  y <- as.matrix(y)
+  zero_residuals <- matrix(
+    0,
+    nrow = nrow(y),
+    ncol = ncol(y),
+    dimnames = dimnames(y)
+  )
+  mean_tot <- mean(tot)
   genescale <- colMeans(y)
-  genescale[genescale == 0] <- min(genescale[genescale > 0], na.rm = TRUE) # avoid division by zero
-  expected <- outer(tot, genescale) / mean(tot)
-  (as.matrix(y) - expected) / sqrt(expected)
+  positive_scales <- genescale[is.finite(genescale) & genescale > 0]
+
+  if (mean_tot == 0 || length(positive_scales) == 0L) {
+    return(zero_residuals)
+  }
+
+  genescale[genescale == 0] <- min(positive_scales)
+  expected <- outer(tot, genescale) / mean_tot
+  residuals <- (y - expected) / sqrt(expected)
+  residuals[expected == 0] <- 0
+  residuals
 }
 
 
@@ -138,8 +159,15 @@ pearsonResiduals <- function(y, tot) {
 #' @param tot Numeric vector of total counts per cell (required if pearson = TRUE)
 #' @param resid_mse Logical; if TRUE, include per-gene residual MSE in output
 #' @param verbose Show progress. Default TRUE.
+#' @return A list keyed by model variable. Each element contains `pvals`,
+#'   `ests`, and `ses` matrices with genes in rows and patches in columns.
+#'   If `resid_mse = TRUE`, the list also contains a `resid_mse` matrix with
+#'   the same orientation.
 #' @export
 patchDE <- function(y, df, patch, pearson = FALSE, tot = NULL, resid_mse = FALSE, verbose = TRUE) {
+  if (length(patch) != nrow(y) || nrow(df) != nrow(y)) {
+    stop("nrow(y), nrow(df), and length(patch) must be equal.")
+  }
   if (pearson) {
     if (is.null(tot)) {
       stop("tot must be provided when pearson = TRUE.")
@@ -148,6 +176,9 @@ patchDE <- function(y, df, patch, pearson = FALSE, tot = NULL, resid_mse = FALSE
   # get DE results per patch:
   results <- list()
   patches <- setdiff(unique(patch), NA)
+  if (length(patches) == 0L) {
+    stop("patch must contain at least one non-missing patch ID.")
+  }
   if (verbose) cli::cli_progress_bar("patchDE", total = length(patches))
   for (patchid in patches) {
     patchinds <- (patch == patchid) & !is.na(patch)
@@ -155,7 +186,8 @@ patchDE <- function(y, df, patch, pearson = FALSE, tot = NULL, resid_mse = FALSE
     if (pearson) {
       ysub <- pearsonResiduals(ysub, tot = tot[patchinds])
     }
-    results[[patchid]] <- hastyDE(y = ysub, df = df[patchinds, , drop = FALSE])
+    results[[as.character(patchid)]] <-
+      hastyDE(y = ysub, df = df[patchinds, , drop = FALSE])
     if (verbose) cli::cli_progress_update()
   }
   if (verbose) cli::cli_progress_done()
@@ -164,19 +196,31 @@ patchDE <- function(y, df, patch, pearson = FALSE, tot = NULL, resid_mse = FALSE
   out <- list()
   for (varname in variables) {
     out[[varname]] <- list()
-    out[[varname]]$pvals <- sapply(results, function(tmp) {
-      tmp$p[, varname]
-    })
-    out[[varname]]$ests <- sapply(results, function(tmp) {
-      tmp$effect[, varname]
-    })
-    out[[varname]]$ses <- sapply(results, function(tmp) {
-      tmp$se[, varname]
-    })
-   rownames(out[[varname]]$pvals) <- rownames(out[[varname]]$ests) <- rownames(out[[varname]]$ses) <- rownames(results[[1]][[1]])
+    out[[varname]]$pvals <- do.call(
+      cbind,
+      lapply(results, function(tmp) tmp$p[, varname])
+    )
+    out[[varname]]$ests <- do.call(
+      cbind,
+      lapply(results, function(tmp) tmp$effect[, varname])
+    )
+    out[[varname]]$ses <- do.call(
+      cbind,
+      lapply(results, function(tmp) tmp$se[, varname])
+    )
+    colnames(out[[varname]]$pvals) <-
+      colnames(out[[varname]]$ests) <-
+      colnames(out[[varname]]$ses) <- names(results)
+    rownames(out[[varname]]$pvals) <-
+      rownames(out[[varname]]$ests) <-
+      rownames(out[[varname]]$ses) <- rownames(results[[1]][[1]])
   }
   if (resid_mse) {
-    out[["resid_mse"]] <- sapply(results, function(tmp) tmp$sigma2)
+    out[["resid_mse"]] <- do.call(
+      cbind,
+      lapply(results, function(tmp) tmp$sigma2)
+    )
+    colnames(out[["resid_mse"]]) <- names(results)
   }
   return(out)
 }
