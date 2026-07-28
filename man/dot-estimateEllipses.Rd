@@ -4,7 +4,14 @@
 \alias{.estimateEllipses}
 \title{Estimate per-patch centroid and covariance from xy}
 \usage{
-.estimateEllipses(xy, patch, max_elongation)
+.estimateEllipses(
+  xy,
+  patch,
+  max_elongation,
+  X = NULL,
+  x_ellipse_gamma = 1,
+  x_ellipse_wmax = 3
+)
 }
 \arguments{
 \item{xy}{n x 2 coordinate matrix.}
@@ -12,6 +19,13 @@
 \item{patch}{Character vector of patch assignments (may contain NA).}
 
 \item{max_elongation}{Max eigenvalue ratio for covariance regularization.}
+
+\item{X}{Optional numeric vector (length n) used for second-pass
+X-weighted ellipse fitting.}
+
+\item{x_ellipse_gamma}{Strength of X-based up-weighting.}
+
+\item{x_ellipse_wmax}{Cap on standardized X-deviation for weighting.}
 }
 \value{
 List with components:
