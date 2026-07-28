@@ -1,0 +1,390 @@
+---
+title: "SpaceMosaic Analysis Template"
+author: "Your name"
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+vignette: >
+  %\VignetteIndexEntry{SpaceMosaic analysis template}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6
+)
+library(SpaceMosaic)
+library(SpatialExperiment)
+library(ggplot2)
+library(viridis)
+```
+
+# Overview
+
+This template provides a dataset-independent starting point for a
+**SpaceMosaic** analysis. Replace the marked inputs and thresholds with values
+appropriate for the biological question and tissue geometry. The workflow is:
+
+1. define the response-cell subset and design variable(s) ($X$);
+2. encode the cellular microenvironment ($Z$);
+3. identify and quality-control spatially contiguous patches;
+4. estimate within-patch expression associations;
+5. borrow information among patches with similar contexts ($W$); and
+6. interpret recurrent or context-specific effects in space.
+
+Throughout the template, matrices are oriented as follows:
+
+- expression: **cells x genes**;
+- $X$: **cells x predictors** (a vector is also accepted by `getPatches()`);
+- $Z$: **cells x neighborhood features**; and
+- $W$: **patches x patch features**.
+
+# 1. Data and analysis question
+
+Load a `SpatialExperiment` object and identify the columns containing the
+cell annotation and any other metadata needed for interpretation.
+
+```{r load-data, eval=FALSE}
+# Replace this with the loader for your dataset.
+spe <- load_your_data()
+
+stopifnot(inherits(spe, "SpatialExperiment"))
+stopifnot("counts" %in% assayNames(spe))
+stopifnot(nrow(spatialCoords(spe)) == ncol(spe))
+
+# Stable cell identifiers are required as row names by getPatches().
+xy <- as.matrix(spatialCoords(spe))
+if (is.null(rownames(xy))) {
+  rownames(xy) <- colnames(spe)
+}
+
+cell_type <- spe$cell_type       # CHANGE: broad cell annotation
+cell_subtype <- spe$cell_subtype # CHANGE: optional detailed annotation
+counts <- assay(spe, "counts")
+```
+
+Define one or more predictors that represent the biological exposure of
+interest. Useful choices include distance to a cell population, local cell
+abundance, neighborhood-mean expression, a spatial-domain indicator, or a
+combination of predictors. Avoid deriving $X$ from the same genes later used as
+responses unless that dependence is intentional.
+
+```{r define-x-and-subset, eval=FALSE}
+# Example: distance to the nearest cell of a selected explanatory population.
+is_explanatory <- cell_type == "CHANGE_ME"
+stopifnot(any(is_explanatory))
+
+distance_to_explanatory <- FNN::get.knnx(
+  data = xy[is_explanatory, , drop = FALSE],
+  query = xy,
+  k = 1
+)$nn.dist[, 1]
+
+# A log transform often reduces the leverage of long-tailed distances.
+X <- data.frame(distance = log1p(distance_to_explanatory))
+
+# Analyze only the response population relevant to the question.
+use <- cell_type == "CHANGE_ME"
+use <- use & stats::complete.cases(X)
+stopifnot(sum(use) > 0)
+```
+
+# 2. Cellular-neighborhood embedding ($Z$)
+
+`embedCellNeighborhoods()` averages a cell-level embedding over spatial
+neighbor networks at multiple scales. Compute $Z$ on all cells before taking
+the response-cell subset, so the representation retains the surrounding
+tissue context. Supply `tissue` when the object contains multiple samples,
+slides, or fields of view; this prevents neighborhoods from crossing tissue
+boundaries.
+
+```{r cellular-neighborhoods, eval=FALSE}
+Z <- embedCellNeighborhoods(
+  mat = reducedDim(spe, "PCA"),
+  xy = xy,
+  ks = c(5, 50),
+  tissue = spe$sample_id # CHANGE; omit only for a single contiguous tissue
+)
+
+stopifnot(nrow(Z) == ncol(spe))
+```
+
+# 3. Patch identification and quality control
+
+`getPatches()` favors spatially compact, contiguous regions that retain
+within-patch variation in $X$ while remaining coherent in $Z$. For a
+single-column $X$, `beta = 1` is a useful starting point. With $K$ predictors,
+start near `beta = 1 / K`. Increase `alpha` to enforce stronger neighborhood
+coherence, and inspect the result rather than treating the defaults as
+universal.
+
+```{r identify-patches, eval=FALSE}
+set.seed(123)
+patch_result <- getPatches(
+  xy = xy[use, , drop = FALSE],
+  X = X[use, , drop = FALSE],
+  Z = Z[use, , drop = FALSE],
+  npatches = 100,       # CHANGE for tissue area and response-cell abundance
+  alpha = 0.5,          # weight of the Z-coherence penalty
+  beta = 1 / ncol(X),   # weight of within-patch X diversity
+  hunger_weight = 0.5, # balances patch size and X variation
+  max_elongation = 4,
+  mahal_radius = 3,
+  n_candidates = 20,
+  n_iters = 15,
+  log_iters = TRUE
+)
+patch <- patch_result$patch
+
+# Optional visual check of membership across iterations.
+plotPatchIterations(
+  xy = xy[use, , drop = FALSE],
+  result = patch_result,
+  iters = c(1, 5, 10, 15),
+  ask = FALSE
+)
+```
+
+Patch filters should be chosen from diagnostics that are meaningful for the
+experiment. Patch size and within-patch predictor variance directly affect the
+stability of regression estimates; RNA content, distance to an explanatory
+population, tissue region, and sample identity can reveal additional failure
+modes. Filtering is performed by assigning excluded cells an `NA` patch.
+
+```{r patch-diagnostics, eval=FALSE}
+patch_size <- table(patch)
+patch_mean_counts <- tapply(
+  log2(colSums(counts[, use, drop = FALSE]) + 1),
+  patch,
+  mean
+)
+patch_var_x <- tapply(X[use, 1], patch, stats::var)
+
+patch_diagnostics <- data.frame(
+  patch = names(patch_size),
+  size = as.numeric(patch_size),
+  mean_counts = as.numeric(patch_mean_counts[names(patch_size)]),
+  var_x = as.numeric(patch_var_x[names(patch_size)])
+)
+
+ggplot(patch_diagnostics, aes(size, var_x, color = mean_counts)) +
+  geom_point() +
+  scale_color_viridis_c() +
+  theme_minimal() +
+  labs(
+    x = "Cells per patch",
+    y = "Within-patch variance of X",
+    color = "Mean log2 counts"
+  )
+
+# CHANGE after inspecting the diagnostic distributions.
+keep <- with(
+  patch_diagnostics,
+  patch[size >= 30 & is.finite(var_x) & var_x > 0]
+)
+patch[!patch %in% keep] <- NA
+```
+
+Map the retained patches together with $X$ and the surrounding cells. Polygon
+rows can carry any patch-level diagnostic or annotation supplied through
+`patch_data`.
+
+```{r patch-map, eval=FALSE}
+poly_df <- getPatchPolys(
+  xy = xy[use, , drop = FALSE],
+  patch = patch,
+  patch_data = patch_diagnostics
+)
+
+plot_df <- data.frame(
+  x = xy[, 1],
+  y = xy[, 2],
+  use = use,
+  predictor = X[, 1]
+)
+
+ggplot() +
+  geom_point(
+    data = plot_df[!plot_df$use, ],
+    aes(x, y), color = "grey80", size = 0.2
+  ) +
+  geom_point(
+    data = plot_df[plot_df$use, ],
+    aes(x, y, color = predictor), size = 0.3
+  ) +
+  geom_polygon(
+    data = poly_df,
+    aes(x, y, group = patch),
+    fill = NA, color = "black", linewidth = 0.3
+  ) +
+  scale_color_viridis_c() +
+  coord_fixed() +
+  theme_minimal()
+```
+
+# 4. Within-patch differential expression
+
+`patchDE()` expects cells in rows and genes in columns. Therefore a conventional
+genes-by-cells assay must be transposed. The rows of `df`, `y`, and `patch` must
+refer to the same response cells in the same order.
+
+For raw counts, `pearson = TRUE` computes Pearson residuals separately within
+each patch and requires total counts per cell. Alternatively, transform or
+normalize expression before calling `patchDE()` and include relevant technical
+covariates in `df`. Do not use both strategies automatically; choose a model
+appropriate for the assay and question.
+
+```{r patch-de, eval=FALSE}
+y <- t(counts[, use, drop = FALSE])
+total_counts <- colSums(counts[, use, drop = FALSE])
+
+de_design <- data.frame(
+  X,
+  # CHANGE: add known confounders, correctly subsetted to response cells.
+  # batch = spe$batch,
+  row.names = rownames(xy)
+)
+de_design <- de_design[use, , drop = FALSE]
+
+stopifnot(
+  nrow(y) == nrow(de_design),
+  nrow(y) == length(patch),
+  length(total_counts) == nrow(y)
+)
+
+de_result <- patchDE(
+  y = y,
+  df = de_design,
+  patch = patch,
+  pearson = TRUE,
+  tot = total_counts
+)
+```
+
+# 5. Patch attributes ($W$) and local meta-analysis
+
+`getPatchAttributes()` safely averages cell-level features within each retained
+patch and sets patch identifiers as row names. $W$ can be based on $Z$, on
+interpretable cell metadata, or on a combination of both. Its row names are
+automatically aligned with the patch columns returned by `patchDE()`.
+
+```{r meta-analysis, eval=FALSE}
+W <- getPatchAttributes(
+  Z = Z[use, , drop = FALSE],
+  patch = patch
+)
+
+stopifnot(all(colnames(de_result[[1]]$ests) %in% rownames(W)))
+
+meta_result <- patchMetaAnalysis(
+  DEobj = de_result,
+  W = W,
+  k = 10,
+  min_effect = 0,  # CHANGE if a minimum biologically relevant effect is known
+  max_pval = 0.05,
+  min_patches = 3
+)
+```
+
+The result is keyed by modeled variable. For every variable it contains
+posterior estimates, standard errors, p-values, and subgroup labels. Positive
+and negative subgroup IDs mark connected regions in $W$-space with coherent
+positive and negative effects; zero means that the patch did not belong to a
+qualifying subgroup.
+
+# 6. Result summaries and spatial validation
+
+Rank genes using a criterion chosen in advance. The example below uses the
+fraction of patches with an absolute posterior Z-score above 2. Effect sizes,
+posterior p-values, subgroup membership, and biological relevance should also
+be considered; very small p-values alone are not sufficient.
+
+```{r result-summary, eval=FALSE}
+variable <- names(meta_result)[1] # CHANGE when the design has several variables
+meta_var <- meta_result[[variable]]
+z_score <- meta_var$ests / meta_var$ses
+
+gene_summary <- data.frame(
+  gene = rownames(z_score),
+  recurrent = rowMeans(abs(z_score) > 2, na.rm = TRUE),
+  positive = rowMeans(z_score > 2, na.rm = TRUE),
+  negative = rowMeans(z_score < -2, na.rm = TRUE)
+)
+gene_summary <- gene_summary[
+  order(gene_summary$recurrent, decreasing = TRUE),
+]
+top_genes <- head(gene_summary$gene, 50)
+
+heatmap(
+  z_score[top_genes, , drop = FALSE],
+  scale = "none"
+)
+```
+
+Use `summarizeSubgroups()` to relate coherent effect regions to cell-level
+metadata. Numeric variables are summarized as standardized enrichment scores;
+categorical variables are represented by level-specific log2 enrichment.
+
+```{r subgroup-summary, eval=FALSE}
+cell_metadata <- data.frame(
+  cell_type = cell_type[use],
+  cell_subtype = cell_subtype[use],
+  sample_id = spe$sample_id[use],
+  predictor = X[use, 1]
+)
+
+subgroup_summary <- summarizeSubgroups(
+  meta = meta_result,
+  patch = patch,
+  cellmeta = cell_metadata
+)
+head(subgroup_summary)
+```
+
+Finally, project representative effects back onto the tissue. Confirm that
+their direction agrees with the predictor and is not driven by an unmodeled
+sample, anatomical compartment, low-quality region, or segmentation artifact.
+
+```{r spatial-validation, eval=FALSE}
+gene <- top_genes[1]
+poly_gene <- poly_df
+poly_gene$z_score <- z_score[gene, as.character(poly_gene$patch)]
+
+ggplot(poly_gene, aes(x, y, group = patch, fill = z_score)) +
+  geom_polygon(color = "grey30", linewidth = 0.2) +
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "red", midpoint = 0
+  ) +
+  coord_fixed() +
+  theme_minimal() +
+  labs(title = gene, fill = "Posterior Z")
+```
+
+For exploratory work, the interactive plotter can overlay cells and patches
+and color patches by meta-analysis Z-scores or arbitrary patch annotations.
+
+```{r interactive-plotter, eval=FALSE}
+runInteractivePlotter(
+  spe = spe[, use],
+  patches = patch,
+  metats = z_score,
+  meaningful_vars = c("cell_type", "cell_subtype"),
+  patch_data = patch_diagnostics
+)
+```
+
+# 7. Reporting checklist
+
+Record the definition and transformation of $X$, response-cell inclusion
+criteria, construction of $Z$ and $W$, all `getPatches()` tuning parameters,
+the random seed, patch-filtering thresholds, expression preprocessing,
+covariates, meta-analysis parameters, and the number of retained cells and
+patches. Report spatial validation and sensitivity analyses alongside the main
+gene-level results.
