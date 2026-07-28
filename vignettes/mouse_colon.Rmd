@@ -363,7 +363,7 @@ ggplot(aes(x = patch, y = count)) +
   geom_col(aes(fill = cell_type), position = "dodge") +
   theme_minimal() +
   labs(title = "Patch Composition by main cell types",
-       x = "Cell Type",
+       x = "Patch",
        y = "Count per Patch") +
   geom_hline(yintercept = 10, linetype = "dashed") +
   theme(legend.position = "top")
