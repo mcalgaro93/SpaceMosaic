@@ -8,6 +8,7 @@
 #'   - se:     matrix of standard errors
 #'   - p:      matrix of p-values
 #'   - df_resid: residual degrees of freedom
+#' @export
 hastyDE <- function(y, df) {
   if (!is.matrix(y) && !inherits(y, "Matrix")) {
     y <- as.matrix(y)
