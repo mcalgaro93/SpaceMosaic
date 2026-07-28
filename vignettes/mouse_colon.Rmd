@@ -376,9 +376,9 @@ The plot above shows the composition of each patch in terms of stem cells, trans
 min_cell_thresh <- 10
 
 keep2 <- patch_diagnostics$patch[which(
-  patch_diagnostics$stem_cells > min_cell_thresh &
-  patch_diagnostics$transit_amplifying > min_cell_thresh &
-  patch_diagnostics$colonocytes > min_cell_thresh)]
+  patch_diagnostics$stem_cells >= min_cell_thresh &
+  patch_diagnostics$transit_amplifying >= min_cell_thresh &
+  patch_diagnostics$colonocytes >= min_cell_thresh)]
 patches2[!is.element(patches2, keep2)] <- NA
 
 poly_df2 <- getPatchPolys(
