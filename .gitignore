@@ -9,3 +9,4 @@ src/*.so
 *~
 *.swp
 *.swo
+vignettes/*.html
