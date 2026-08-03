@@ -3,6 +3,7 @@
 .RData
 .Ruserdata
 .Renviron
+.DS_Store
 .Rproj.user
 src/*.o
 src/*.so
