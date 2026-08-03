@@ -3,13 +3,20 @@
 #' Runs simple OLS regression on all genes at once using matrix algebra
 #' @param y the normalized counts matrix (cells x genes)
 #' @param df a data frame of the variables to be modeled
+#' @param return_residuals Logical; if TRUE, include the OLS residual matrix
+#'   (cells x genes) in the returned list. Default FALSE.
 #' @return A list with:
 #'   - effect: matrix of effect sizes (genes x predictors)
 #'   - se:     matrix of standard errors
 #'   - p:      matrix of p-values
 #'   - df_resid: residual degrees of freedom
+#'   - residuals: optional matrix of OLS residuals (cells x genes)
 #' @export
-hastyDE <- function(y, df) {
+hastyDE <- function(y, df, return_residuals = FALSE) {
+  if (!is.logical(return_residuals) || length(return_residuals) != 1L ||
+      is.na(return_residuals)) {
+    stop("return_residuals must be TRUE or FALSE.")
+  }
   if (!is.matrix(y) && !inherits(y, "Matrix")) {
     y <- as.matrix(y)
   }
@@ -31,7 +38,22 @@ hastyDE <- function(y, df) {
     rownames(na_mat) <- colnames(y)
     sigma2_out <- rep(NA_real_, G)
     names(sigma2_out) <- colnames(y)
-    return(list(effect = na_mat, se = na_mat, p = na_mat, sigma2 = sigma2_out, df_resid = n - 1L))
+    result <- list(
+      effect = na_mat,
+      se = na_mat,
+      p = na_mat,
+      sigma2 = sigma2_out,
+      df_resid = n - 1L
+    )
+    if (return_residuals) {
+      # With no varying predictors, the estimable model contains only an
+      # intercept, so its residuals are the column-centered observations.
+      result$residuals <- as.matrix(
+        sweep(y, 2, Matrix::colMeans(y), FUN = "-")
+      )
+      dimnames(result$residuals) <- dimnames(y)
+    }
+    return(result)
   }
   dropped <- all_coef_names[!keep]
   if (length(dropped) > 0) {
@@ -59,7 +81,24 @@ hastyDE <- function(y, df) {
     rownames(na_mat) <- colnames(y)
     sigma2_out <- rep(NA_real_, G)
     names(sigma2_out) <- colnames(y)
-    return(list(effect = na_mat, se = na_mat, p = na_mat, sigma2 = sigma2_out, df_resid = n - p))
+    result <- list(
+      effect = na_mat,
+      se = na_mat,
+      p = na_mat,
+      sigma2 = sigma2_out,
+      df_resid = n - p
+    )
+    if (return_residuals) {
+      # No unique coefficient solution is available for this design, so fitted
+      # values and residuals cannot be reported reliably.
+      result$residuals <- matrix(
+        NA_real_,
+        nrow = nrow(y),
+        ncol = ncol(y),
+        dimnames = dimnames(y)
+      )
+    }
+    return(result)
   }
   
   # Coefficients: p x G
@@ -97,13 +136,22 @@ hastyDE <- function(y, df) {
   # Named residual MSE vector (per gene)
   names(sigma2) <- colnames(y)
   
-  list(
+  result <- list(
     effect     = Effect,
     se         = SE,
     p          = Pval,
     sigma2     = sigma2,
     df_resid   = dfres
   )
+
+  if (return_residuals) {
+    # Residuals are materialized only on request because the cells-by-genes
+    # matrix can be substantially larger than the DE summary statistics.
+    result$residuals <- as.matrix(y - X %*% B)
+    dimnames(result$residuals) <- dimnames(y)
+  }
+
+  result
 }
 
 # Helper: reinsert NA columns for dropped predictors
@@ -138,15 +186,16 @@ pearsonResiduals <- function(y, tot) {
   )
   mean_tot <- mean(tot)
   genescale <- colMeans(y)
-  positive_scales <- genescale[is.finite(genescale) & genescale > 0]
 
-  if (mean_tot == 0 || length(positive_scales) == 0L) {
+  if (mean_tot == 0) {
     return(zero_residuals)
   }
 
-  genescale[genescale == 0] <- min(positive_scales)
   expected <- outer(tot, genescale) / mean_tot
   residuals <- (y - expected) / sqrt(expected)
+  # A gene with mean zero has zero expected expression in every cell. Its
+  # Pearson residual is defined as zero rather than introducing an arbitrary
+  # positive gene scale solely to avoid division by zero.
   residuals[expected == 0] <- 0
   residuals
 }
@@ -159,36 +208,81 @@ pearsonResiduals <- function(y, tot) {
 #' @param pearson Logical; if TRUE, transform y to Pearson residuals before DE
 #' @param tot Numeric vector of total counts per cell (required if pearson = TRUE)
 #' @param resid_mse Logical; if TRUE, include per-gene residual MSE in output
+#' @param return_residuals Logical; if TRUE, return an OLS residual matrix
+#'   aligned with the rows and columns of `y`. Default FALSE.
 #' @param verbose Show progress. Default TRUE.
 #' @return A list keyed by model variable. Each element contains `pvals`,
 #'   `ests`, and `ses` matrices with genes in rows and patches in columns.
 #'   If `resid_mse = TRUE`, the list also contains a `resid_mse` matrix with
-#'   the same orientation.
+#'   the same orientation. If `return_residuals = TRUE`, a list with components
+#'   `de` (the usual result) and `residuals` is returned instead. `residuals` is
+#'   a cells by genes matrix aligned with `y`; rows whose patch is missing
+#'   contain `NA`.
+#' @examples
+#' y <- cbind(gene_a = c(2, 4, 5, 8, 9, 13))
+#' df <- data.frame(treatment = c(0, 0, 1, 1, 2, 2))
+#' patch <- rep("patch_1", nrow(y))
+#'
+#' fit <- patchDE(
+#'   y, df, patch,
+#'   return_residuals = TRUE,
+#'   verbose = FALSE
+#' )
+#' fit$de$treatment$ests
+#' fit$residuals
+#'
 #' @export
-patchDE <- function(y, df, patch, pearson = FALSE, tot = NULL, resid_mse = FALSE, verbose = TRUE) {
+patchDE <- function(y, df, patch, pearson = FALSE, tot = NULL,
+                    resid_mse = FALSE, return_residuals = FALSE,
+                    verbose = TRUE) {
   if (length(patch) != nrow(y) || nrow(df) != nrow(y)) {
     stop("nrow(y), nrow(df), and length(patch) must be equal.")
+  }
+  if (!is.logical(return_residuals) || length(return_residuals) != 1L ||
+      is.na(return_residuals)) {
+    stop("return_residuals must be TRUE or FALSE.")
   }
   if (pearson) {
     if (is.null(tot)) {
       stop("tot must be provided when pearson = TRUE.")
     }
   }
+
   # get DE results per patch:
   results <- list()
-  patches <- setdiff(unique(patch), NA)
+  if (return_residuals) {
+    residual_matrix <- matrix(
+      NA_real_,
+      nrow = nrow(y),
+      ncol = ncol(y),
+      dimnames = dimnames(y)
+    )
+  }
+  patches <- unique(patch[!is.na(patch)])
   if (length(patches) == 0L) {
     stop("patch must contain at least one non-missing patch ID.")
   }
-  if (verbose) cli::cli_progress_bar("patchDE", total = length(patches))
+  if (verbose) {
+    cli::cli_progress_bar("patchDE", total = length(patches))
+  }
   for (patchid in patches) {
-    patchinds <- (patch == patchid) & !is.na(patch)
-    ysub <- y[patchinds, , drop = FALSE]
+    cell_index <- which(!is.na(patch) & patch == patchid)
+    ysub <- y[cell_index, , drop = FALSE]
     if (pearson) {
-      ysub <- pearsonResiduals(ysub, tot = tot[patchinds])
+      ysub <- pearsonResiduals(ysub, tot = tot[cell_index])
     }
-    results[[as.character(patchid)]] <-
-      hastyDE(y = ysub, df = df[patchinds, , drop = FALSE])
+    patch_name <- as.character(patchid)
+    results[[patch_name]] <- hastyDE(
+      y = ysub,
+      df = df[cell_index, , drop = FALSE],
+      return_residuals = return_residuals
+    )
+    if (return_residuals) {
+      residual_matrix[cell_index, ] <- results[[patch_name]]$residuals
+      # The residual matrix is returned separately and is not needed while the
+      # DE summaries are reformatted below.
+      results[[patch_name]]$residuals <- NULL
+    }
     if (verbose) cli::cli_progress_update()
   }
   if (verbose) cli::cli_progress_done()
@@ -223,5 +317,8 @@ patchDE <- function(y, df, patch, pearson = FALSE, tot = NULL, resid_mse = FALSE
     )
     colnames(out[["resid_mse"]]) <- names(results)
   }
-  return(out)
+  if (return_residuals) {
+    return(list(de = out, residuals = residual_matrix))
+  }
+  out
 }
