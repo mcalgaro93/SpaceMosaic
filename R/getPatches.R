@@ -127,7 +127,7 @@ getPatches <- function(xy, X, npatches,
     max_radius <- 3 * sqrt(hull_area / npatches / pi)
   }
 
-  ## build contiguity graph: mutual k-NN
+  ## build contiguity graph: symmetric k-NN
   if (verbose) cli::cli_alert_info("Building contiguity graph...")
   spatial_nn <- .buildContiguityGraph(xy)
 
@@ -635,7 +635,36 @@ getPatches <- function(xy, X, npatches,
 #' @param k Number of neighbors for k-NN. Default 10.
 #' @return Sparse binary adjacency matrix (n x n).
 .buildContiguityGraph <- function(xy, k = 10) {
+  if (!is.matrix(xy) || !is.numeric(xy) || ncol(xy) != 2L) {
+    stop("xy must be a numeric matrix with exactly two columns.")
+  }
+  if (any(!is.finite(xy))) {
+    stop("xy must contain only finite coordinates.")
+  }
+
   n <- nrow(xy)
+  if (n < 2L) {
+    stop("xy must contain at least two observations.")
+  }
+  if (length(k) != 1L || !is.finite(k) || k < 1 || k != floor(k)) {
+    stop("k must be a positive integer.")
+  }
+
+  # FNN requires k to be smaller than the number of observations. Reducing k
+  # here lets the same helper work for small patches without special handling
+  # in each caller.
+  k <- as.integer(k)
+  if (k >= n) {
+    effective_k <- n - 1L
+    warning(
+      sprintf(
+        "k = %d exceeds the maximum allowed for %d observations; using k = %d.",
+        k, n, effective_k
+      ),
+      call. = FALSE
+    )
+    k <- effective_k
+  }
   knn <- FNN::get.knn(xy, k = k)
   i_vec <- rep(seq_len(n), each = k)
   j_vec <- as.vector(t(knn$nn.index))
@@ -647,6 +676,7 @@ getPatches <- function(xy, X, npatches,
   ## symmetric: connect if either direction exists
   sym <- directed + Matrix::t(directed)
   sym@x[] <- 1
+  Matrix::diag(sym) <- 0
   sym
 }
 
