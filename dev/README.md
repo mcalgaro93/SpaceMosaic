@@ -20,8 +20,9 @@ This folder is for ad hoc method development and tuning experiments.
   control the number of worker processes.
 - moran_toy_example.R: minimal reproducible `patchDE()` to `moranTest()`
   workflow with a spatially structured gene and a noise control. It prints the
-  gene-by-patch results and performs lightweight smoke checks; formal regression
-  coverage remains in `tests/testthat/`.
+  gene-by-patch results, writes `dev/runs/moran_toy_example.pdf`, and performs
+  lightweight smoke checks. Set `SPACEMOSAIC_MORAN_PLOT` to use a different
+  plot path; formal regression coverage remains in `tests/testthat/`.
 - runs/: optional outputs from local runs (CSV summaries, plots, notes).
 
 ## Usage Notes
