@@ -62,7 +62,7 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
   if (is.numeric(residuals) && is.null(dim(residuals))) {
     residuals <- matrix(residuals, ncol = 1L)
     colnames(residuals) <- "residual"
-  } else if (is.matrix(residuals) || inherits(residuals, "Matrix")) {
+  } else if (is.matrix(residuals)) {
     if (!is.numeric(residuals)) {
       stop("residuals must be a numeric vector or matrix.")
     }
