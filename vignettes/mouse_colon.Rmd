@@ -773,7 +773,7 @@ ggplot(moran2_ok, aes(x = patch, y = gene)) +
   )
 ```
 
-An observed value larger than its finite-sample expectation indicates that similar residuals tend to occur near one another. A small adjusted p-value suggests that this clustering is unlikely under random permutation, but does not identify its cause. Conversely, a non significant result should not be interpreted as proof that the model captures every possible form or scale of spatial dependence.
+An observed value larger than its finite-sample expectation indicates that similar residuals tend to occur near one another. A small adjusted p-value suggests that this clustering is unlikely under random permutation, but does not identify its cause. Conversely, a non-significant result should not be interpreted as proof that the model captures every possible form or scale of spatial dependence.
 
 # 5. Post-hoc Analysis & Visualization
 
