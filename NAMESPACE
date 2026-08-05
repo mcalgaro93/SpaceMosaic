@@ -2,6 +2,7 @@
 
 export(embedCellNeighborhoods)
 export(getPatchAttributes)
+export(getPatchDiagnostics)
 export(getPatchPolys)
 export(getPatches)
 export(hastyDE)
