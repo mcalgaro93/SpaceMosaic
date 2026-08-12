@@ -435,8 +435,10 @@ message("Three-page diagnostic plot written to: ", normalizePath(plot_path))
 # Shiny session. After source("dev/patch_diagnostics_toy_example.R"), run:
 #
 # selected_name <- paste0("npatches_", npatches_grid[ceiling(length(npatches_grid) / 2)])
+# rownames(SpatialExperiment::spatialCoords(spe)) <- spe$cell_id
 # runInteractivePlotter(
-#   spe = spe,
+#   spe = spe, 
+#   meaningful_vars = c("tier1", "tier2", "tier3", "leiden_neigh"),
 #   patches = fits[[selected_name]]$patch,
 #   patch_data = diagnostics[[selected_name]]$patch_diagnostics
 # )
