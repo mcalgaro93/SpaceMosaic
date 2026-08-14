@@ -3,12 +3,6 @@
 #' Report patch size, variation in `X`, spatial connectivity, assignment
 #' coverage, and final membership stability when iteration logs are available.
 #'
-#' Connectivity is calculated on symmetric k-nearest-neighbor graphs from 1 to
-#' `k`. `strict_k` selects the graph used in `strict_component_fraction`.
-#' `x_n` counts finite `X` values in each patch. `NA` values are excluded
-#' from the SD; the SD is `NA` with fewer than two finite values or any
-#' `NaN`/infinite value.
-#'
 #' @param xy Numeric matrix with cells in rows and x/y coordinates in columns.
 #' @param X Numeric vector or matrix with cells in rows.
 #' @param patches Final patch vector or the list returned by
@@ -19,6 +13,46 @@
 #'   `getPatches()`. Limited to `n - 1` for small datasets.
 #' @param strict_k Neighbors used for `strict_component_fraction`. Must be no
 #'   greater than `k`. `NULL` uses `min(5, k)`.
+#'
+#' @details
+#' The metrics describe different aspects of patch quality.
+#'
+#' \describe{
+#'   \item{`n_cells`}{Number of cells assigned to the patch.}
+#'   \item{`x_sd` and `x_n`}{`x_sd` measures variation in a design variable
+#'     within the patch. Values near zero indicate little within-patch contrast
+#'     for estimating its effect. Larger values indicate more contrast, but the
+#'     magnitude depends on the scale of `X`. `x_n`
+#'     is the number of finite values used.
+#'     The SD is `NA` with fewer than two finite values or if the patch contains
+#'     `NaN` or infinite values.}
+#'   \item{`strict_component_fraction`}{Fraction of patch cells in the largest
+#'     connected component at `strict_k`. One indicates full connectivity;
+#'     smaller values indicate greater fragmentation.}
+#'   \item{`min_connectivity_k`}{Smallest evaluated k at which the patch is
+#'     fully connected. Smaller values indicate stronger local connectivity.
+#'     It is `NA` if full connectivity is not reached by `k`, and zero for a
+#'     single-cell patch.}
+#'   \item{`connectivity_curve`}{For each tested k, reports the fraction of
+#'     patch cells in the largest connected piece. One means that all patch
+#'     cells are connected. If the value becomes one only as k increases, more
+#'     neighbor links are needed to join the patch.}
+#'   \item{`membership_stability`}{Fraction of final patch cells with the same
+#'     assignment in the preceding iteration. Values closer to one indicate
+#'     greater stability. It is `NA` without at least two logged iterations.}
+#'   \item{`fraction_assigned` and `fraction_unassigned`}{Proportions of
+#'     analyzed cells with and without a patch assignment. A higher
+#'     `fraction_assigned` means broader coverage; a higher
+#'     `fraction_unassigned` means more cells were excluded. }
+#' }
+#'
+#' Connectivity uses symmetric spatial k-nearest-neighbor graphs. `strict_k`
+#' sets the neighborhood size for `strict_component_fraction`; smaller values
+#' use fewer links and give a stricter local check. `k` is the largest value
+#' tested by `connectivity_curve` and `min_connectivity_k`. Larger k makes
+#' connectivity easier, so compare strict fractions only at the same `strict_k`.
+#' Effective values are limited to `n - 1` and reported in
+#' `assignment_summary`.
 #'
 #' @return A list with three data frames:
 #'   \describe{

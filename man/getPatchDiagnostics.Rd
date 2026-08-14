@@ -41,11 +41,44 @@ Report patch size, variation in \code{X}, spatial connectivity, assignment
 coverage, and final membership stability when iteration logs are available.
 }
 \details{
-Connectivity is calculated on symmetric k-nearest-neighbor graphs from 1 to
-\code{k}. \code{strict_k} selects the graph used in \code{strict_component_fraction}.
-\code{x_n} counts finite \code{X} values in each patch. \code{NA} values are excluded
-from the SD; the SD is \code{NA} with fewer than two finite values or any
-\code{NaN}/infinite value.
+The metrics describe different aspects of patch quality.
+
+\describe{
+\item{\code{n_cells}}{Number of cells assigned to the patch.}
+\item{\code{x_sd} and \code{x_n}}{\code{x_sd} measures variation in a design variable
+within the patch. Values near zero indicate little within-patch contrast
+for estimating its effect. Larger values indicate more contrast, but the
+magnitude depends on the scale of \code{X}. \code{x_n}
+is the number of finite values used.
+The SD is \code{NA} with fewer than two finite values or if the patch contains
+\code{NaN} or infinite values.}
+\item{\code{strict_component_fraction}}{Fraction of patch cells in the largest
+connected component at \code{strict_k}. One indicates full connectivity;
+smaller values indicate greater fragmentation.}
+\item{\code{min_connectivity_k}}{Smallest evaluated k at which the patch is
+fully connected. Smaller values indicate stronger local connectivity.
+It is \code{NA} if full connectivity is not reached by \code{k}, and zero for a
+single-cell patch.}
+\item{\code{connectivity_curve}}{For each tested k, reports the fraction of
+patch cells in the largest connected piece. One means that all patch
+cells are connected. If the value becomes one only as k increases, more
+neighbor links are needed to join the patch.}
+\item{\code{membership_stability}}{Fraction of final patch cells with the same
+assignment in the preceding iteration. Values closer to one indicate
+greater stability. It is \code{NA} without at least two logged iterations.}
+\item{\code{fraction_assigned} and \code{fraction_unassigned}}{Proportions of
+analyzed cells with and without a patch assignment. A higher
+\code{fraction_assigned} means broader coverage; a higher
+\code{fraction_unassigned} means more cells were excluded. }
+}
+
+Connectivity uses symmetric spatial k-nearest-neighbor graphs. \code{strict_k}
+sets the neighborhood size for \code{strict_component_fraction}; smaller values
+use fewer links and give a stricter local check. \code{k} is the largest value
+tested by \code{connectivity_curve} and \code{min_connectivity_k}. Larger k makes
+connectivity easier, so compare strict fractions only at the same \code{strict_k}.
+Effective values are limited to \code{n - 1} and reported in
+\code{assignment_summary}.
 }
 \examples{
 ## Use a subset of the example CRC data distributed with SpaceMosaic.

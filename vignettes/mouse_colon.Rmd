@@ -210,46 +210,76 @@ patches_res1 <- getPatches(
 patches1 <- patches_res1$patch
 ```
 
-For each patch, we compute several summary statistics to filter out patches that may not be biologically meaningful. In this scenario, we consider as an example the minimum distance to immune cells, mean total counts, number of cells per patch, and variance of $X$ within each patch.
+`getPatchDiagnostics()` summarizes solution coverage and whether individual patches contain enough cells, retain variation in $X$, remain spatially connected, and have stabilized by the final iteration.
+We also add two summaries specific to this biological question: minimum distance to an immune cell and mean total counts.
 
 ```{r scenario1-patch-summary}
-# Diagnostics: Compute patch-level statistics to filter patches with unwanted characteristics.
+# Core patch diagnostics
+diagnostics1 <- getPatchDiagnostics(
+  xy = as.matrix(spatialCoords(spe)[use1, , drop=FALSE]),
+  X = X1[use1],
+  patches = patches_res1
+)
+patch_data1 <- diagnostics1$patch_diagnostics
 
-# 1. Min distance to immune cells
 dist_to_immune <- FNN::get.knnx(
   data  = as.matrix(xy[is_immune, , drop=FALSE]),
   query = as.matrix(xy[use1, ]),
   k = 1
 )$nn.dist[, 1]
-patch_min_dist <- by(dist_to_immune, patches1, min)
-
-# 2. Mean total counts per patch
-# We use log2(total counts) to normalize the scale
-total_counts <- colSums(assay(spe, "counts")[, use1])
-patch_mean_counts <- by(log2(total_counts + 1), patches1, mean)
-
-# 3. Number of cells per patch
-patch_size <- by(rep(1, sum(use1)), patches1, length)
-
-# 4. Variance of X per patch
-patch_var_X <- by(X1[use1], patches1, var)
-
-patch_diagnostics <- data.frame(
-  patch = names(patch_mean_counts),
-  mean_counts = as.numeric(patch_mean_counts),
-  min_dist = as.numeric(patch_min_dist),
-  size = as.numeric(patch_size), 
-  var_X = as.numeric(patch_var_X)
+patch_data1$min_dist <- as.numeric(
+  tapply(dist_to_immune, patches1, min)[patch_data1$patch]
 )
-patch_data1 <- patch_diagnostics
+patch_data1$mean_counts <- as.numeric(
+  tapply(log2(colSums(assay(spe, "counts")[, use1, drop=FALSE])+1),
+  patches1, mean)[patch_data1$patch]
+)
+head(patch_data1)
+diagnostics1$assignment_summary
+
+# Thresholds selected from the diagnostic plots for this example
+min_cells <- 50
+min_x_sd <- 0.5
+min_stability <- 0.7
+dist_thresh <- 15
+count_thresh <- 6.65
 ```
 
-```{r scenario1-patch-summary-plot, fig.width=8, fig.height=6, fig.cap="Patch diagnostics for Scenario 1: Immune Surveillance. Each point represents a patch; point size indicates the number of epithelial cells and color indicates the within-patch variance of local immune-cell density. Dashed lines mark the minimum-count and maximum-distance thresholds used for filtering."}
+Here, we use 50 cells, an $X$ standard deviation of 0.5, and a minimum membership stability of 0.7 as practical lower thresholds after inspecting their distributions.
+
+```{r scenario1-core-diagnostics, fig.width=8, fig.height=6, fig.cap="Diagnostics for Scenario 1. Patches farther to the right contain more epithelial cells, and patches higher on the y-axis contain more within-patch variation in immune-neighbor count. Color shows the fraction of final members retained from the preceding iteration; crosses indicate fragmentation at strict_k, and dashed lines show the selected size and SD thresholds."}
+patch_data1$connectivity <- factor(
+  ifelse(patch_data1$strict_component_fraction == 1, "Connected", "Fragmented"),
+  levels = c("Connected", "Fragmented")
+)
+
+ggplot(patch_data1, aes(x = n_cells, y = x_sd)) +
+  geom_point(
+    aes(color = membership_stability, shape = connectivity),
+    size = 2
+  ) +
+  geom_vline(xintercept = min_cells, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = min_x_sd, linetype = "dashed", color = "red") +
+  scale_color_viridis_c(limits = c(0, 1), na.value = "grey70") +
+  scale_shape_manual(values = c(Connected = 16, Fragmented = 4)) +
+  theme_minimal() +
+  labs(
+    title = "Patch diagnostics",
+    x = "Number of cells per patch",
+    y = "Within-patch SD of immune-neighbor count",
+    color = "Membership stability",
+    shape = "Connectivity"
+  )
+```
+
+Patches below either dashed line contain relatively few cells or little variation in immune-neighbor count. Low `membership_stability` indicates that membership was still changing in the final update. A cross marks a patch split into multiple pieces at `strict_k` and should be inspected before downstream analysis.
+
+```{r scenario1-patch-summary-plot, fig.width=8, fig.height=6, fig.cap="Patch diagnostics for Scenario 1: Immune Surveillance. Each point represents a patch; point size indicates the number of epithelial cells and color indicates the within-patch standard deviation of local immune-cell density. Dashed lines mark the minimum-count and maximum-distance thresholds used for filtering."}
 # Plot summary to determine filtering thresholds
-ggplot(patch_diagnostics, aes(x = min_dist, y = mean_counts)) +
-  geom_point(aes(size = size, color = var_X, alpha = 0.5)) +
-  geom_vline(xintercept = 15, linetype = "dashed", color = "red") +
-  geom_hline(yintercept = 6.65, linetype = "dashed", color = "red") +
+ggplot(patch_data1, aes(x = min_dist, y = mean_counts)) +
+  geom_point(aes(size = n_cells, color = x_sd), alpha = 0.5) +
+  geom_vline(xintercept = dist_thresh, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = count_thresh, linetype = "dashed", color = "red") +
   scale_color_viridis(option = "plasma") +
   theme_minimal() +
   guides(alpha = "none") +
@@ -262,12 +292,19 @@ ggplot(patch_diagnostics, aes(x = min_dist, y = mean_counts)) +
 As shown in the plot above, we can filter patches based on minimum distance to immune cells and mean total counts. Patches that are too far from immune cells or have low counts may not provide meaningful biological insights.
 
 ```{r scenario1-patch-filtering}
-# Define thresholds based on the plot
-dist_thresh <- 15
-count_thresh <- 6.65
-
-keep1 <- names(which(patch_mean_counts > count_thresh & patch_min_dist < dist_thresh))
+keep1 <- with(
+  patch_data1,
+  patch[
+    mean_counts > count_thresh &
+      min_dist < dist_thresh &
+      n_cells >= min_cells &
+      is.finite(x_sd) & x_sd >= min_x_sd &
+      !is.na(membership_stability) &
+      membership_stability >= min_stability
+  ]
+)
 patches1[!is.element(patches1, keep1)] <- NA
+c(patches_retained = length(keep1), cells_retained = sum(!is.na(patches1)))
 
 poly_df1 <- getPatchPolys(
   xy = spatialCoords(spe)[use1, ],
