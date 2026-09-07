@@ -11,6 +11,7 @@ patchDE(
   pearson = FALSE,
   tot = NULL,
   resid_mse = FALSE,
+  return_residuals = FALSE,
   verbose = TRUE
 )
 }
@@ -27,14 +28,34 @@ patchDE(
 
 \item{resid_mse}{Logical; if TRUE, include per-gene residual MSE in output}
 
+\item{return_residuals}{Logical; if TRUE, return an OLS residual matrix
+aligned with the rows and columns of \code{y}. Default FALSE.}
+
 \item{verbose}{Show progress. Default TRUE.}
 }
 \value{
 A list keyed by model variable. Each element contains \code{pvals},
 \code{ests}, and \code{ses} matrices with genes in rows and patches in columns.
 If \code{resid_mse = TRUE}, the list also contains a \code{resid_mse} matrix with
-the same orientation.
+the same orientation. If \code{return_residuals = TRUE}, a list with components
+\code{de} (the usual result) and \code{residuals} is returned instead. \code{residuals} is
+a cells by genes matrix aligned with \code{y}; rows whose patch is missing
+contain \code{NA}.
 }
 \description{
 patchDE: run DE over all patches
+}
+\examples{
+y <- cbind(gene_a = c(2, 4, 5, 8, 9, 13))
+df <- data.frame(treatment = c(0, 0, 1, 1, 2, 2))
+patch <- rep("patch_1", nrow(y))
+
+fit <- patchDE(
+  y, df, patch,
+  return_residuals = TRUE,
+  verbose = FALSE
+)
+fit$de$treatment$ests
+fit$residuals
+
 }

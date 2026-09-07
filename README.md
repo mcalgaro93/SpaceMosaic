@@ -21,6 +21,12 @@ flowchart TD
     D --> E[patchDE]
     Y[Expression matrix y] --> E
     E --> F[Per-patch DE results]
+
+    E -.->|return_residuals = TRUE| R[Within-patch residuals]
+    R -.-> MI[moranTest]
+    D -.-> MI
+    XY -.-> MI
+    MI --> MD[Moran's I + permutation p-values]
     
     B --> G[getPatchAttributes]
     D --> G
@@ -46,6 +52,7 @@ flowchart TD
 | 1 | `embedCellNeighborhoods()` | Average cell embeddings over spatial neighbors at multiple scales to get per-cell context vectors Z |
 | 2 | `getPatches()` | Iteratively partition cells into contiguous elliptical patches that maximize within-patch variance of X while preserving Z-homogeneity |
 | 3 | `patchDE()` | Run fast OLS-based DE simultaneously for all genes within each patch |
+| 3a (optional) | `moranTest()` | Test selected genes for residual spatial autocorrelation within patches using permutation-based Moran's I |
 | 4 | `getPatchAttributes()` | Summarize Z across cells in each patch to get a patch-level characteristics matrix W |
 | 5 | `patchMetaAnalysis()` | For each patch, find K nearest neighbors in W-space, compute a Bayesian posterior update, and detect spatial subgroups of significant patches |
 | 6 | `summarizeSubgroups()` | For each gene × subgroup, report effect sizes and enrichment of user-provided metadata variables |

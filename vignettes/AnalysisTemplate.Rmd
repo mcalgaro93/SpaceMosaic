@@ -36,8 +36,9 @@ appropriate for the biological question and tissue geometry. The workflow is:
 2. encode the cellular microenvironment ($Z$);
 3. identify and quality-control spatially contiguous patches;
 4. estimate within-patch expression associations;
-5. borrow information among patches with similar contexts ($W$); and
-6. interpret recurrent or context-specific effects in space.
+5. diagnose residual spatial autocorrelation for selected genes and patches;
+6. borrow information among patches with similar contexts ($W$); and
+7. interpret recurrent or context-specific effects in space.
 
 Throughout the template, matrices are oriented as follows:
 
@@ -268,7 +269,54 @@ de_result <- patchDE(
 )
 ```
 
-# 5. Patch attributes ($W$) and local meta-analysis
+# 5. Residual spatial autocorrelation
+
+Moran's I can be used as a diagnostic for spatial structure that remains after
+the within-patch regression. Refit `patchDE()` only on the genes and patches of
+interest, request the residuals, and pass one residual vector to `moranTest()`.
+Filtering is explicit so that `y`, `df`, `patch`, and the spatial coordinates
+remain aligned.
+
+When `pearson = TRUE`, `total_counts` must remain the library totals calculated
+from the original count matrix. Do not recompute them after selecting genes.
+The residual matrix returned by `patchDE()` has the same rows and columns as
+the already-filtered expression matrix supplied to it.
+
+```{r residual-moran, eval=FALSE}
+selected_patch <- names(which.max(table(patch))) # CHANGE to a patch of interest
+selected_gene <- colnames(y)[1]                  # CHANGE to a gene of interest
+selected_cells <- !is.na(patch) & patch == selected_patch
+
+diagnostic_fit <- patchDE(
+  y = y[selected_cells, selected_gene, drop = FALSE],
+  df = de_design[selected_cells, , drop = FALSE],
+  patch = patch[selected_cells],
+  pearson = TRUE,
+  tot = total_counts[selected_cells],
+  return_residuals = TRUE,
+  verbose = FALSE
+)
+
+selected_xy <- xy[use, , drop = FALSE][selected_cells, , drop = FALSE]
+
+set.seed(123)
+moran_result <- moranTest(
+  residuals = diagnostic_fit$residuals,
+  xy = selected_xy,
+  patch = patch[selected_cells],
+  k = 10,
+  n_permutations = 999,
+  alternative = "greater"
+)
+moran_result
+```
+
+Here, a small `p_value` with `alternative = "greater"` indicates that similar
+residuals remain spatially clustered within the selected patch. This suggests
+that the fitted model has not captured all spatial structure; it does not by
+itself identify the missing biological or technical covariate.
+
+# 6. Patch attributes ($W$) and local meta-analysis
 
 `getPatchAttributes()` safely averages cell-level features within each retained
 patch and sets patch identifiers as row names. $W$ can be based on $Z$, on
@@ -299,7 +347,7 @@ and negative subgroup IDs mark connected regions in $W$-space with coherent
 positive and negative effects; zero means that the patch did not belong to a
 qualifying subgroup.
 
-# 6. Result summaries and spatial validation
+# 7. Result summaries and spatial validation
 
 Rank genes using a criterion chosen in advance. The example below uses the
 fraction of patches with an absolute posterior Z-score above 2. Effect sizes,
@@ -380,7 +428,7 @@ runInteractivePlotter(
 )
 ```
 
-# 7. Reporting checklist
+# 8. Reporting checklist
 
 Record the definition and transformation of $X$, response-cell inclusion
 criteria, construction of $Z$ and $W$, all `getPatches()` tuning parameters,
