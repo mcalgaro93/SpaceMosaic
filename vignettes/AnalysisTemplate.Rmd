@@ -153,45 +153,70 @@ plotPatchIterations(
 )
 ```
 
-Patch filters should be chosen from diagnostics that are meaningful for the
-experiment. Patch size and within-patch predictor variance directly affect the
-stability of regression estimates; RNA content, distance to an explanatory
-population, tissue region, and sample identity can reveal additional failure
-modes. Filtering is performed by assigning excluded cells an `NA` patch.
+`getPatchDiagnostics()` reports assignment coverage and summarizes patch size,
+within-patch variation in `X`, spatial connectivity, and final membership
+stability. These are general checks; RNA content, distance to an explanatory
+population, tissue region, and sample identity can reveal additional
+experiment-specific failure modes.
 
 ```{r patch-diagnostics, eval=FALSE}
-patch_size <- table(patch)
-patch_mean_counts <- tapply(
-  log2(colSums(counts[, use, drop = FALSE]) + 1),
-  patch,
-  mean
+diagnostics <- getPatchDiagnostics(
+  xy = xy[use, , drop = FALSE],
+  X = as.matrix(X[use, , drop = FALSE]),
+  patches = patch_result
 )
-patch_var_x <- tapply(X[use, 1], patch, stats::var)
+patch_diagnostics <- diagnostics$patch_diagnostics
+diagnostics$assignment_summary
 
-patch_diagnostics <- data.frame(
-  patch = names(patch_size),
-  size = as.numeric(patch_size),
-  mean_counts = as.numeric(patch_mean_counts[names(patch_size)]),
-  var_x = as.numeric(patch_var_x[names(patch_size)])
+# CHANGE to the X column that should be inspected when X is multivariable.
+x_sd_column <- if (ncol(X) == 1L) "x_sd" else paste0("x_sd_", colnames(X)[1])
+patch_diagnostics$selected_x_sd <- patch_diagnostics[[x_sd_column]]
+patch_diagnostics$connectivity <- factor(
+  ifelse(
+    patch_diagnostics$strict_component_fraction == 1,
+    "Connected",
+    "Fragmented"
+  ),
+  levels = c("Connected", "Fragmented")
 )
 
-ggplot(patch_diagnostics, aes(size, var_x, color = mean_counts)) +
-  geom_point() +
-  scale_color_viridis_c() +
+# CHANGE after inspecting the diagnostic distributions and predictor scale.
+min_cells <- 30
+min_x_sd <- 0.1
+min_stability <- 0.9
+
+ggplot(patch_diagnostics, aes(n_cells, selected_x_sd)) +
+  geom_point(aes(color = membership_stability, shape = connectivity), size = 2) +
+  geom_vline(xintercept = min_cells, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = min_x_sd, linetype = "dashed", color = "red") +
+  scale_color_viridis_c(limits = c(0, 1), na.value = "grey70") +
+  scale_shape_manual(values = c(Connected = 16, Fragmented = 4)) +
   theme_minimal() +
   labs(
+    title = "Core patch diagnostics",
     x = "Cells per patch",
-    y = "Within-patch variance of X",
-    color = "Mean log2 counts"
+    y = "Within-patch standard deviation of X",
+    color = "Membership stability",
+    shape = "Connectivity"
   )
 
-# CHANGE after inspecting the diagnostic distributions.
 keep <- with(
   patch_diagnostics,
-  patch[size >= 30 & is.finite(var_x) & var_x > 0]
+  patch[
+    n_cells >= min_cells &
+      is.finite(selected_x_sd) & selected_x_sd >= min_x_sd &
+      !is.na(membership_stability) &
+      membership_stability >= min_stability &
+      strict_component_fraction == 1
+  ]
 )
 patch[!patch %in% keep] <- NA
 ```
+
+The plot combines patch size, predictor variation, final stability, and
+connectivity; crosses mark fragmentation at `strict_k`. Replace the
+example thresholds after inspecting the dataset and the scale of `X`, then set
+cells in excluded patches to `NA` as shown above.
 
 Map the retained patches together with $X$ and the surrounding cells. Polygon
 rows can carry any patch-level diagnostic or annotation supplied through
