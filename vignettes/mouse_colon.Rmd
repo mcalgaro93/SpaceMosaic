@@ -37,7 +37,7 @@ library(uwot)
 
 # Introduction
 
-This document shows how to apply the **SpaceMosaic** workflow to a spatial transcriptomics dataset of mouse colon. The goal is to identify spatially contiguous "patches" and analyze differential expression (DE) within these patches, further refined by a meta-analysis across similar patches.
+This document shows how to apply the **SpaceMosaic** workflow to a spatial transcriptomics dataset of mouse colon. The goal is to identify spatially contiguous "patches", analyze differential expression (DE) within these patches, diagnose residual spatial autocorrelation for selected genes, and refine the DE results through meta-analysis across similar patches.
 
 ## Notation & Concepts
 
@@ -45,6 +45,7 @@ This document shows how to apply the **SpaceMosaic** workflow to a spatial trans
 - $Z$ (Cellular Neighborhoods): Low-dimensional encoding of each cell's spatial context.
 - $W$ (Patch Embeddings): Matrix encoding the spatial context of a patch (typically the average of $Z$ for cells within the patch).
 - **Patch Attributes**: Intelligible variables describing patches (e.g., cell type abundance, tissue region).
+- **Residual Spatial Autocorrelation**: Spatial organization that remains in model residuals. Moran's I is used as a diagnostic of structure not captured by the fitted within-patch regression.
 
 ------------------------------------------------------------------------
 
@@ -658,7 +659,262 @@ W3 <- getPatchAttributes(
 meta_res3 <- patchMetaAnalysis(DEobj = de_res3, W = W3, k = 5)
 ```
 
-# 4. Post-hoc Analysis & Visualization
+# 4. Residual Spatial Diagnostics
+
+Differential-expression estimates describe association with the modeled predictors, but they do not show whether the fitted regression has captured all spatial structure. We therefore examine Moran's I on residuals from Scenario 2. This is a model diagnostic: significant residual autocorrelation may indicate a missing biological or technical covariate, a nonlinear relationship, or spatial variation occurring at a scale not represented by the current model.
+
+To keep this worked example focused and computationally manageable, we use six genes representing crypt-base/proliferation and immediate-early/remodeling programs, and the ten smallest retained epithelial patches. Genes and patches are selected independently of their Moran results to avoid presenting a diagnostic set chosen on the outcome of the test.
+
+```{r scenario2-moran-setup}
+diagnostic_genes2 <- c(
+  "Axin2", "Ascl2", "Cenpf",
+  "Fos", "Dusp1", "Areg"
+)
+stopifnot(all(diagnostic_genes2 %in% rownames(counts)))
+
+patch_sizes2 <- sort(table(patches2), decreasing = FALSE)
+diagnostic_patches2 <- names(head(patch_sizes2, 10))
+diagnostic_cells2 <- !is.na(patches2) &
+  patches2 %in% diagnostic_patches2
+
+# Total counts remain based on the complete expression matrix. They must not be
+# recalculated from the six selected genes.
+total_counts2 <- colSums(counts[, use2, drop = FALSE])
+diagnostic_y2 <- t(counts[diagnostic_genes2, use2, drop = FALSE])
+
+diagnostic_fit2 <- patchDE(
+  y = diagnostic_y2[diagnostic_cells2, , drop = FALSE],
+  df = data.frame(
+    X = X2[use2][diagnostic_cells2],
+    tot = log2(total_counts2 + 1)[diagnostic_cells2]
+  ),
+  patch = patches2[diagnostic_cells2],
+  return_residuals = TRUE,
+  verbose = FALSE
+)
+```
+
+The diagnostic regression uses exactly the same response transformation and design as the original Scenario 2 analysis. Only the genes and patches are filtered. `patchDE()` returns a residual matrix aligned with the filtered cells, which can be passed directly to `moranTest()`. The result is a data frame of Moran's I statistics (observed) for each gene-patch combination.
+
+```{r scenario2-moran-test}
+set.seed(123)
+moran2 <- moranTest(
+  residuals = diagnostic_fit2$residuals,
+  xy = spatialCoords(spe)[use2, , drop = FALSE][
+    diagnostic_cells2, , drop = FALSE
+  ],
+  patch = patches2[diagnostic_cells2],
+  k = 10, # number of nearest neighbors to define the spatial weights
+  n_permutations = 999,
+  alternative = "greater",
+  p_adjust_method = "BH",
+  adjustment_scope = "global"
+)
+
+moran2[order(moran2$p_adjusted, -moran2$observed, na.last = TRUE), c(
+  "patch", "gene", "n_cells", "observed", "expected",
+  "p_value", "p_adjusted", "status"
+)] |> head(15)
+```
+
+The raw p-values are corrected together across all gene-patch combinations in this example. With 999 permutations, the smallest attainable raw p-value is 0.001. A larger number of permutations may be required for a definitive analysis involving a larger testing family.
+
+A gene-by-patch plot makes it possible to distinguish widespread residual structure from isolated patch-specific signals. Moran's I is shown by fill color, while black borders summarize the adjusted evidence against random spatial arrangement.
+
+```{r scenario2-moran-plot, fig.width=7, fig.height=3.5, fig.cap="Residual spatial autocorrelation for selected genes in Scenario 2. Each tile represents a gene-patch combination; fill color shows the observed Moran's I and black borders indicate significant residual autocorrelation after Benjamini-Hochberg correction."}
+#| fig-width: 7
+#| fig-height: 3.5
+moran2_ok <- subset(moran2, status == "ok")
+moran2_ok$patch <- factor(moran2_ok$patch, levels = diagnostic_patches2)
+
+ggplot(moran2_ok, aes(x = patch, y = gene)) +
+  geom_tile(aes(
+    fill = observed,
+    color = p_adjusted < 0.05
+  ), width = 0.8, height = 0.8, linewidth = 1) +
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "red", midpoint = 0
+  ) +
+  scale_color_manual(values = c("FALSE" = "grey70", "TRUE" = "black")) +
+  guides(color = guide_legend(override.aes = list(fill = NA))) +
+  theme_minimal() +
+  labs(
+    title = "Residual spatial autocorrelation",
+    subtitle = "Scenario 2: Stem Cell Niche",
+    x = "Patch", y = "Gene",
+    color = "Adjusted p < 0.05",
+    fill = "Observed Moran's I"
+  )
+```
+
+An observed value larger than its finite-sample expectation indicates that similar residuals tend to occur near one another. A small adjusted p-value suggests that this clustering is unlikely under random permutation, but does not identify its cause. Conversely, a non-significant result should not be interpreted as proof that the model captures every possible form or scale of spatial dependence.
+
+For genes and patches of interest, we can visualize the spatial distribution of residuals to identify whether they are clustered in a biologically meaningful way.
+
+```{r scenario2-moran-helpers}
+# These helpers are kept local to the vignette while we assess whether the
+# diagnostics are useful enough to become package functions.
+prepare_residual_map <- function(residuals, xy, patch, gene,
+                                 patches = NULL, standardize = TRUE) {
+  stopifnot(gene %in% colnames(residuals), nrow(residuals) == nrow(xy))
+
+  out <- data.frame(
+    x = xy[, 1], y = xy[, 2],
+    residual = residuals[, gene],
+    patch = as.character(patch)
+  )
+  if (!is.null(patches)) {
+    out <- out[out$patch %in% as.character(patches), , drop = FALSE]
+  }
+  if (standardize) {
+    out <- out |>
+      dplyr::group_by(patch) |>
+      dplyr::mutate(residual = as.numeric(scale(residual))) |>
+      dplyr::ungroup()
+  }
+  out
+}
+
+prepare_moran_diagnostic <- function(de, moran, variable, genes = NULL) {
+  stopifnot(variable %in% names(de))
+
+  t_stat <- de[[variable]]$ests / de[[variable]]$ses
+  de_long <- as.data.frame(t_stat) |>
+    tibble::rownames_to_column("gene") |>
+    tidyr::pivot_longer(-gene, names_to = "patch", values_to = "t_stat")
+
+  out <- merge(de_long, moran, by = c("gene", "patch"))
+  if (!is.null(genes)) {
+    out <- out[out$gene %in% genes, , drop = FALSE]
+  }
+  out
+}
+```
+
+```{r scenario2-residual-map, fig.width=8, fig.height=6, fig.cap="Within-patch standardized residuals for Dusp1 in the selected Scenario 2 patches. Point color shows the residual value; patch borders are black when Moran's I is significant after Benjamini-Hochberg correction and grey otherwise. Patch numbers are shown at the corresponding cell centroids."}
+diagnostic_xy2 <- spatialCoords(spe)[use2, , drop = FALSE][
+  diagnostic_cells2, , drop = FALSE
+]
+residuals_df <- prepare_residual_map(
+  residuals = diagnostic_fit2$residuals,
+  xy = diagnostic_xy2,
+  patch = patches2[diagnostic_cells2],
+  gene = "Dusp1"
+)
+patch_labels <- residuals_df |>
+  dplyr::group_by(patch) |>
+  dplyr::summarise(x = mean(x), y = mean(y), .groups = "drop")
+
+dusp1_moran <- subset(
+  moran2,
+  gene == "Dusp1" & status == "ok",
+  select = c(patch, p_adjusted)
+)
+dusp1_moran$patch <- as.character(dusp1_moran$patch)
+dusp1_moran$significant <- dusp1_moran$p_adjusted < 0.05
+
+residual_polys <- poly_df2 |>
+  dplyr::mutate(patch = as.character(patch)) |>
+  dplyr::filter(patch %in% residuals_df$patch) |>
+  dplyr::left_join(dusp1_moran, by = "patch")
+
+ggplot(residuals_df, aes(x = x, y = y)) +
+  # Plot all cells in grey to provide context for the residuals
+  geom_point(data = coords, aes(x = x, y = y),
+             color = "grey70", size = 0.1, alpha = 0.5) +
+  # Plot the residuals for the selected gene and patches
+  geom_point(
+    aes(color = residual),
+    shape = 16, size = 0.7
+  ) +
+  # Plot patch boundaries for non-significant Moran's I in grey
+  geom_polygon(
+    data = subset(residual_polys, !significant),
+    aes(group = patch),
+    color = "grey70",
+    fill = NA, linewidth = 0.3, show.legend = FALSE
+  ) +
+  # Plot patch boundaries for significant Moran's I in black
+  geom_polygon(
+    data = subset(residual_polys, significant),
+    aes(group = patch),
+    color = "black",
+    fill = NA, linewidth = 0.3, show.legend = FALSE
+  ) +
+  geom_text(
+    data = patch_labels,
+    aes(label = patch),
+    color = "black", fontface = "bold", size = 2.5
+  ) +
+  coord_fixed(xlim = range(residuals_df$x), ylim = range(residuals_df$y)) +
+  scale_color_gradient2(
+    low = "#2166AC", mid = "#FEE08B", high = "#B2182B", midpoint = 0
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Spatial distribution of residuals for Dusp1",
+    subtitle = "Residuals standardized separately within each patch",
+    x = NULL, y = NULL,
+    color = "Residual"
+  )
+```
+
+The positive residual clusters suggest that the model locally underestimates Dusp1 expression in co-localized cells within patches 3 and 34. Moran's I identifies this remaining organization but does not determine whether its origin is biological, technical, or related to model specification.
+
+As an additional diagnostic, we visualize the relationship between Moran's I and the t statistic from the corresponding regression. This helps to identify whether residual spatial autocorrelation is associated with strong or weak differential-expression signals. The background bands classify the magnitude of positive Moran's I for visual guidance only. Their cutoffs are configurable below and should not be interpreted as universal inferential thresholds, because Moran's I also depends on the spatial graph and patch geometry.
+
+```{r scenario2-moran-vs-t, fig.width=10, fig.height=4, fig.cap="Relationship between Moran's I and the within-patch t statistic for selected genes in Scenario 2. Each point represents a patch; labels identify significant Moran tests. Background bands provide a descriptive, rather than inferential, classification of positive Moran's I magnitude."}
+diagnostic_table <- prepare_moran_diagnostic(
+  de = diagnostic_fit2$de,
+  moran = moran2,
+  variable = "X",
+  genes = diagnostic_genes2
+)
+
+moran_bands <- data.frame(
+  ymin = c(-Inf, 0.1, 0.3, 0.5),
+  ymax = c(0.1, 0.3, 0.5, Inf),
+  strength = factor(
+    c("little/none", "weak", "moderate", "strong"),
+    levels = c("little/none", "weak", "moderate", "strong")
+  )
+)
+
+ggplot(diagnostic_table, aes(x = t_stat, y = observed)) +
+  geom_rect(
+    data = moran_bands,
+    aes(ymin = ymin, ymax = ymax, fill = strength),
+    xmin = -Inf, xmax = Inf, inherit.aes = FALSE, alpha = 0.3
+  ) +
+  geom_point(aes(color = p_adjusted < 0.05), size = 1.8, shape = 16) +
+  geom_text_repel(
+    data = subset(diagnostic_table, p_adjusted < 0.05),
+    aes(label = patch),
+    size = 2.5,
+    max.overlaps = Inf
+  ) +
+  facet_wrap(~ gene, scales = "free_x") +
+  scale_fill_manual(values = c(
+    "little/none" = "grey80", "weak" = "#FEE8A8",
+    "moderate" = "#FDB366", "strong" = "#D7301F"
+  )) +
+  scale_color_manual(values = c(`FALSE` = "grey35", `TRUE` = "#B2182B")) +
+  geom_vline(xintercept = c(-2, 2), linetype = "dashed", color = "grey30") +
+  theme_bw() +
+  labs(
+    title = "Residual spatial structure versus DE evidence",
+    x = "Within-patch t statistic",
+    y = "Moran's I",
+    color = "Adjusted p < 0.05",
+    fill = "Moran's I magnitude"
+  )
+```
+
+Taken together, these diagnostics suggest that the standardized residuals do not show strong spatial clustering in most selected gene-patch combinations, and there is no clear relationship between Moran's I and the t statistic. However, some patches show significant residual autocorrelation and warrant further investigation.
+
+A natural next step is to inspect whether residual clusters coincide with known anatomy, patch boundaries, technical quality metrics, or spatial patterns in the modeled predictor. This can suggest missing covariates, nonlinear terms, interactions, or a spatial scale not represented by the current regression. The model should then be refitted and the diagnostic repeated. If residual Moran's I decreases while the estimated effect and t statistic remain stable, the original association is comparatively robust; if the effect changes substantially or reverses direction, the original result should be interpreted with caution. A significant Moran test alone is not a reason to discard a patch, but it identifies the gene-patch combinations for which this sensitivity analysis is most useful.
+
+# 5. Post-hoc Analysis & Visualization
 
 For each scenario, we convert meta-analysis estimates to Z-scores, rank genes by the fraction of patches with $|Z| > 2$, and visualize the 50 most recurrent associations in a heatmap. Positive and negative Z-scores indicate increasing and decreasing expression with the scenario-specific predictor, respectively. Additional plots are selected to clarify the biological question posed by each scenario.
 

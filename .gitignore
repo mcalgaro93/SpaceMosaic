@@ -3,9 +3,12 @@
 .RData
 .Ruserdata
 .Renviron
+.DS_Store
 .Rproj.user
 src/*.o
 src/*.so
 *~
 *.swp
 *.swo
+vignettes/*.html
+dev/runs/moran_toy_example.pdf

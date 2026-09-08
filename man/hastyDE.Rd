@@ -5,12 +5,15 @@
 \title{Very fast DE without best practices
 Runs simple OLS regression on all genes at once using matrix algebra}
 \usage{
-hastyDE(y, df)
+hastyDE(y, df, return_residuals = FALSE)
 }
 \arguments{
 \item{y}{the normalized counts matrix (cells x genes)}
 
 \item{df}{a data frame of the variables to be modeled}
+
+\item{return_residuals}{Logical; if TRUE, include the OLS residual matrix
+(cells x genes) in the returned list. Default FALSE.}
 }
 \value{
 A list with:
@@ -19,6 +22,7 @@ A list with:
 \item se:     matrix of standard errors
 \item p:      matrix of p-values
 \item df_resid: residual degrees of freedom
+\item residuals: optional matrix of OLS residuals (cells x genes)
 }
 }
 \description{
