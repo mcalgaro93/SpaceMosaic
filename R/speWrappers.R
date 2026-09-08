@@ -334,4 +334,40 @@ moranTest.spe <- function(spe, assay_name = 'residuals' , patch = NULL, k = 10L,
                   res
                       }
 
+#' @describeIn getPatchDiagnostics Method for \code{SpatialExperiment} objects. Extracts
+#'   residuals from the specified assay and spatial coordinates from
+#'   \code{spatialCoords(spe)}, then dispatches to \code{getPatchDiagnostics}.
+#'
+#' @param spe SpatialExperiment object. Must have rownames.
+#' @param X Design variables for each spatial unit. Either a character vector of
+#'   column names in `colData(spe)`, or a numeric matrix/vector aligned to the
+#'   rows of `spatialCoords(spe)` (one row per spatial unit). Each column is
+#'   scaled to unit SD.
+#'
+#' @export
 
+getPatchDiagnostics.spe <- function(spe, X, k = 10L, strict_k = NULL) {
+
+
+
+                  if (!is(spe, "SpatialExperiment")) {
+                    stop("'spe' must be a SpatialExperiment object.")
+                  }
+
+                  X_mat <- .resolve_feature_matrix(spe, X, "X", source = "colData")
+
+                  patch <- metadata(spe)$patch
+                  if (is.null(patch)) {
+                  patch <- colData(spe)$patch
+                  } else {
+                  patch$patch <- colData(spe)$patch
+                  }
+
+                  res <- getPatchDiagnostics(
+                                          xy = spatialCoords(spe),
+                                          X = X_mat,
+                                          patch = patch,
+                                          k = k,
+                                          strict_k = strict_k)
+                  res
+                      }

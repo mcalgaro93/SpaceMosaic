@@ -114,7 +114,7 @@ universal.
 spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance)]
 
 set.seed(123)
-patch_result <- getPatches.spe(
+spe_use <- getPatches.spe(
   spe_use,
   X = 'distance',
   Z = 'Z',
@@ -128,7 +128,7 @@ patch_result <- getPatches.spe(
   n_iters = 15,
   log_iters = TRUE
 )
-patch <- patch_result$patch
+patch <- spe_use$patch
 
 # Optional visual check of membership across iterations.
 plotPatchIterations(
@@ -147,10 +147,9 @@ population, tissue region, and sample identity can reveal additional
 experiment-specific failure modes.
 
 ```{r patch-diagnostics, eval=FALSE}
-diagnostics <- getPatchDiagnostics(
-  xy = xy[use, , drop = FALSE],
-  X = as.matrix(X[use, , drop = FALSE]),
-  patches = patch_result
+diagnostics <- getPatchDiagnostics.spe(
+  spe = spe_use,
+  X = 'distance'
 )
 patch_diagnostics <- diagnostics$patch_diagnostics
 diagnostics$assignment_summary
