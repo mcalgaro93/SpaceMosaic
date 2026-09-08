@@ -82,7 +82,7 @@
 #'       sum-of-squares of X across iterations).
 #'   }
 #' @export
-spe_getPatches <- function(spe, X, npatches,
+getPatches.spe <- function(spe, X, npatches,
                             Z = NULL,
                             alpha = 0.5,
                             beta = 1,
@@ -223,7 +223,7 @@ spe_getPatches <- function(spe, X, npatches,
 #'   \code{name}, added via \code{reducedDim(spe, name)}. This matrix has
 #'   dimensions n cells x (ncol(embedding_mat) * length(ks)).
 #' @export
-spe_embedCellNeighborhoods <- function(spe, embedding, ks = c(5, 50), tissue = NULL,
+embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = NULL,
                                        name = "Z") {
     embedding_mat <- .resolve_feature_matrix(spe, embedding, 'embedding', source = "reducedDim")
     reducedDim(spe, name) <- embedCellNeighborhoods(embedding_mat, spatialCoords(spe), ks, tissue)
@@ -256,7 +256,7 @@ spe_embedCellNeighborhoods <- function(spe, embedding, ks = c(5, 50), tissue = N
 #'   If `resid_mse = TRUE`, the list also contains a `resid_mse` matrix with
 #'   the same orientation.
 #' @export
-spe_patchDE <- function(spe, df, assay_name = "logcounts", patch_column = "patch", pearson = FALSE, tot = NULL, resid_mse = FALSE, verbose = TRUE){
+patchDE.spe <- function(spe, df, assay_name = "logcounts", patch_column = "patch", pearson = FALSE, tot = NULL, resid_mse = FALSE, verbose = TRUE){
         y <- t(assay(spe,assay_name))
 
         df <- as.data.frame(.resolve_feature_matrix(spe, df, 'df', source = 'colData'))
@@ -278,7 +278,7 @@ spe_patchDE <- function(spe, df, assay_name = "logcounts", patch_column = "patch
 #'   containing patch assignments. Default `"patch"`.
 #' @return Matrix (npatches x features) of per-patch mean attributes.
 #' @export
-spe_getPatchAttributes <- function(spe, dimred = "Z", patch_col = "patch") {
+getPatchAttributes.spe <- function(spe, dimred = "Z", patch_col = "patch") {
   if (!dimred %in% SingleCellExperiment::reducedDimNames(spe)) {
     stop(sprintf("'%s' not found in reducedDims(spe).", dimred))
   }
@@ -291,3 +291,47 @@ spe_getPatchAttributes <- function(spe, dimred = "Z", patch_col = "patch") {
 
   getPatchAttributes(Z, patch)
 }
+
+#' @describeIn moranTest Method for \code{SpatialExperiment} objects. Extracts
+#'   residuals from the specified assay and spatial coordinates from
+#'   \code{spatialCoords(spe)}, then dispatches to \code{moranTest}.
+#'
+#' @param spe A \code{SpatialExperiment} object.
+#' @param assay_name Character; name of the assay in \code{spe} containing
+#'   the values to test (e.g. Pearson residuals). Default \code{"residuals"}.
+#'
+#' @export
+
+moranTest.spe <- function(spe, assay_name = 'residuals' , patch = NULL, k = 10L,
+                      n_permutations = 999L,
+                      alternative = c("greater", "less", "two.sided"),
+                      p_adjust_method = "BH",
+                      adjustment_scope = c("global", "patch", "gene")){
+
+
+
+                  if (!is(spe, "SpatialExperiment")) {
+                    stop("'spe' must be a SpatialExperiment object.")
+                  }
+
+                  if (!is.character(assay_name) || length(assay_name) != 1) {
+                    stop("'assay_name' must be a single character string.")
+                  }
+
+                  if (!assay_name %in% assayNames(spe)) {
+                    stop(sprintf("'%s' not found in assay names of 'spe'. Available assays: %s",
+                                assay_name, paste(assayNames(spe), collapse = ", ")))
+                  }
+
+                  res <- moranTest( residuals = t(assay(spe,assay_name)),
+                                          xy = spatialCoords(spe),
+                                          patch = patch,
+                                          k = k,
+                                          n_permutations = n_permutations,
+                                          alternative = alternative,
+                                          p_adjust_method = p_adjust_method,
+                                          adjustment_scope = adjustment_scope)
+                  res
+                      }
+
+
