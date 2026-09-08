@@ -17,6 +17,11 @@ flowchart TD
     X[Design variable X] --> C
     XY[xy coordinates] --> C
     C --> D[patch assignments]
+
+    D --> Q[getPatchDiagnostics]
+    X --> Q
+    XY --> Q
+    Q --> QD[Patch quality diagnostics]
     
     D --> E[patchDE]
     Y[Expression matrix y] --> E
@@ -51,6 +56,7 @@ flowchart TD
 |------|----------|---------|
 | 1 | `embedCellNeighborhoods()` | Average cell embeddings over spatial neighbors at multiple scales to get per-cell context vectors Z |
 | 2 | `getPatches()` | Iteratively partition cells into contiguous elliptical patches that maximize within-patch variance of X while preserving Z-homogeneity |
+| 2a | `getPatchDiagnostics()` | Report patch size, within-patch variation in X, robust multi-k spatial connectivity, final membership stability, and assignment coverage |
 | 3 | `patchDE()` | Run fast OLS-based DE simultaneously for all genes within each patch |
 | 3a (optional) | `moranTest()` | Test selected genes for residual spatial autocorrelation within patches using permutation-based Moran's I |
 | 4 | `getPatchAttributes()` | Summarize Z across cells in each patch to get a patch-level characteristics matrix W |
