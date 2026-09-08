@@ -254,29 +254,10 @@ covariates in `df`. Do not use both strategies automatically; choose a model
 appropriate for the assay and question.
 
 ```{r patch-de, eval=FALSE}
-y <- t(counts[, use, drop = FALSE])
-total_counts <- colSums(counts[, use, drop = FALSE])
 
-de_design <- data.frame(
-  X,
-  # CHANGE: add known confounders, correctly subsetted to response cells.
-  # batch = spe$batch,
-  row.names = rownames(xy)
-)
-de_design <- de_design[use, , drop = FALSE]
-
-stopifnot(
-  nrow(y) == nrow(de_design),
-  nrow(y) == length(patch),
-  length(total_counts) == nrow(y)
-)
-
-de_result <- patchDE(
-  y = y,
-  df = de_design,
-  patch = patch,
-  pearson = TRUE,
-  tot = total_counts
+de_result <- patchDE.spe(
+  spe = spe_use,
+  df = 'distance'
 )
 ```
 

@@ -1,78 +1,24 @@
-#' Assign cells to patches using elliptical Gaussian assignments
-#'
-#' Iterative EM-like algorithm (per iteration):
-#'   (a) Estimate per-patch centroid + covariance from xy.
-#'   (b) Assign cells using spatial fit + X-diversity boost + Z-penalty + hunger.
-#'   (c) Re-estimate per-patch centroid + covariance.
-#'   (d) Assign cells using spatial fit only (no X/Z/hunger).
-#'   (e) Contiguity check: set orphans to NA.
-#'
-#' Uses candidate filtering (only evaluates nearby patches per cell) and
-#' mutual k-NN contiguity for scalability to 100k+ cells.
+#' @describeIn getPatches Method for \code{SpatialExperiment} objects.
+#'   Resolves `X` from `colData(spe)` and `Z` from `reducedDims(spe)`, runs
+#'   `getPatches()` on `spatialCoords(spe)`, and attaches the result back onto
+#'   `spe` rather than returning it standalone. See `getPatches` for the
+#'   underlying algorithm and the meaning/defaults of all tuning parameters
+#'   (`alpha`, `beta`, `hunger_weight`, `max_elongation`, `max_radius`,
+#'   `mahal_radius`, `n_candidates`, `n_iters`, `init_method` and friends,
+#'   `log_iters`, `verbose`).
 #'
 #' @param spe SpatialExperiment object. Must have rownames.
 #' @param X Design variables for each spatial unit. Either a character vector of
 #'   column names in `colData(spe)`, or a numeric matrix/vector aligned to the
 #'   rows of `spatialCoords(spe)` (one row per spatial unit). Each column is
 #'   scaled to unit SD.
-#' @param npatches Number of patches to create.
 #' @param Z Optional per-cell context embeddings (cells x features). Either a
 #'   single character string naming an entry in `reducedDims(spe)`, or a numeric
 #'   matrix aligned to the rows of `spatialCoords(spe)`. If supplied, patches
 #'   will prefer Z-coherent regions. NULL disables.
-#' @param alpha Weight of the Z penalty. Typical range 0.2--1.0; default 0.5.
-#'   Higher values force patches to respect microenvironment boundaries at the
-#'   cost of spatial compactness. Set to 0 to ignore Z entirely.
-#' @param beta Weight of the X diversity boost. Typical range 0.5/K--3/K where
-#'   K = ncol(X); default 1 (appropriate for single-column X). For multi-column
-#'   X, scale down proportionally (e.g. beta = 0.2 for K = 5). Raise if patches
-#'   are too homogeneous; lower if patches are spatially fragmented.
-#' @param hunger_weight Controls how aggressively low-variance patches grab cells.
-#'   Typical range 0.3--0.7; default 0.5. 0 = all patches equally hungry
-#'   (uniform sizes), 1 = hunger proportional to 1/totvar (maximizes variance
-#'   reduction but allows extreme size imbalance). Lower if some patches shrink
-#'   to nothing; raise if variance reduction is insufficient.
-#' @param max_elongation Maximum ratio of largest to smallest eigenvalue of a
-#'   patch covariance matrix. Typical range 2--8; default 4. Lower values force
-#'   rounder patches; raise if tissue structures are genuinely elongated.
-#' @param max_radius Maximum Euclidean distance from a patch centroid for
-#'   assignment. Cells beyond this get zero spatial score. Default NULL (auto:
-#'   3x the expected patch radius assuming uniform circular patches). Override
-#'   if patches span very different density regions.
-#' @param mahal_radius Maximum Mahalanobis radius for assignment. Cells beyond
-#'   this (in each patch's own coordinate system) get zero spatial score.
-#'   Typical range 2--4; default 3. Lower values make tighter patches with more
-#'   unassigned cells; Inf disables the cutoff entirely.
-#' @param n_candidates Number of nearest patch centroids to evaluate per cell.
-#'   Typical range 10--50; default 20. Higher values are more accurate but
-#'   slower. Rarely needs tuning unless npatches is very large (>1000).
-#' @param n_iters Number of outer iterations. Typical range 10--30; default 15.
-#'   Convergence is usually reached by 10--15; raise if patches are still
-#'   shifting at the final iteration (check membership_log).
-#' @param init_method Initialization method for patch seeds. "kmeans" uses
-#'   isotropic k-means seeding (default). "gradient_ellipse" orients initial
-#'   ellipses along the local spatial gradient of X. The gradient_ellipse
-#'   option currently requires ncol(X) = 1.
-#' @param init_gradient_k Number of nearest neighbors used to estimate local
-#'   spatial gradients of X when init_method = "gradient_ellipse". Must be a
-#'   finite integer greater than or equal to 3.
-#' @param init_gradient_elongation Target initial ellipse elongation ratio
-#'   (major/minor eigenvalue ratio) for init_method = "gradient_ellipse". Must
-#'   be finite and greater than or equal to 1.
-#' @param x_weighted_ellipse_second_pass Logical; if TRUE, the ellipse re-fit in
-#'   step (c) up-weights cells whose X is farther from their patch mean. This
-#'   can encourage elongated patches along smooth X gradients while keeping step
-#'   (d) spatial-only. Applied only when ncol(X) = 1.
-#' @param x_ellipse_gamma Strength of X-based up-weighting in second-pass
-#'   ellipse fitting. 0 disables weighting; typical range 0.5--1.5.
-#' @param x_ellipse_wmax Cap on standardized X-deviation used in the weighting
-#'   rule to limit outlier influence. Typical range 2--4.
-#' @param log_iters If TRUE, return a list with patch assignments plus
-#'   per-iteration diagnostics (SS per patch and membership). Default TRUE.
 #' @param patch_column Column name in colData(spe) where to store patch assignments.
 #'   Also used to namespace `membership_log`/`ss_log` under `metadata(spe)`.
 #'   Default = 'patch'.
-#' @param verbose Show progress. Default TRUE.
 #' @return The input `spe`, with results attached:
 #'   \itemize{
 #'     \item `colData(spe)[[patch_column]]`: named vector/factor of final patch assignments.
@@ -201,24 +147,20 @@ getPatches.spe <- function(spe, X, npatches,
 }
 
 
-#' Embed cellular neighborhoods from single cell embeddings and positions
-#'
-#' Creates a neighborhood embedding by averaging a cell embedding matrix over
-#' spatial neighbor networks at multiple scales, and stores the result back
-#' onto the object as a new reduced dimension.
+#' @describeIn embedCellNeighborhoods Method for \code{SpatialExperiment}
+#'   objects. Resolves `embedding` from `reducedDims(spe)` (or takes it as a
+#'   matrix directly), runs `embedCellNeighborhoods()` against
+#'   `spatialCoords(spe)`, and stores the result back as a new reduced
+#'   dimension on `spe`. See `embedCellNeighborhoods` for how the
+#'   multi-scale neighborhood averaging works.
 #'
 #' @param spe A SpatialExperiment object.
 #' @param embedding Either a matrix of single cell embeddings (cells x
 #'   features, with one row per column of \code{spe}), or a single character
 #'   string giving the name of a reduced dimension already stored in
 #'   \code{reducedDim(spe)}.
-#' @param ks Vector giving the number of nearest neighbors for each scale.
-#'   Default \code{c(5, 50)}.
-#' @param tissue Optional vector giving tissue IDs to prevent cross-tissue
-#'   neighbor edges. Default NULL.
 #' @param name Character string giving the name under which the result is
-#'   stored via \code{reducedDim(spe, name)}. Default
-#'   \code{"Z"}.
+#'   stored via \code{reducedDim(spe, name)}. Default \code{"Z"}.
 #' @return \code{spe} with a new reduced dimension, named according to
 #'   \code{name}, added via \code{reducedDim(spe, name)}. This matrix has
 #'   dimensions n cells x (ncol(embedding_mat) * length(ks)).
@@ -233,10 +175,11 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 
 
 
-#' spe_patchDE: run DE over all patches
-#'
-#' Runs differential expression across spatial patches, using a chosen assay
-#' from a SpatialExperiment object and covariates resolved from its colData.
+#' @describeIn patchDE Method for \code{SpatialExperiment} objects. Extracts
+#'   the expression matrix from the chosen assay and resolves `df` from
+#'   `colData(spe)`, then dispatches to `patchDE()`. See `patchDE` for
+#'   details of the DE model and the meaning of `pearson`, `tot`, and
+#'   `resid_mse`.
 #'
 #' @param spe A SpatialExperiment object.
 #' @param df Either a character vector naming column(s) of \code{colData(spe)}
@@ -247,14 +190,6 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #'   transposition). Default "logcounts".
 #' @param patch_column Character string giving the column of
 #'   \code{colData(spe)} that holds patch IDs for each cell. Default "patch".
-#' @param pearson Logical; if TRUE, transform y to Pearson residuals before DE
-#' @param tot Numeric vector of total counts per cell (required if pearson = TRUE)
-#' @param resid_mse Logical; if TRUE, include per-gene residual MSE in output
-#' @param verbose Show progress. Default TRUE.
-#' @return A list keyed by model variable. Each element contains `pvals`,
-#'   `ests`, and `ses` matrices with genes in rows and patches in columns.
-#'   If `resid_mse = TRUE`, the list also contains a `resid_mse` matrix with
-#'   the same orientation.
 #' @export
 patchDE.spe <- function(spe, df, assay_name = "logcounts", patch_column = "patch", pearson = FALSE, tot = NULL, resid_mse = FALSE, verbose = TRUE){
         y <- t(assay(spe,assay_name))
@@ -265,18 +200,19 @@ patchDE.spe <- function(spe, df, assay_name = "logcounts", patch_column = "patch
 }
 
 
-#' Compute patch attributes matrix W from a SpatialExperiment
-#'
-#' Extracts a reducedDim matrix and a colData patch assignment column
-#' from a SpatialExperiment, then computes
-#' per-patch mean attributes via `getPatchAttributes()`.
+#' @describeIn getPatchAttributes Method for \code{SpatialExperiment} objects.
+#'   Extracts a reducedDim matrix and a colData patch assignment column from
+#'   `spe`, then dispatches to `getPatchAttributes()`. `spe`'s `dimred` and
+#'   `patch_col` correspond to the `Z` and `patch` arguments of
+#'   `getPatchAttributes()` (renamed here since they now identify columns
+#'   rather than being passed as data directly); see `getPatchAttributes`
+#'   for how the per-patch means are computed.
 #'
 #' @param spe A SpatialExperiment object.
 #' @param dimred Character or integer scalar specifying which entry of
 #'   `reducedDims(spe)` to use as Z. Default `"Z"`.
 #' @param patch_col Character scalar naming the column of `colData(spe)`
 #'   containing patch assignments. Default `"patch"`.
-#' @return Matrix (npatches x features) of per-patch mean attributes.
 #' @export
 getPatchAttributes.spe <- function(spe, dimred = "Z", patch_col = "patch") {
   if (!dimred %in% SingleCellExperiment::reducedDimNames(spe)) {
@@ -294,7 +230,10 @@ getPatchAttributes.spe <- function(spe, dimred = "Z", patch_col = "patch") {
 
 #' @describeIn moranTest Method for \code{SpatialExperiment} objects. Extracts
 #'   residuals from the specified assay and spatial coordinates from
-#'   \code{spatialCoords(spe)}, then dispatches to \code{moranTest}.
+#'   \code{spatialCoords(spe)}, then dispatches to \code{moranTest}. See
+#'   \code{moranTest} for details of the permutation test and the meaning of
+#'   \code{k}, \code{n_permutations}, \code{alternative},
+#'   \code{p_adjust_method}, and \code{adjustment_scope}.
 #'
 #' @param spe A \code{SpatialExperiment} object.
 #' @param assay_name Character; name of the assay in \code{spe} containing
@@ -334,9 +273,13 @@ moranTest.spe <- function(spe, assay_name = 'residuals' , patch = NULL, k = 10L,
                   res
                       }
 
-#' @describeIn getPatchDiagnostics Method for \code{SpatialExperiment} objects. Extracts
-#'   residuals from the specified assay and spatial coordinates from
-#'   \code{spatialCoords(spe)}, then dispatches to \code{getPatchDiagnostics}.
+#' @describeIn getPatchDiagnostics Method for \code{SpatialExperiment}
+#'   objects. Resolves \code{X} from \code{colData(spe)}, pulls the current
+#'   patch assignment from \code{colData(spe)$patch} (merging into
+#'   \code{metadata(spe)$patch} if present), and dispatches to
+#'   \code{getPatchDiagnostics} using \code{spatialCoords(spe)}. See
+#'   \code{getPatchDiagnostics} for the diagnostics returned and the meaning
+#'   of \code{k} and \code{strict_k}.
 #'
 #' @param spe SpatialExperiment object. Must have rownames.
 #' @param X Design variables for each spatial unit. Either a character vector of
