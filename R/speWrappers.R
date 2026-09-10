@@ -17,12 +17,11 @@
 #'   matrix aligned to the rows of `spatialCoords(spe)`. If supplied, patches
 #'   will prefer Z-coherent regions. NULL disables.
 #' @param patch_column Column name in colData(spe) where to store patch assignments.
-#'   Also used to namespace `membership_log`/`ss_log` under `metadata(spe)`.
 #'   Default = 'patch'.
 #' @return The input `spe`, with results attached:
 #'   \itemize{
 #'     \item `colData(spe)[[patch_column]]`: named vector/factor of final patch assignments.
-#'     \item `metadata(spe)[[patch_column]]`: (only if `log_iters = TRUE`) a list with
+#'     \item `metadata(spe)[['SpaceMosaic']][['patch_iterations']]`: (only if `log_iters = TRUE`) a list with
 #'       `membership_log` (n_cells x n_iters matrix of patch assignments per
 #'       iteration) and `ss_log` (npatches x n_iters matrix of per-patch
 #'       sum-of-squares of X across iterations).
@@ -96,9 +95,9 @@ getPatches.spe <- function(spe, X, npatches,
     SummarizedExperiment::colData(spe)[[patch_column]] <- patch_vec
 
     if (log_iters) {
-        S4Vectors::metadata(spe)[[patch_column]] <- list(
-        membership_log = membership_log,
-        ss_log = ss_log
+        S4Vectors::metadata(spe)[["SpaceMosaic"]][["patch_iterations"]] <- list(
+           membership_log = membership_log,
+           ss_log = ss_log
         )
     }
 
@@ -197,6 +196,7 @@ patchDE.spe <- function(spe, df, assay_name = "logcounts", patch_column = "patch
         df <- as.data.frame(.resolve_feature_matrix(spe, df, 'df', source = 'colData'))
 
         patchDE(y, df, colData(spe)[,patch_column], pearson = pearson, tot = tot, resid_mse = resid_mse, verbose = verbose)
+
 }
 
 
@@ -299,18 +299,75 @@ getPatchDiagnostics.spe <- function(spe, X, k = 10L, strict_k = NULL) {
 
                   X_mat <- .resolve_feature_matrix(spe, X, "X", source = "colData")
 
-                  patch <- metadata(spe)$patch
-                  if (is.null(patch)) {
+                  patch_metadata <- metadata(spe)$SpaceMosaic$patch_iterations
+                  if (is.null(patch_metadata)) {
                   patch <- colData(spe)$patch
                   } else {
-                  patch$patch <- colData(spe)$patch
+                  patch_metadata$patch <- colData(spe)$patch
                   }
 
-                  res <- getPatchDiagnostics(
+                  metadata(spe)$SpaceMosaic$patch_diagnostics <- getPatchDiagnostics(
                                           xy = spatialCoords(spe),
                                           X = X_mat,
-                                          patch = patch,
+                                          patch = patch_metadata,
                                           k = k,
                                           strict_k = strict_k)
-                  res
+                  spe
                       }
+
+patchDEWorkflow <- function(spe, predictor_cols, assay = 'logcounts', patch_column = "patch",
+                            embedding_name = 'Z', metaanalysis = TRUE, pearson = TRUE,
+                            tot = NULL, resid_mse = FALSE, verbose = TRUE) {
+
+    y <- t(assay(spe, assay))
+    df <- as.data.frame(.resolve_feature_matrix(spe, predictor_cols, 'predictor_cols', source = 'colData'))
+
+    de_res <- patchDE(y, df, colData(spe)[, patch_column], pearson = pearson, tot = tot,
+                      resid_mse = resid_mse, verbose = verbose)
+
+    patch_ids <- colData(spe)$patch
+    patch_ids <- as.character(sort(unique(as.numeric(patch_ids[!is.na(patch_ids)]))))
+
+    patchDE_object <- SingleCellExperiment(
+        rowData = DataFrame(gene_id = rownames(spe)),
+        colData = DataFrame(patch = unique(patch_ids))
+    )
+
+    rownames(patchDE_object) <- rownames(spe)
+    colnames(patchDE_object) <- patch_ids
+
+    for (predictor in predictor_cols) {
+        de_res_predictor <- lapply(de_res[[predictor]], function(x) {
+            x[, colnames(patchDE_object), drop = FALSE]
+        })
+        names(de_res_predictor) <- paste0(predictor, "_", names(de_res_predictor))
+        assays(patchDE_object) <- de_res_predictor
+    }
+
+    if (metaanalysis) {
+        W <- getPatchAttributes.spe(
+            spe,
+            dimred = embedding_name,
+            patch_col = patch_column
+        )
+
+        W <- W[colnames(patchDE_object), , drop = FALSE]
+
+        reducedDim(patchDE_object, "W") <- W
+
+        de_res_meta <- patchMetaAnalysis(de_res, reducedDim(patchDE_object, "W"))
+
+        for (predictor in predictor_cols) {
+            de_res_meta_predictor <- lapply(de_res_meta[[predictor]], function(x) {
+                x[, colnames(patchDE_object), drop = FALSE]
+            })
+            names(de_res_meta_predictor) <- paste0(predictor, "_meta_", names(de_res_meta_predictor))
+            assays(patchDE_object) <- c(
+                assays(patchDE_object),
+                de_res_meta_predictor
+            )
+        }
+    }
+
+    return(patchDE_object)
+}
