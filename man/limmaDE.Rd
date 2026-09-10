@@ -2,22 +2,32 @@
 % Please edit documentation in R/limmaDE.R
 \name{limmaDE}
 \alias{limmaDE}
-\title{DE based on limma's linear model fitting}
+\title{Differential expression with limma}
 \usage{
-limmaDE(y, df)
+limmaDE(y, df, return_residuals = FALSE, trend = TRUE, robust = TRUE)
 }
 \arguments{
-\item{y}{the normalized counts matrix (cells x genes)}
+\item{y}{Numeric expression matrix with cells in rows and genes in columns.}
 
-\item{df}{a data frame of the variables to be modeled}
+\item{df}{Data frame containing the model predictors, with one row per cell.}
+
+\item{return_residuals}{Logical; if \code{TRUE}, include the model residuals
+(cells by genes). Default \code{FALSE}.}
+
+\item{trend}{Logical passed to \code{\link[limma:eBayes]{limma::eBayes()}}. Use \code{FALSE} for Pearson
+residuals and consider \code{TRUE} for log-expression retaining a
+mean--variance trend. Default \code{TRUE}.}
+
+\item{robust}{Logical passed to \code{\link[limma:eBayes]{limma::eBayes()}} to use robust empirical
+Bayes hyperparameter estimation. Default \code{TRUE}.}
 }
 \value{
-A list with:
-  - effect: matrix of effect sizes (genes x predictors)
-  - se:     matrix of standard errors
-  - p:      matrix of p-values
-  - residuals: matrix of residuals (cells x genes)
+A list containing gene-by-predictor matrices \code{effect}, \code{se}, and
+\code{p}; gene-wise vectors \code{sigma2} (raw residual variance), \code{sigma2_post}
+(moderated posterior residual variance), \code{df_resid}, and \code{df_total}; and,
+when requested, a cells-by-genes \code{residuals} matrix.
 }
 \description{
-This function performs a linear regression of each gene on the predictors in `df`, returning effect sizes, standard errors, p-values, and residuals.
+Fits the same linear model to every gene and applies empirical-Bayes
+moderation to the gene-wise residual variances.
 }
