@@ -23,6 +23,10 @@ This folder is for ad hoc method development and tuning experiments.
   gene-by-patch results, writes `dev/runs/moran_toy_example.pdf`, and performs
   lightweight smoke checks. Set `SPACEMOSAIC_MORAN_PLOT` to use a different
   plot path; formal regression coverage remains in `tests/testthat/`.
+- limmaDE_toy_report.Rmd: concise report explaining the research
+  question, rationale, simulation and real within-patch comparison of
+  `hastyDE()` and `limmaDE()`. The rendered HTML is written to
+  `dev/runs/limmaDE_toy_report.html`.
 - runs/: optional outputs from local runs (CSV summaries, plots, notes).
 
 ## Usage Notes
