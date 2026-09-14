@@ -44,6 +44,9 @@ getPatches.spe <- function(spe, X, npatches,
                             x_ellipse_gamma = 1,
                             x_ellipse_wmax = 3,
                             log_iters = TRUE,
+                            patch_diagnostics = TRUE,
+                            k = 10L, strict_k = NULL,
+                            patch_polys = TRUE,
                             patch_column = "patch",
                             verbose = TRUE) {
 
@@ -95,12 +98,40 @@ getPatches.spe <- function(spe, X, npatches,
     SummarizedExperiment::colData(spe)[[patch_column]] <- patch_vec
 
     if (log_iters) {
-        S4Vectors::metadata(spe)[["SpaceMosaic"]][["patch_iterations"]] <- list(
+       patch_metadata <- list(
            membership_log = membership_log,
            ss_log = ss_log
         )
+        S4Vectors::metadata(spe)[["SpaceMosaic"]][["patch_iterations"]] <- patch_metadata
+        patch_metadata$patch <- patch_vec
+
+
+    } else {
+      patch_metadata <- patch_vec
     }
 
+    if(patch_diagnostics) {
+      patch_data <- getPatchDiagnostics(
+            xy = spatialCoords(spe),
+            X = X_mat,
+            patch = patch_metadata,
+            k = k,
+            strict_k = strict_k
+        )
+      metadata(spe)$SpaceMosaic$patch_diagnostics <- patch_data 
+      patch_data <- patch_data$patch_diagnostics
+    } else{
+      patch_data <- NULL
+    }
+
+    if (patch_polys) {
+      patch_polys <- getPatchPolys(
+        xy = spatialCoords(spe),
+        patch = patch_vec,
+        patch_data = patch_data
+      )
+      metadata(spe)$SpaceMosaic$patch_polys <- patch_polys
+    }
     spe
 }
 

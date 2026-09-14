@@ -53,12 +53,6 @@ Single-cell spatial transcriptomics (6k-plex CosMx SMI) dataset of human basal-c
 # Replace this with the loader for your dataset.
 #spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
 spe <- readRDS("~/Documents/SpaceMosaic/inst/extdata/cosmx_carcinoma.rds")
-
-
-
-cell_type <- spe$celltype       # CHANGE: broad cell annotation
-#cell_subtype <- spe$cell_subtype # CHANGE: optional detailed annotation
-counts <- assay(spe, "counts")
 ```
 
 We study the exposure of Cancer Cells near Fibroblasts.
@@ -88,17 +82,12 @@ slides, or fields of view; this prevents neighborhoods from crossing tissue
 boundaries.
 
 ```{r cellular-neighborhoods, eval=FALSE}
-Z <- embedCellNeighborhoods(
-  mat = reducedDim(spe, "PCA"),
-  xy = spatialCoords(spe),
+spe <- embedCellNeighborhoods.spe(
+  spe = spe,
+ embedding = 'PCA',
   ks = c(5, 50),
   tissue = spe$sample_id # CHANGE; omit only for a single contiguous tissue
 )
-
-stopifnot(nrow(Z) == ncol(spe))
-reducedDim(spe, "Z") <- Z
-
-
 ```
 
 # 3. Patch identification and quality control
@@ -147,11 +136,8 @@ population, tissue region, and sample identity can reveal additional
 experiment-specific failure modes.
 
 ```{r patch-diagnostics, eval=FALSE}
-diagnostics <- getPatchDiagnostics.spe(
-  spe = spe_use,
-  X = 'distance'
-)
-patch_diagnostics <- diagnostics$patch_diagnostics
+
+patch_diagnostics <- metadata(spe_use)$SpaceMosaic$patch_diagnostics
 diagnostics$assignment_summary
 
 # CHANGE to the X column that should be inspected when X is multivariable.
@@ -209,11 +195,6 @@ rows can carry any patch-level diagnostic or annotation supplied through
 `patch_data`.
 
 ```{r patch-map, eval=FALSE}
-poly_df <- getPatchPolys(
-  xy = xy[use, , drop = FALSE],
-  patch = patch,
-  patch_data = patch_diagnostics
-)
 
 plot_df <- data.frame(
   x = xy[, 1],
@@ -255,42 +236,13 @@ appropriate for the assay and question.
 
 ```{r patch-de, eval=FALSE}
 
-de_result <- patchDE.spe(
+de_result <- patchDEWorkflow(
   spe = spe_use,
-  df = 'distance'
+  predictor_cols = 'distance',
+  pearson = FALSE
 )
 ```
 
-# 5. Patch attributes ($W$) and local meta-analysis
-
-`getPatchAttributes()` safely averages cell-level features within each retained
-patch and sets patch identifiers as row names. $W$ can be based on $Z$, on
-interpretable cell metadata, or on a combination of both. Its row names are
-automatically aligned with the patch columns returned by `patchDE()`.
-
-```{r meta-analysis, eval=FALSE}
-W <- getPatchAttributes(
-  Z = Z[use, , drop = FALSE],
-  patch = patch
-)
-
-stopifnot(all(colnames(de_result[[1]]$ests) %in% rownames(W)))
-
-meta_result <- patchMetaAnalysis(
-  DEobj = de_result,
-  W = W,
-  k = 10,
-  min_effect = 0,  # CHANGE if a minimum biologically relevant effect is known
-  max_pval = 0.05,
-  min_patches = 3
-)
-```
-
-The result is keyed by modeled variable. For every variable it contains
-posterior estimates, standard errors, p-values, and subgroup labels. Positive
-and negative subgroup IDs mark connected regions in $W$-space with coherent
-positive and negative effects; zero means that the patch did not belong to a
-qualifying subgroup.
 
 # 6. Result summaries and spatial validation
 
