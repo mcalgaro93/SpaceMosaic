@@ -53,14 +53,26 @@ getPatches.spe <- function(spe, X, npatches,
   xy <- SpatialExperiment::spatialCoords(spe)
 
   if (missing(X) || is.null(X) || length(X) == 0) {
-    stop("`X` must be a non-empty character vector of colData names, or a matrix.")
+    stop("`X` must be a non-empty character vector of colData names.")
   }
 
-  X_mat <- .resolve_feature_matrix(spe, X, "X", source = "colData")
+  missing_cols <- setdiff(X, colnames(SummarizedExperiment::colData(spe)))
+    if (length(missing_cols) > 0) {
+      stop("The following `X` are not columns of colData(spe): ",
+           paste(missing_cols, collapse = ", "))
+    }
+
+  X_mat <- as.matrix(SummarizedExperiment::colData(spe)[, X, drop = FALSE])
+
 
   Z_mat <- NULL
   if (!is.null(Z)) {
-    Z_mat <- .resolve_feature_matrix(spe, Z, "Z", source = "reducedDim")
+    if (!Z %in% reducedDimNames(spe)) {
+      stop("`Z` = '", Z, "' not found in reducedDimNames(spe). ",
+           "Available: ", paste(reducedDimNames(spe), collapse = ", "))
+    }
+    Z_mat <- SingleCellExperiment::reducedDim(spe, Z)
+
   }
 
   init_method <- match.arg(init_method)
@@ -136,47 +148,6 @@ getPatches.spe <- function(spe, X, npatches,
 }
 
 
-# Internal helper: resolve either a matrix passed directly, or column/reducedDim
-# names to pull from colData(spe) / reducedDim(spe, name).
-.resolve_feature_matrix <- function(spe, value, value_name_arg, source = c("colData", "reducedDim")) {
-  source <- match.arg(source)
-
-  if (is.matrix(value)) {
-    # user passed a matrix directly — use as-is, just sanity check dims
-    if (nrow(value) != ncol(spe)) {
-      stop("`", value_name_arg, "` matrix must have one row per column of `spe` ",
-           "(", ncol(spe), " expected, got ", nrow(value), ").")
-    }
-    return(value)
-  }
-
-  if (is.character(value)) {
-    if (source == "colData") {
-      cd <- SummarizedExperiment::colData(spe)
-      missing_cols <- setdiff(value, colnames(cd))
-      if (length(missing_cols) > 0) {
-        stop("The following `", value_name_arg, "` are not columns of colData(spe): ",
-             paste(missing_cols, collapse = ", "))
-      }
-      return(as.matrix(cd[, value, drop = FALSE]))
-    } else {
-      if (length(value) != 1) {
-        stop("`", value_name_arg, "` must be a single character string when naming a reducedDim.")
-      }
-      available_reddims <- SingleCellExperiment::reducedDimNames(spe)
-      if (!value %in% available_reddims) {
-        stop("`", value_name_arg, "` = '", value, "' not found in reducedDimNames(spe). ",
-             "Available: ", paste(available_reddims, collapse = ", "))
-      }
-      return(SingleCellExperiment::reducedDim(spe, value))
-    }
-  }
-
-  stop("`", value_name_arg, "` must be either a character vector/string of names, ",
-       "or a matrix with ", ncol(spe), " rows (one per spatial unit).")
-}
-
-
 #' @describeIn embedCellNeighborhoods Method for \code{SpatialExperiment}
 #'   objects. Resolves `embedding` from `reducedDims(spe)` (or takes it as a
 #'   matrix directly), runs `embedCellNeighborhoods()` against
@@ -197,7 +168,12 @@ getPatches.spe <- function(spe, X, npatches,
 #' @export
 embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = NULL,
                                        name = "Z") {
-    embedding_mat <- .resolve_feature_matrix(spe, embedding, 'embedding', source = "reducedDim")
+
+    if (!embedding %in% reducedDimNames(spe)) {
+      stop("`embedding` = '", embedding, "' not found in reducedDimNames(spe). ",
+           "Available: ", paste(reducedDimNames(spe), collapse = ", "))
+    }
+    embedding_mat <- SingleCellExperiment::reducedDim(spe, embedding)
     reducedDim(spe, name) <- embedCellNeighborhoods(embedding_mat, spatialCoords(spe), ks, tissue)
     spe
 }
@@ -351,7 +327,19 @@ patchDEWorkflow <- function(spe, predictor_cols, assay = 'logcounts', patch_colu
                             tot = NULL, resid_mse = FALSE, verbose = TRUE) {
 
     y <- t(assay(spe, assay))
-    df <- as.data.frame(.resolve_feature_matrix(spe, predictor_cols, 'predictor_cols', source = 'colData'))
+
+     if (missing(predictor_cols) || is.null(predictor_cols) || length(predictor_cols) == 0) {
+    stop("`predictor_cols` must be a non-empty character vector of colData names.")
+     }
+
+    missing_cols <- setdiff(predictor_cols, colnames(SummarizedExperiment::colData(spe)))
+      if (length(missing_cols) > 0) {
+        stop("The following `predictor_cols` are not columns of colData(spe): ",
+            paste(missing_cols, collapse = ", "))
+      }
+
+    df <- SummarizedExperiment::colData(spe)[, predictor_cols, drop = FALSE]
+
 
     de_res <- patchDE(y, df, colData(spe)[, patch_column], pearson = pearson, tot = tot,
                       resid_mse = resid_mse, verbose = verbose)
