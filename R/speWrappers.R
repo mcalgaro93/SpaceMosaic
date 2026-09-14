@@ -1,30 +1,36 @@
 #' @describeIn getPatches Method for \code{SpatialExperiment} objects.
 #'   Resolves `X` from `colData(spe)` and `Z` from `reducedDims(spe)`, runs
 #'   `getPatches()` on `spatialCoords(spe)`, and attaches the result back onto
-#'   `spe` rather than returning it standalone. See `getPatches` for the
-#'   underlying algorithm and the meaning/defaults of all tuning parameters
-#'   (`alpha`, `beta`, `hunger_weight`, `max_elongation`, `max_radius`,
-#'   `mahal_radius`, `n_candidates`, `n_iters`, `init_method` and friends,
-#'   `log_iters`, `verbose`).
+#'   `spe` rather than returning it standalone. Optionally computes patch-level
+#'   diagnostics and patch polygons using `patchDiagnostics()` and
+#'   `patchPolys()`, respectively.
 #'
 #' @param spe SpatialExperiment object. Must have rownames.
-#' @param X Design variables for each spatial unit. Either a character vector of
-#'   column names in `colData(spe)`, or a numeric matrix/vector aligned to the
-#'   rows of `spatialCoords(spe)` (one row per spatial unit). Each column is
-#'   scaled to unit SD.
-#' @param Z Optional per-cell context embeddings (cells x features). Either a
-#'   single character string naming an entry in `reducedDims(spe)`, or a numeric
-#'   matrix aligned to the rows of `spatialCoords(spe)`. If supplied, patches
-#'   will prefer Z-coherent regions. NULL disables.
-#' @param patch_column Column name in colData(spe) where to store patch assignments.
-#'   Default = 'patch'.
+#' @param X Design variables for each spatial unit. A character vector of
+#'   column names in `colData(spe)`. Each column is scaled to unit SD.
+#' @param Z Optional per-cell context embeddings (cells x features). A single
+#'   character string naming an entry in `reducedDims(spe)`, or a numeric matrix.
+#'   If supplied, patches will prefer Z-coherent regions. NULL disables.
+#' @param patch_column Column name in `colData(spe)` where to store patch
+#'   assignments. Default = 'patch'.
+#' @param patch_diagnostics Logical; if TRUE, compute patch-level diagnostics
+#'   using `patchDiagnostics()` and store the result in
+#'   `metadata(spe)$SpaceMosaic$patch_diagnostics`.
+#' @param patch_polys Logical; if TRUE, compute patch polygons using
+#'   `patchPolys()` and store the result in
+#'   `metadata(spe)$SpaceMosaic$patch_polys`.
 #' @return The input `spe`, with results attached:
 #'   \itemize{
-#'     \item `colData(spe)[[patch_column]]`: named vector/factor of final patch assignments.
-#'     \item `metadata(spe)[['SpaceMosaic']][['patch_iterations']]`: (only if `log_iters = TRUE`) a list with
-#'       `membership_log` (n_cells x n_iters matrix of patch assignments per
-#'       iteration) and `ss_log` (npatches x n_iters matrix of per-patch
-#'       sum-of-squares of X across iterations).
+#'     \item `colData(spe)[[patch_column]]`: named vector/factor of final patch
+#'       assignments.
+#'     \item `metadata(spe)$SpaceMosaic$patch_diagnostics`: patch-level
+#'       diagnostics, if `patch_diagnostics = TRUE`.
+#'     \item `metadata(spe)$SpaceMosaic$patch_polys`: patch polygons, if
+#'       `patch_polys = TRUE`.
+#'     \item `metadata(spe)$SpaceMosaic$patch_iterations`: if `log_iters = TRUE`,
+#'       a list containing `membership_log` (n_cells x n_iters matrix of patch
+#'       assignments per iteration) and `ss_log` (npatches x n_iters matrix of
+#'       per-patch sum-of-squares of X across iterations).
 #'   }
 #' @export
 getPatches.spe <- function(spe, X, npatches,
@@ -179,51 +185,76 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 }
 
 
-#' @describeIn moranTest Method for \code{SpatialExperiment} objects. Extracts
-#'   residuals from the specified assay and spatial coordinates from
-#'   \code{spatialCoords(spe)}, then dispatches to \code{moranTest}. See
-#'   \code{moranTest} for details of the permutation test and the meaning of
-#'   \code{k}, \code{n_permutations}, \code{alternative},
-#'   \code{p_adjust_method}, and \code{adjustment_scope}.
+#' Run patch-level differential expression and optional meta-analysis
 #'
-#' @param spe A \code{SpatialExperiment} object.
-#' @param assay_name Character; name of the assay in \code{spe} containing
-#'   the values to test (e.g. Pearson residuals). Default \code{"residuals"}.
+#' Runs \code{patchDE()} on the expression data and patch assignments stored
+#' in a \code{SpatialExperiment} object, and packages the results into a
+#' \code{SingleCellExperiment}. Optionally performs patch-level meta-analysis
+#' using \code{patchMetaAnalysis()} and the embedding-derived patch attributes
+#' from \code{getPatchAttributes()}.
+#'
+#' @param spe A \code{SpatialExperiment} object. Must contain the requested
+#'   expression assay and patch assignments in \code{colData(spe)}.
+#' @param predictor_cols Character vector of column names in
+#'   \code{colData(spe)} to use as predictors in \code{patchDE()}.
+#' @param assay Character string specifying the assay in \code{spe} containing
+#'   the expression matrix. Default is \code{"logcounts"}.
+#' @param patch_column Character string specifying the column in
+#'   \code{colData(spe)} containing patch assignments. Default is
+#'   \code{"patch"}.
+#' @param embedding_name Character string specifying the entry in
+#'   \code{reducedDims(spe)} to use for meta-analysis. Default is \code{"Z"}.
+#'   Ignored when \code{metaanalysis = FALSE}.
+#' @param metaanalysis Logical; if TRUE, perform patch-level meta-analysis
+#'   using \code{patchMetaAnalysis()}. The resulting embedding-derived patch
+#'   attributes are stored as reduced dimension \code{"W"} in the returned
+#'   \code{SingleCellExperiment}. Default is TRUE.
+#' @param pearson Logical; passed to \code{patchDE()} to control whether the
+#'   Pearson-based association method is used. Default is FALSE.
+#' @param tot Optional character string specifying the column in
+#'   \code{colData(spe)} containing per-cell total counts. If NULL, total
+#'   counts are handled by \code{patchDE()}. Default is NULL.
+#' @param resid_mse Logical; passed to \code{patchDE()} to control whether
+#'   residual mean squared errors are returned. Default is FALSE.
+#' @param verbose Logical; passed to \code{patchDE()} to control verbosity.
+#'   Default is TRUE.
+#'
+#' @return A \code{SingleCellExperiment} object containing one column per
+#'   patch and one row per gene. The returned object contains:
+#'   \itemize{
+#'     \item one assay containing z-scores for each predictor, with assay names
+#'       corresponding to the predictor names;
+#'     \item \code{metadata()} entries containing the p-values, estimates,
+#'       and standard errors returned by \code{patchDE()};
+#'     \item if \code{metaanalysis = TRUE}, additional assays containing
+#'       meta-analysis z-scores, named using the corresponding predictor and
+#'       the \code{"_meta"} suffix;
+#'     \item if \code{metaanalysis = TRUE}, additional metadata entries
+#'       containing the p-values, estimates, and standard errors returned by
+#'       \code{patchMetaAnalysis()};
+#'     \item if \code{metaanalysis = TRUE}, \code{reducedDim(object, "W")}
+#'       containing the embedding-derived patch attributes used for
+#'       meta-analysis.
+#'   }
+#'
+#' @details
+#' The expression matrix is extracted from \code{assay(spe, assay)} and
+#' transposed from genes-by-cells to cells-by-genes before being passed to
+#' \code{patchDE()}. Predictor variables are taken from \code{colData(spe)},
+#' and patch assignments are taken from \code{colData(spe)[[patch_column]]}.
+#'
+#' When \code{metaanalysis = TRUE}, the embedding specified by
+#' \code{embedding_name} is extracted from \code{reducedDims(spe)}.
+#' Patch-level attributes are calculated with \code{getPatchAttributes()}
+#' and supplied to \code{patchMetaAnalysis()} together with the
+#' \code{patchDE()} results.
+#'
+#' @seealso
+#' \code{\link{patchDE}},
+#' \code{\link{patchMetaAnalysis}},
+#' \code{\link{getPatchAttributes}}
 #'
 #' @export
-
-moranTest.spe <- function(spe, assay_name = 'residuals' , patch = NULL, k = 10L,
-                      n_permutations = 999L,
-                      alternative = c("greater", "less", "two.sided"),
-                      p_adjust_method = "BH",
-                      adjustment_scope = c("global", "patch", "gene")){
-
-
-
-                  if (!is(spe, "SpatialExperiment")) {
-                    stop("'spe' must be a SpatialExperiment object.")
-                  }
-
-                  if (!is.character(assay_name) || length(assay_name) != 1) {
-                    stop("'assay_name' must be a single character string.")
-                  }
-
-                  if (!assay_name %in% assayNames(spe)) {
-                    stop(sprintf("'%s' not found in assay names of 'spe'. Available assays: %s",
-                                assay_name, paste(assayNames(spe), collapse = ", ")))
-                  }
-
-                  res <- moranTest( residuals = t(assay(spe,assay_name)),
-                                          xy = spatialCoords(spe),
-                                          patch = patch,
-                                          k = k,
-                                          n_permutations = n_permutations,
-                                          alternative = alternative,
-                                          p_adjust_method = p_adjust_method,
-                                          adjustment_scope = adjustment_scope)
-                  res
-                      }
-
 
 patchDEWorkflow <- function(
     spe,
@@ -269,6 +300,17 @@ patchDEWorkflow <- function(
     df <- SummarizedExperiment::colData(
         spe
     )[, predictor_cols, drop = FALSE]
+
+    if (!is.null(tot)) {
+    if (!tot %in% colnames(SummarizedExperiment::colData(spe))) {
+        stop(sprintf(
+            "'%s' not found in colData(spe).",
+            tot
+        ))
+    }
+
+    tot <- SummarizedExperiment::colData(spe)[[tot]]
+}
 
     # Run patchDE
     de_res <- patchDE(
@@ -434,3 +476,50 @@ patchDEWorkflow <- function(
 
     return(patchDE_object)
 }
+
+
+
+#' @describeIn moranTest Method for \code{SpatialExperiment} objects. Extracts
+#'   residuals from the specified assay and spatial coordinates from
+#'   \code{spatialCoords(spe)}, then dispatches to \code{moranTest}. See
+#'   \code{moranTest} for details of the permutation test and the meaning of
+#'   \code{k}, \code{n_permutations}, \code{alternative},
+#'   \code{p_adjust_method}, and \code{adjustment_scope}.
+#'
+#' @param spe A \code{SpatialExperiment} object.
+#' @param assay_name Character; name of the assay in \code{spe} containing
+#'   the values to test (e.g. Pearson residuals). Default \code{"residuals"}.
+#'
+#' @export
+
+moranTest.spe <- function(spe, assay_name = 'residuals' , patch = NULL, k = 10L,
+                      n_permutations = 999L,
+                      alternative = c("greater", "less", "two.sided"),
+                      p_adjust_method = "BH",
+                      adjustment_scope = c("global", "patch", "gene")){
+
+
+
+                  if (!is(spe, "SpatialExperiment")) {
+                    stop("'spe' must be a SpatialExperiment object.")
+                  }
+
+                  if (!is.character(assay_name) || length(assay_name) != 1) {
+                    stop("'assay_name' must be a single character string.")
+                  }
+
+                  if (!assay_name %in% assayNames(spe)) {
+                    stop(sprintf("'%s' not found in assay names of 'spe'. Available assays: %s",
+                                assay_name, paste(assayNames(spe), collapse = ", ")))
+                  }
+
+                  res <- moranTest( residuals = t(assay(spe,assay_name)),
+                                          xy = spatialCoords(spe),
+                                          patch = patch,
+                                          k = k,
+                                          n_permutations = n_permutations,
+                                          alternative = alternative,
+                                          p_adjust_method = p_adjust_method,
+                                          adjustment_scope = adjustment_scope)
+                  res
+                      }

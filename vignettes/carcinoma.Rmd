@@ -257,24 +257,6 @@ heatmap(
 )
 ```
 
-Use `summarizeSubgroups()` to relate coherent effect regions to cell-level
-metadata. Numeric variables are summarized as standardized enrichment scores;
-categorical variables are represented by level-specific log2 enrichment.
-
-{r subgroup-summary, eval=FALSE}
-cell_metadata <- data.frame(
-  cell_type = cell_type[use],
-  sample_id = spe$sample_id[use],
-  predictor = X[use, 1]
-)
-
-subgroup_summary <- summarizeSubgroups(
-  meta = meta_result,
-  patch = patch,
-  cellmeta = cell_metadata
-)
-head(subgroup_summary)
-
 
 
 Finally, project representative effects back onto the tissue. Confirm that

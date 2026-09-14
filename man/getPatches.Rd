@@ -48,6 +48,10 @@ getPatches.spe(
   x_ellipse_gamma = 1,
   x_ellipse_wmax = 3,
   log_iters = TRUE,
+  patch_diagnostics = TRUE,
+  k = 10L,
+  strict_k = NULL,
+  patch_polys = TRUE,
   patch_column = "patch",
   verbose = TRUE
 )
@@ -55,17 +59,14 @@ getPatches.spe(
 \arguments{
 \item{xy}{Matrix of cells' xy positions. Must have rownames.}
 
-\item{X}{Design variables for each spatial unit. Either a character vector of
-column names in \code{colData(spe)}, or a numeric matrix/vector aligned to the
-rows of \code{spatialCoords(spe)} (one row per spatial unit). Each column is
-scaled to unit SD.}
+\item{X}{Design variables for each spatial unit. A character vector of
+column names in \code{colData(spe)}. Each column is scaled to unit SD.}
 
 \item{npatches}{Number of patches to create.}
 
-\item{Z}{Optional per-cell context embeddings (cells x features). Either a
-single character string naming an entry in \code{reducedDims(spe)}, or a numeric
-matrix aligned to the rows of \code{spatialCoords(spe)}. If supplied, patches
-will prefer Z-coherent regions. NULL disables.}
+\item{Z}{Optional per-cell context embeddings (cells x features). A single
+character string naming an entry in \code{reducedDims(spe)}, or a numeric matrix.
+If supplied, patches will prefer Z-coherent regions. NULL disables.}
 
 \item{alpha}{Weight of the Z penalty. Typical range 0.2--1.0; default 0.5.
 Higher values force patches to respect microenvironment boundaries at the
@@ -135,9 +136,16 @@ per-iteration diagnostics (SS per patch and membership). Default TRUE.}
 
 \item{spe}{SpatialExperiment object. Must have rownames.}
 
-\item{patch_column}{Column name in colData(spe) where to store patch assignments.
-Also used to namespace \code{membership_log}/\code{ss_log} under \code{metadata(spe)}.
-Default = 'patch'.}
+\item{patch_diagnostics}{Logical; if TRUE, compute patch-level diagnostics
+using \code{patchDiagnostics()} and store the result in
+\code{metadata(spe)$SpaceMosaic$patch_diagnostics}.}
+
+\item{patch_polys}{Logical; if TRUE, compute patch polygons using
+\code{patchPolys()} and store the result in
+\code{metadata(spe)$SpaceMosaic$patch_polys}.}
+
+\item{patch_column}{Column name in \code{colData(spe)} where to store patch
+assignments. Default = 'patch'.}
 }
 \value{
 If log_iters = FALSE, a named vector of patch assignments.
@@ -148,11 +156,16 @@ If log_iters = TRUE, a list with:
 
 The input \code{spe}, with results attached:
 \itemize{
-\item \code{colData(spe)[[patch_column]]}: named vector/factor of final patch assignments.
-\item \code{metadata(spe)[[patch_column]]}: (only if \code{log_iters = TRUE}) a list with
-\code{membership_log} (n_cells x n_iters matrix of patch assignments per
-iteration) and \code{ss_log} (npatches x n_iters matrix of per-patch
-sum-of-squares of X across iterations).
+\item \code{colData(spe)[[patch_column]]}: named vector/factor of final patch
+assignments.
+\item \code{metadata(spe)$SpaceMosaic$patch_diagnostics}: patch-level
+diagnostics, if \code{patch_diagnostics = TRUE}.
+\item \code{metadata(spe)$SpaceMosaic$patch_polys}: patch polygons, if
+\code{patch_polys = TRUE}.
+\item \code{metadata(spe)$SpaceMosaic$patch_iterations}: if \code{log_iters = TRUE},
+a list containing \code{membership_log} (n_cells x n_iters matrix of patch
+assignments per iteration) and \code{ss_log} (npatches x n_iters matrix of
+per-patch sum-of-squares of X across iterations).
 }
 }
 \description{
@@ -172,10 +185,8 @@ mutual k-NN contiguity for scalability to 100k+ cells.
 \item \code{getPatches.spe()}: Method for \code{SpatialExperiment} objects.
 Resolves \code{X} from \code{colData(spe)} and \code{Z} from \code{reducedDims(spe)}, runs
 \code{getPatches()} on \code{spatialCoords(spe)}, and attaches the result back onto
-\code{spe} rather than returning it standalone. See \code{getPatches} for the
-underlying algorithm and the meaning/defaults of all tuning parameters
-(\code{alpha}, \code{beta}, \code{hunger_weight}, \code{max_elongation}, \code{max_radius},
-\code{mahal_radius}, \code{n_candidates}, \code{n_iters}, \code{init_method} and friends,
-\code{log_iters}, \code{verbose}).
+\code{spe} rather than returning it standalone. Optionally computes patch-level
+diagnostics and patch polygons using \code{patchDiagnostics()} and
+\code{patchPolys()}, respectively.
 
 }}
