@@ -179,34 +179,6 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 }
 
 
-
-
-#' @describeIn patchDE Method for \code{SpatialExperiment} objects. Extracts
-#'   the expression matrix from the chosen assay and resolves `df` from
-#'   `colData(spe)`, then dispatches to `patchDE()`. See `patchDE` for
-#'   details of the DE model and the meaning of `pearson`, `tot`, and
-#'   `resid_mse`.
-#'
-#' @param spe A SpatialExperiment object.
-#' @param df Either a character vector naming column(s) of \code{colData(spe)}
-#'   to use as DE predictors, or a matrix with one row per column of
-#'   \code{spe} (cells), used as-is.
-#' @param assay_name Character string giving the name of the assay in
-#'   \code{spe} to use as the expression matrix (cells x genes after
-#'   transposition). Default "logcounts".
-#' @param patch_column Character string giving the column of
-#'   \code{colData(spe)} that holds patch IDs for each cell. Default "patch".
-#' @export
-patchDE.spe <- function(spe, df, assay_name = "logcounts", patch_column = "patch", pearson = FALSE, tot = NULL, resid_mse = FALSE, verbose = TRUE){
-        y <- t(assay(spe,assay_name))
-
-        df <- as.data.frame(.resolve_feature_matrix(spe, df, 'df', source = 'colData'))
-
-        patchDE(y, df, colData(spe)[,patch_column], pearson = pearson, tot = tot, resid_mse = resid_mse, verbose = verbose)
-
-}
-
-
 #' @describeIn getPatchAttributes Method for \code{SpatialExperiment} objects.
 #'   Extracts a reducedDim matrix and a colData patch assignment column from
 #'   `spe`, then dispatches to `getPatchAttributes()`. `spe`'s `dimred` and
@@ -280,47 +252,6 @@ moranTest.spe <- function(spe, assay_name = 'residuals' , patch = NULL, k = 10L,
                   res
                       }
 
-#' @describeIn getPatchDiagnostics Method for \code{SpatialExperiment}
-#'   objects. Resolves \code{X} from \code{colData(spe)}, pulls the current
-#'   patch assignment from \code{colData(spe)$patch} (merging into
-#'   \code{metadata(spe)$patch} if present), and dispatches to
-#'   \code{getPatchDiagnostics} using \code{spatialCoords(spe)}. See
-#'   \code{getPatchDiagnostics} for the diagnostics returned and the meaning
-#'   of \code{k} and \code{strict_k}.
-#'
-#' @param spe SpatialExperiment object. Must have rownames.
-#' @param X Design variables for each spatial unit. Either a character vector of
-#'   column names in `colData(spe)`, or a numeric matrix/vector aligned to the
-#'   rows of `spatialCoords(spe)` (one row per spatial unit). Each column is
-#'   scaled to unit SD.
-#'
-#' @export
-
-getPatchDiagnostics.spe <- function(spe, X, k = 10L, strict_k = NULL) {
-
-
-
-                  if (!is(spe, "SpatialExperiment")) {
-                    stop("'spe' must be a SpatialExperiment object.")
-                  }
-
-                  X_mat <- .resolve_feature_matrix(spe, X, "X", source = "colData")
-
-                  patch_metadata <- metadata(spe)$SpaceMosaic$patch_iterations
-                  if (is.null(patch_metadata)) {
-                  patch <- colData(spe)$patch
-                  } else {
-                  patch_metadata$patch <- colData(spe)$patch
-                  }
-
-                  metadata(spe)$SpaceMosaic$patch_diagnostics <- getPatchDiagnostics(
-                                          xy = spatialCoords(spe),
-                                          X = X_mat,
-                                          patch = patch_metadata,
-                                          k = k,
-                                          strict_k = strict_k)
-                  spe
-                      }
 
 patchDEWorkflow <- function(spe, predictor_cols, assay = 'logcounts', patch_column = "patch",
                             embedding_name = 'Z', metaanalysis = TRUE, pearson = TRUE,
