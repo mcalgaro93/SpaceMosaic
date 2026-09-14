@@ -225,75 +225,211 @@ moranTest.spe <- function(spe, assay_name = 'residuals' , patch = NULL, k = 10L,
                       }
 
 
-patchDEWorkflow <- function(spe, predictor_cols, assay = 'logcounts', patch_column = "patch",
-                            embedding_name = 'Z', metaanalysis = TRUE, pearson = TRUE,
-                            tot = NULL, resid_mse = FALSE, verbose = TRUE) {
+patchDEWorkflow <- function(
+    spe,
+    predictor_cols,
+    assay = "logcounts",
+    patch_column = "patch",
+    embedding_name = "Z",
+    metaanalysis = TRUE,
+    pearson = FALSE,
+    tot = NULL,
+    resid_mse = FALSE,
+    verbose = TRUE
+) {
 
-    y <- t(assay(spe, assay))
+    if (missing(predictor_cols) ||
+        is.null(predictor_cols) ||
+        length(predictor_cols) == 0) {
+        stop("`predictor_cols` must be a non-empty character vector of colData names.")
+    }
 
-     if (missing(predictor_cols) || is.null(predictor_cols) || length(predictor_cols) == 0) {
-    stop("`predictor_cols` must be a non-empty character vector of colData names.")
-     }
+    missing_cols <- setdiff(
+        predictor_cols,
+        colnames(SummarizedExperiment::colData(spe))
+    )
 
-    missing_cols <- setdiff(predictor_cols, colnames(SummarizedExperiment::colData(spe)))
-      if (length(missing_cols) > 0) {
-        stop("The following `predictor_cols` are not columns of colData(spe): ",
-            paste(missing_cols, collapse = ", "))
-      }
+    if (length(missing_cols) > 0) {
+        stop(
+            "The following `predictor_cols` are not columns of colData(spe): ",
+            paste(missing_cols, collapse = ", ")
+        )
+    }
 
-    df <- SummarizedExperiment::colData(spe)[, predictor_cols, drop = FALSE]
+    if (!patch_column %in% colnames(SummarizedExperiment::colData(spe))) {
+        stop(sprintf(
+            "'%s' not found in colData(spe).",
+            patch_column
+        ))
+    }
 
+    # Expression matrix: genes x cells -> cells x genes
+    y <- t(SummarizedExperiment::assay(spe, assay))
 
-    de_res <- patchDE(y, df, colData(spe)[, patch_column], pearson = pearson, tot = tot,
-                      resid_mse = resid_mse, verbose = verbose)
+    df <- SummarizedExperiment::colData(
+        spe
+    )[, predictor_cols, drop = FALSE]
 
-    patch_ids <- colData(spe)$patch
-    patch_ids <- as.character(sort(unique(as.numeric(patch_ids[!is.na(patch_ids)]))))
+    # Run patchDE
+    de_res <- patchDE(
+        y,
+        df,
+        SummarizedExperiment::colData(spe)[[patch_column]],
+        pearson = pearson,
+        tot = tot,
+        resid_mse = resid_mse,
+        verbose = verbose
+    )
 
-    patchDE_object <- SingleCellExperiment(
-        rowData = DataFrame(gene_id = rownames(spe)),
-        colData = DataFrame(patch = unique(patch_ids))
+    # Patch IDs
+    patch_ids <- SummarizedExperiment::colData(spe)[[patch_column]]
+    patch_ids <- as.character(
+        sort(unique(as.numeric(patch_ids[!is.na(patch_ids)])))
+    )
+
+    # Output SCE
+    patchDE_object <- SingleCellExperiment::SingleCellExperiment(
+        rowData = S4Vectors::DataFrame(
+            gene_id = rownames(spe)
+        ),
+        colData = S4Vectors::DataFrame(
+            patch = patch_ids
+        )
     )
 
     rownames(patchDE_object) <- rownames(spe)
     colnames(patchDE_object) <- patch_ids
 
+    # ------------------------------------------------------------------
+    # Store p-values, estimates and SEs in metadata, and z-scores in
+    # one assay per predictor.
+    # ------------------------------------------------------------------
+
+    predictor_metadata <- list()
+    z_assays <- list()
+
     for (predictor in predictor_cols) {
-        de_res_predictor <- lapply(de_res[[predictor]], function(x) {
-            x[, colnames(patchDE_object), drop = FALSE]
-        })
-        names(de_res_predictor) <- paste0(predictor, "_", names(de_res_predictor))
-        assays(patchDE_object) <- de_res_predictor
+
+        # Extract results for this predictor and retain the output
+        # corresponding to the patches in patchDE_object.
+        de_res_predictor <- lapply(
+            de_res[[predictor]],
+            function(x) {
+                x[, colnames(patchDE_object), drop = FALSE]
+            }
+        )
+
+
+        pvals <- de_res_predictor[["pvals"]]
+        ests    <- de_res_predictor[["ests"]]
+        ses     <- de_res_predictor[["ses"]]
+
+        # Z score = estimate / standard error
+        z <- ests / ses
+
+        # Store z-score as the assay for this predictor
+        z_assays[[predictor]] <- z
+
+        # Store the three original quantities in metadata
+        predictor_metadata[[predictor]] <- list(
+            pvals = pvals,
+            ests = ests,
+            ses = ses
+        )
     }
 
+    # Add all predictor z-score assays at once
+    SummarizedExperiment::assays(patchDE_object) <- z_assays
+
+    # Store pvalues / estimates / SEs
+    metadata(patchDE_object) <- predictor_metadata
+
+    # ------------------------------------------------------------------
+    # Meta-analysis
+    # ------------------------------------------------------------------
+
     if (metaanalysis) {
-        if (!embedding_name %in% SingleCellExperiment::reducedDimNames(spe)) {
-            stop(sprintf("'%s' not found in reducedDims(spe).", embedding_name))
-          }
-          if (!patch_column %in% colnames(SummarizedExperiment::colData(spe))) {
-            stop(sprintf("'%s' not found in colData(spe).", patch_column))
-          }
 
-        Z <- SingleCellExperiment::reducedDim(spe, embedding_name)
-        patch <- SummarizedExperiment::colData(spe)[[patch_column]]
+        if (!embedding_name %in%
+            SingleCellExperiment::reducedDimNames(spe)) {
+            stop(sprintf(
+                "Embedding '%s' not found in reducedDims(spe).",
+                embedding_name
+            ))
+        }
 
-        W <-getPatchAttributes(Z, patch)
-        W <- W[colnames(patchDE_object), , drop = FALSE]
+        Z <- SingleCellExperiment::reducedDim(
+            spe,
+            embedding_name
+        )
 
-        reducedDim(patchDE_object, "W") <- W
+        patch <- SummarizedExperiment::colData(
+            spe
+        )[[patch_column]]
 
-        de_res_meta <- patchMetaAnalysis(de_res, reducedDim(patchDE_object, "W"))
+        W <- getPatchAttributes(Z, patch)
+
+        W <- W[
+            colnames(patchDE_object),
+            ,
+            drop = FALSE
+        ]
+
+        SingleCellExperiment::reducedDim(
+            patchDE_object,
+            "W"
+        ) <- W
+
+        de_res_meta <- patchMetaAnalysis(
+            de_res,
+            SingleCellExperiment::reducedDim(
+                patchDE_object,
+                "W"
+            )
+        )
+
+        # Store meta-analysis z-scores as additional assays.
+        meta_z_assays <- list()
 
         for (predictor in predictor_cols) {
-            de_res_meta_predictor <- lapply(de_res_meta[[predictor]], function(x) {
-                x[, colnames(patchDE_object), drop = FALSE]
-            })
-            names(de_res_meta_predictor) <- paste0(predictor, "_meta_", names(de_res_meta_predictor))
-            assays(patchDE_object) <- c(
-                assays(patchDE_object),
-                de_res_meta_predictor
-            )
+
+    de_res_meta_predictor <- lapply(
+        de_res_meta[[predictor]],
+        function(x) {
+            x[, colnames(patchDE_object), drop = FALSE]
         }
+    )
+
+    if (!all(c("pvals", "ests", "ses") %in%
+             names(de_res_meta_predictor))) {
+        stop(
+            "Expected `de_res_meta[[predictor]]` to contain ",
+            "`pvals`, `ests`, and `ses` for predictor '",
+            predictor,
+            "'."
+        )
+    }
+
+    meta_ests <- de_res_meta_predictor[["ests"]]
+    meta_ses  <- de_res_meta_predictor[["ses"]]
+
+    meta_z_assays[[paste0(predictor, "_meta")]] <-
+        meta_ests / meta_ses
+
+    # Store meta-analysis results separately in metadata
+    metadata(patchDE_object)[[paste0(predictor, "_meta")]] <- list(
+        pvals = de_res_meta_predictor[["pvals"]],
+        ests = meta_ests,
+        ses = meta_ses
+    )
+}
+
+        # Add meta-analysis z-score assays
+        SummarizedExperiment::assays(patchDE_object) <-
+            c(
+                SummarizedExperiment::assays(patchDE_object),
+                meta_z_assays
+            )
     }
 
     return(patchDE_object)

@@ -196,24 +196,9 @@ rows can carry any patch-level diagnostic or annotation supplied through
 
 ```{r patch-map, eval=FALSE}
 
-plot_df <- data.frame(
-  x = xy[, 1],
-  y = xy[, 2],
-  use = use,
-  predictor = X[, 1]
-)
-
-ggplot() +
-  geom_point(
-    data = plot_df[!plot_df$use, ],
-    aes(x, y), color = "grey80", size = 0.2
-  ) +
-  geom_point(
-    data = plot_df[plot_df$use, ],
-    aes(x, y, color = predictor), size = 0.3
-  ) +
+plotCoords(spe_use,annotate = 'distance',in_tissue=NULL)  +
   geom_polygon(
-    data = poly_df,
+    data = metadata(spe_use)$SpaceMosaic$patch_polys,
     aes(x, y, group = patch),
     fill = NA, color = "black", linewidth = 0.3
   ) +
