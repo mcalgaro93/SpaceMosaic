@@ -179,34 +179,6 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 }
 
 
-#' @describeIn getPatchAttributes Method for \code{SpatialExperiment} objects.
-#'   Extracts a reducedDim matrix and a colData patch assignment column from
-#'   `spe`, then dispatches to `getPatchAttributes()`. `spe`'s `dimred` and
-#'   `patch_col` correspond to the `Z` and `patch` arguments of
-#'   `getPatchAttributes()` (renamed here since they now identify columns
-#'   rather than being passed as data directly); see `getPatchAttributes`
-#'   for how the per-patch means are computed.
-#'
-#' @param spe A SpatialExperiment object.
-#' @param dimred Character or integer scalar specifying which entry of
-#'   `reducedDims(spe)` to use as Z. Default `"Z"`.
-#' @param patch_col Character scalar naming the column of `colData(spe)`
-#'   containing patch assignments. Default `"patch"`.
-#' @export
-getPatchAttributes.spe <- function(spe, dimred = "Z", patch_col = "patch") {
-  if (!dimred %in% SingleCellExperiment::reducedDimNames(spe)) {
-    stop(sprintf("'%s' not found in reducedDims(spe).", dimred))
-  }
-  if (!patch_col %in% colnames(SummarizedExperiment::colData(spe))) {
-    stop(sprintf("'%s' not found in colData(spe).", patch_col))
-  }
-
-  Z <- SingleCellExperiment::reducedDim(spe, dimred)
-  patch <- SummarizedExperiment::colData(spe)[[patch_col]]
-
-  getPatchAttributes(Z, patch)
-}
-
 #' @describeIn moranTest Method for \code{SpatialExperiment} objects. Extracts
 #'   residuals from the specified assay and spatial coordinates from
 #'   \code{spatialCoords(spe)}, then dispatches to \code{moranTest}. See
@@ -295,12 +267,17 @@ patchDEWorkflow <- function(spe, predictor_cols, assay = 'logcounts', patch_colu
     }
 
     if (metaanalysis) {
-        W <- getPatchAttributes.spe(
-            spe,
-            dimred = embedding_name,
-            patch_col = patch_column
-        )
+        if (!embedding_name %in% SingleCellExperiment::reducedDimNames(spe)) {
+            stop(sprintf("'%s' not found in reducedDims(spe).", embedding_name))
+          }
+          if (!patch_column %in% colnames(SummarizedExperiment::colData(spe))) {
+            stop(sprintf("'%s' not found in colData(spe).", patch_column))
+          }
 
+        Z <- SingleCellExperiment::reducedDim(spe, embedding_name)
+        patch <- SummarizedExperiment::colData(spe)[[patch_column]]
+
+        W <-getPatchAttributes(Z, patch)
         W <- W[colnames(patchDE_object), , drop = FALSE]
 
         reducedDim(patchDE_object, "W") <- W
