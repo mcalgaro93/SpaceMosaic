@@ -37,12 +37,12 @@ The workflow is:
 5. borrow information among patches with similar contexts ($W$); and
 6. interpret recurrent or context-specific effects in space.
 
-Throughout the template, matrices are oriented as follows:
+Throughout the template, the input is a `SpatialExperiment` object with the following components:
 
-- expression: **cells x genes**;
-- $X$: **cells x predictors** (a vector is also accepted by `getPatches()`);
-- $Z$: **cells x neighborhood features**; and
-- $W$: **patches x patch features**.
+- expression: assay **genes x cells**;
+- $X$: column or columns in colData **cells x predictors**;
+- $Z$: an embedding stored in reducedDims **cells x neighborhood features**; and
+- $W$: an embedding stored in reducedDims **patches x patch features**.
 
 # 1. Data and analysis question
 
@@ -69,7 +69,6 @@ distance_to_explanatory <- FNN::get.knnx(
 
 # A log transform often reduces the leverage of long-tailed distances.
 spe$distance <- log1p(distance_to_explanatory)
-
 ```
 
 # 2. Cellular-neighborhood embedding ($Z$)
@@ -84,7 +83,7 @@ boundaries.
 ```{r cellular-neighborhoods, eval=FALSE}
 spe <- embedCellNeighborhoods.spe(
   spe = spe,
- embedding = 'PCA',
+  embedding = 'PCA',
   ks = c(5, 50),
   tissue = spe$sample_id # CHANGE; omit only for a single contiguous tissue
 )
@@ -103,9 +102,11 @@ universal.
 spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance)]
 
 set.seed(123)
+
+X = 'distance'
 spe_use <- getPatches.spe(
   spe_use,
-  X = 'distance',
+  X = X,
   Z = 'Z',
   npatches = 100,       # CHANGE for tissue area and response-cell abundance
   alpha = 0.5,          # weight of the Z-coherence penalty
@@ -117,19 +118,18 @@ spe_use <- getPatches.spe(
   n_iters = 15,
   log_iters = TRUE
 )
-patch <- spe_use$patch
 
 # Optional visual check of membership across iterations.
 plotPatchIterations(
-  xy = xy[use, , drop = FALSE],
-  result = patch_result,
+  xy = spatialCoords(spe_use),
+  result = metadata(spe_use)$SpaceMosaic$patch_iterations,
   iters = c(1, 5, 10, 15),
   ask = FALSE
 )
 ```
 
 
-`getPatchDiagnostics()` reports assignment coverage and summarizes patch size,
+Patch diagnostics stored in metadata reports assignment coverage and summarizes patch size,
 within-patch variation in `X`, spatial connectivity, and final membership
 stability. These are general checks; RNA content, distance to an explanatory
 population, tissue region, and sample identity can reveal additional
@@ -137,11 +137,10 @@ experiment-specific failure modes.
 
 ```{r patch-diagnostics, eval=FALSE}
 
-patch_diagnostics <- metadata(spe_use)$SpaceMosaic$patch_diagnostics
-diagnostics$assignment_summary
+patch_diagnostics <- metadata(spe_use)$SpaceMosaic$patch_diagnostics$patch_diagnostics
 
 # CHANGE to the X column that should be inspected when X is multivariable.
-x_sd_column <- if (ncol(X) == 1L) "x_sd" else paste0("x_sd_", colnames(X)[1])
+x_sd_column <- if (length(X) == 1L) "x_sd" else paste0("x_sd_", X[1])
 patch_diagnostics$selected_x_sd <- patch_diagnostics[[x_sd_column]]
 patch_diagnostics$connectivity <- factor(
   ifelse(
@@ -182,7 +181,9 @@ keep <- with(
       strict_component_fraction == 1
   ]
 )
-patch[!patch %in% keep] <- NA
+
+idx <- colData(spe_use)$patch %in% keep
+colData(spe_use)$patch[!idx] <- NA
 ```
 
 The plot combines patch size, predictor variation, final stability, and
@@ -237,9 +238,7 @@ posterior p-values, subgroup membership, and biological relevance should also
 be considered; very small p-values alone are not sufficient.
 
 ```{r result-summary, eval=FALSE}
-variable <- names(meta_result)[1] # CHANGE when the design has several variables
-meta_var <- meta_result[[variable]]
-z_score <- meta_var$ests / meta_var$ses
+z_score <- assays(de_result)[[2]]
 
 gene_summary <- data.frame(
   gene = rownames(z_score),
@@ -262,7 +261,7 @@ Use `summarizeSubgroups()` to relate coherent effect regions to cell-level
 metadata. Numeric variables are summarized as standardized enrichment scores;
 categorical variables are represented by level-specific log2 enrichment.
 
-```{r subgroup-summary, eval=FALSE}
+{r subgroup-summary, eval=FALSE}
 cell_metadata <- data.frame(
   cell_type = cell_type[use],
   sample_id = spe$sample_id[use],
@@ -275,14 +274,14 @@ subgroup_summary <- summarizeSubgroups(
   cellmeta = cell_metadata
 )
 head(subgroup_summary)
-```
+
 
 
 Finally, project representative effects back onto the tissue. Confirm that
 their direction agrees with the predictor and is not driven by an unmodeled
 sample, anatomical compartment, low-quality region, or segmentation artifact.
 
-```{r spatial-validation, eval=FALSE}
+{r spatial-validation, eval=FALSE}
 gene <- top_genes[1]
 poly_gene <- poly_df
 poly_gene$z_score <- z_score[gene, as.character(poly_gene$patch)]
@@ -295,15 +294,12 @@ ggplot(poly_gene, aes(x, y, group = patch, fill = z_score)) +
   coord_fixed() +
   theme_minimal() +
   labs(title = gene, fill = "Posterior Z")
-```
+
 
 For exploratory work, the interactive plotter can overlay cells and patches
 and color patches by meta-analysis Z-scores or arbitrary patch annotations.
 
-```{r interactive-plotter, eval=FALSE
-
-options(shiny.reactlog = TRUE)
-```{r}
+{r interactive-plotter, eval=FALSE, options(shiny.reactlog = TRUE)}
 
 runInteractivePlotter(
   spe = spe[, use],
@@ -313,7 +309,7 @@ runInteractivePlotter(
   patch_data = patch_diagnostics
 )
 
-```
+
 
 # 7. Reporting checklist
 
