@@ -207,6 +207,9 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #'   counts are handled by \code{patchDE()}. Default is NULL.
 #' @param resid_mse Logical; passed to \code{patchDE()} to control whether
 #'   residual mean squared errors are returned. Default is FALSE.
+#' @param return_residuals Logical; if TRUE, return an OLS residual matrix
+#'   aligned with the rows and columns of `y`. Default FALSE.
+#' @param verbose Show progress. Default TRUE.
 #' @param verbose Logical; passed to \code{patchDE()} to control verbosity.
 #'   Default is TRUE.
 #'
@@ -234,6 +237,7 @@ patchDE.spe <- function(
     pearson = FALSE,
     tot = NULL,
     resid_mse = FALSE,
+    return_residuals = FALSE,
     verbose = TRUE
 ) {
 
@@ -294,8 +298,16 @@ patchDE.spe <- function(
         pearson = pearson,
         tot = tot,
         resid_mse = resid_mse,
+        return_residuals = return_residuals,
         verbose = verbose
     )
+
+    if(return_residuals){
+        residuals <- de_res$residuals
+        de_res <- de_res$de
+    }
+
+
 
     # Patch IDs
     patch_ids <- SummarizedExperiment::colData(
@@ -340,28 +352,26 @@ patchDE.spe <- function(
         de_res_predictor <- lapply(
             de_res[[predictor]],
             function(x) {
+              print(names(de_res[[predictor]]))
                 x[, colnames(patchDE_object), drop = FALSE]
             }
         )
 
-        pvals <- de_res_predictor[["pvals"]]
-        ests  <- de_res_predictor[["ests"]]
-        ses   <- de_res_predictor[["ses"]]
-
-        z <- ests / ses
+        z <- de_res_predictor[["ests"]] / de_res_predictor[["ses"]]
 
         z_assays[[predictor]] <- z
 
-        predictor_metadata[[predictor]] <- list(
-            pvals = pvals,
-            ests = ests,
-            ses = ses
-        )
+        predictor_metadata[[predictor]] <- de_res_predictor
+
+        if(return_residuals){
+            predictor_metadata[[predictor]]$residuals <- residuals
+        }
     }
 
     SummarizedExperiment::assays(patchDE_object) <- z_assays
 
     S4Vectors::metadata(patchDE_object) <- predictor_metadata
+
 
     patchDE_object
 }

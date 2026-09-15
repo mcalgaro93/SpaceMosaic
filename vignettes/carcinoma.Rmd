@@ -232,7 +232,9 @@ appropriate for the assay and question.
 de_result <- patchDE.spe(
   spe = spe_use,
   predictor_cols = 'distance',
-  pearson = FALSE
+  pearson = TRUE,
+  tot = 'nCount_Nanostring',
+  return_residuals = TRUE
 )
 ```
 
