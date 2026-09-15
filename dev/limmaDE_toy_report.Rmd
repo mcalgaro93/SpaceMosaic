@@ -1,0 +1,576 @@
+---
+title: "hastyDE versus limmaDE"
+subtitle: "A focused simulation study for SpaceMosaic"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 5.8,
+  out.width = "100%"
+)
+
+report_path <- normalizePath(knitr::current_input(dir = TRUE), mustWork = TRUE)
+project_root <- normalizePath(file.path(dirname(report_path), ".."), mustWork = TRUE)
+
+knitr::opts_knit$set(root.dir = project_root)
+devtools::load_all(project_root, quiet = TRUE)
+```
+
+## Question
+
+**Does limma's empirical-Bayes variance moderation improve the stability of
+gene-level inference relative to the current matrix-based OLS method, while
+leaving estimated effects and model residuals unchanged?**
+
+`hastyDE()` is computationally efficient, but estimates each gene's residual
+variance independently. This can be unstable in small spatial patches.
+`limmaDE()` fits the same linear models and then uses `limma::eBayes()` to share
+variance information across genes. The comparison therefore isolates the
+effect of variance moderation without changing the underlying regression.
+
+## Why simulation is the appropriate tool
+
+Real data do not reveal which genes truly have an effect. Simulation gives us
+known ground truth, allowing us to evaluate both null calibration and detection
+power. The same simulated matrices and design are passed to both methods, so
+any difference in standard errors or p-values can be attributed to empirical
+Bayes moderation.
+
+We examine two scenarios:
+
+1. **Gaussian expression**, which directly matches the linear-model assumptions.
+2. **Count-derived Pearson residuals**, which resembles the intended
+   SpaceMosaic preprocessing. This is not a voom analysis: both methods receive
+   the same residual matrix.
+
+## Simulation design
+
+We simulate one small patch containing 16 cells and 1,000 genes. The first 100
+genes have a non-zero exposure effect; the other 900 are null. Gene-specific
+variances are heterogeneous so that variance moderation has something meaningful
+to estimate.
+
+```{r simulate}
+set.seed(18)
+
+n_cells <- 16L
+n_genes <- 1000L
+n_de <- 100L
+gene_names <- paste0("gene_", seq_len(n_genes))
+is_de <- seq_len(n_genes) <= n_de
+exposure <- as.numeric(scale(stats::rnorm(n_cells)))
+df <- data.frame(exposure = exposure)
+
+sigma <- exp(stats::rnorm(n_genes, mean = 0, sd = 0.7))
+beta <- numeric(n_genes)
+beta[is_de] <- 0.5 * sigma[is_de]
+baseline <- stats::rnorm(n_genes, mean = 5, sd = 1)
+
+y_gaussian <- outer(rep(1, n_cells), baseline) +
+  outer(exposure, beta) +
+  matrix(stats::rnorm(n_cells * n_genes), nrow = n_cells) *
+  rep(sigma, each = n_cells)
+colnames(y_gaussian) <- gene_names
+rownames(y_gaussian) <- paste0("cell_", seq_len(n_cells))
+
+library_size <- round(exp(stats::rnorm(n_cells, log(1000), 0.35)))
+abundance <- exp(stats::rnorm(n_genes, log(0.02), 0.8))
+count_beta <- numeric(n_genes)
+count_beta[is_de] <- 0.12
+mu <- outer(library_size, abundance) * exp(outer(exposure, count_beta))
+y_counts <- matrix(
+  stats::rnbinom(n_cells * n_genes, mu = as.vector(mu), size = 10),
+  nrow = n_cells,
+  dimnames = list(rownames(y_gaussian), gene_names)
+)
+y_pearson <- pearsonResiduals(y_counts, tot = library_size)
+```
+
+## Model comparison
+
+For both scenarios, `limmaDE()` uses `trend = FALSE`: Pearson residuals are
+already designed to remove the count mean-variance relationship, and the
+Gaussian simulation has no imposed mean-variance trend. Robust empirical Bayes
+estimation protects the hyperparameter estimates from unusually variable genes.
+
+```{r fit-models}
+fit_pair <- function(y) {
+  list(
+    hasty = hastyDE(y, df, return_residuals = TRUE),
+    limma = limmaDE(
+      y, df,
+      return_residuals = TRUE,
+      trend = FALSE,
+      robust = TRUE
+    )
+  )
+}
+
+gaussian_fit <- fit_pair(y_gaussian)
+pearson_fit <- fit_pair(y_pearson)
+```
+
+The maximum absolute discrepancies confirm that both approaches fit the same
+coefficients and residuals:
+
+```{r agreement, echo=FALSE}
+agreement <- data.frame(
+  Quantity = c("Gaussian effects", "Gaussian residuals",
+               "Pearson effects", "Pearson residuals"),
+  `Maximum absolute difference` = c(
+    max(abs(gaussian_fit$hasty$effect - gaussian_fit$limma$effect)),
+    max(abs(gaussian_fit$hasty$residuals - gaussian_fit$limma$residuals)),
+    max(abs(pearson_fit$hasty$effect - pearson_fit$limma$effect)),
+    max(abs(pearson_fit$hasty$residuals - pearson_fit$limma$residuals))
+  ),
+  check.names = FALSE
+)
+knitr::kable(agreement, digits = 3, row.names = FALSE)
+```
+
+## Results
+
+```{r summarize, include=FALSE}
+summarize_fit <- function(fits, scenario) {
+  data.frame(
+    Scenario = scenario,
+    Method = c("hasty", "limma"),
+    `False-positive rate` = c(
+      mean(fits$hasty$p[!is_de, "exposure"] < 0.05),
+      mean(fits$limma$p[!is_de, "exposure"] < 0.05)
+    ),
+    Power = c(
+      mean(fits$hasty$p[is_de, "exposure"] < 0.05),
+      mean(fits$limma$p[is_de, "exposure"] < 0.05)
+    ),
+    `Median SE` = c(
+      median(fits$hasty$se[, "exposure"]),
+      median(fits$limma$se[, "exposure"])
+    ),
+    check.names = FALSE
+  )
+}
+
+summary_table <- rbind(
+  summarize_fit(gaussian_fit, "Gaussian expression"),
+  summarize_fit(pearson_fit, "Pearson residuals")
+)
+```
+
+```{r summary-table, echo=FALSE}
+knitr::kable(summary_table, digits = 3, row.names = FALSE)
+```
+
+The false-positive rate is the fraction of null genes with (p < 0.05).
+Power is the corresponding fraction among truly non-null genes. These values
+describe one realization and should not be interpreted as stable performance
+estimates.
+
+```{r comparison-plots, echo=FALSE, fig.height=7.2}
+qq_coordinates <- function(p_values) {
+  list(
+    expected = -log10(stats::ppoints(length(p_values))),
+    observed = -log10(sort(p_values))
+  )
+}
+
+plot_comparison <- function(fits, scenario) {
+  plot(
+    fits$hasty$effect[, "exposure"],
+    fits$limma$effect[, "exposure"],
+    pch = 16, cex = 0.45,
+    col = ifelse(is_de, "#D95F02", "#66666680"),
+    xlab = "hastyDE effect", ylab = "limmaDE effect",
+    main = paste(scenario, "effects")
+  )
+  abline(0, 1, lty = 2)
+
+  plot(
+    fits$hasty$se[, "exposure"], fits$limma$se[, "exposure"],
+    pch = 16, cex = 0.45, col = "#377EB880",
+    xlab = "hastyDE SE", ylab = "limmaDE moderated SE",
+    main = paste(scenario, "standard errors")
+  )
+  abline(0, 1, lty = 2)
+
+  hasty_qq <- qq_coordinates(fits$hasty$p[!is_de, "exposure"])
+  limma_qq <- qq_coordinates(fits$limma$p[!is_de, "exposure"])
+  qq_limit <- max(unlist(hasty_qq), unlist(limma_qq))
+  plot(
+    hasty_qq$expected, hasty_qq$observed,
+    type = "l", col = "#1B9E77",
+    xlim = c(0, qq_limit), ylim = c(0, qq_limit),
+    xlab = "Expected -log10(p)", ylab = "Observed -log10(p)",
+    main = paste(scenario, "null QQ plot")
+  )
+  lines(limma_qq$expected, limma_qq$observed, col = "#7570B3")
+  abline(0, 1, lty = 2)
+  legend("topleft", c("hasty", "limma"),
+         col = c("#1B9E77", "#7570B3"), lty = 1, bty = "n")
+}
+
+par(mfrow = c(2, 3), mar = c(4, 4, 3, 1))
+plot_comparison(gaussian_fit, "Gaussian")
+plot_comparison(pearson_fit, "Pearson residual")
+```
+
+### How to interpret the panels
+
+- **Effects:** points on the identity line confirm that empirical Bayes does
+  not alter coefficients. Orange points are truly non-null genes; grey points
+  are null genes.
+- **Standard errors:** points above the identity line indicate that limma
+  increased an unusually small SE; points below indicate shrinkage of an
+  unusually large SE. This stabilization is the intended effect of moderation.
+- **Null QQ plots:** the diagonal represents uniformly distributed null
+  p-values. Curves above it suggest too many small p-values; curves below it
+  indicate conservative inference.
+
+## Small real-data example
+
+### Question
+
+**Across small data-driven spatial patches, how much does limma moderation
+change uncertainty and gene prioritization relative to hastyDE?**
+
+Unlike the simulation, real data provide no ground truth. This section therefore
+does not ask which method is more accurate. It asks whether empirical-Bayes
+moderation has a material practical effect when the model, cells, genes and
+response transformation are held fixed.
+
+We use the mouse-colon spatial transcriptomics dataset distributed with
+SpaceMosaic. The analysis mirrors the immune-surveillance scenario in the main
+vignette: patches are constructed among epithelial cells to retain local
+variation in the number of immune cells in each cell's 100-nearest-neighbour
+environment. Differential expression is then fitted separately within every
+eligible patch.
+
+### Patch construction and gene filtering
+
+We first calculate immune density and a cellular-neighbourhood embedding on the
+complete tissue. We then use `getPatches()` on all epithelial cells, using
+spatial coordinates, immune density and neighbourhood context to create 100
+candidate patches. Patch construction is completed before gene expression is
+tested and uses no gene-level DE statistics, so it is independent of the
+comparison between hastyDE and limmaDE.
+
+Genes are filtered once across **all epithelial cells**, retaining genes
+detected in at least 5% of them. This preserves a common gene universe selected
+without using the predictor associations or their p-values. Library totals are
+calculated from the original unfiltered count matrix, as required for Pearson
+residuals.
+
+```{r real-data-setup}
+required_real_packages <- c("FNN", "ggplot2", "HDF5Array", "SpatialExperiment")
+missing_real_packages <- required_real_packages[
+  !vapply(required_real_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+if (length(missing_real_packages) > 0L) {
+  stop("Missing packages: ", paste(missing_real_packages, collapse = ", "))
+}
+suppressPackageStartupMessages(library(ggplot2))
+
+spe <- HDF5Array::loadHDF5SummarizedExperiment(
+  file.path("inst", "extdata", "mouse_colon")
+)
+counts <- SummarizedExperiment::assay(spe, "counts")
+xy <- SpatialExperiment::spatialCoords(spe)
+cell_type <- spe$tier1
+is_epithelial <- cell_type == "Epithelial"
+is_immune <- cell_type == "Immune"
+Z <- embedCellNeighborhoods(
+  mat = SingleCellExperiment::reducedDim(spe, "PCA"),
+  xy = xy,
+  ks = c(5, 50)
+)
+
+nn_all <- FNN::get.knn(as.matrix(xy), k = 100)$nn.index
+immune_density <- rowSums(
+  matrix(is_immune[nn_all], nrow = nrow(xy))
+)
+
+epithelial_index <- which(is_epithelial)
+epithelial_xy <- xy[epithelial_index, , drop = FALSE]
+detection_rate <- Matrix::rowMeans(counts[, is_epithelial, drop = FALSE] > 0)
+keep_gene <- detection_rate >= 0.05
+
+rownames(epithelial_xy) <- spe$cell_id[epithelial_index]
+set.seed(123)
+patch_fit <- getPatches(
+  xy = epithelial_xy,
+  X = immune_density[is_epithelial],
+  npatches = 100,
+  Z = Z[is_epithelial, , drop = FALSE],
+  n_iters = 10,
+  log_iters = TRUE,
+  verbose = FALSE
+)
+
+patch_diagnostics <- getPatchDiagnostics(
+  xy = epithelial_xy,
+  patches = patch_fit,
+  X = immune_density[is_epithelial]
+)
+
+eligible_patch <- patch_diagnostics$patch_diagnostics[
+  patch_diagnostics$patch_diagnostics$n_cells >= 30 &
+    is.finite(patch_diagnostics$patch_diagnostics$x_sd) &
+    patch_diagnostics$patch_diagnostics$x_sd > 0, "patch"
+]
+
+selected_epithelial <- !is.na(patch_fit$patch) & patch_fit$patch %in% eligible_patch
+selected_index <- epithelial_index[selected_epithelial]
+selected <- seq_len(ncol(counts)) %in% selected_index
+
+selected_totals <- Matrix::colSums(counts[, selected, drop = FALSE])
+real_y <- t(counts[keep_gene, selected, drop = FALSE])
+real_df <- data.frame(immune_density = immune_density[selected])
+real_patch <- patch_fit$patch[selected_epithelial]
+
+poly_df <- getPatchPolys(
+  xy = epithelial_xy[selected_epithelial, , drop = FALSE],
+  patch = real_patch,
+  patch_data = patch_diagnostics$patch_diagnostics[
+    patch_diagnostics$patch_diagnostics$patch %in% eligible_patch,]
+)
+```
+
+Of 100 requested patches, `r length(unique(real_patch))` pass the eligibility
+rule, containing `r sum(selected)` epithelial cells in total. Eligible patch
+sizes range from `r min(table(real_patch))` to `r max(table(real_patch))` cells;
+`r sum(keep_gene)` genes pass global filtering. Immune-neighbour counts range
+from `r min(real_df$immune_density)` to `r max(real_df$immune_density)`.
+
+```{r real-spatial-map, echo=FALSE, fig.height=5.2}
+#| fig-width: 7
+#| fig-height: 5.2
+ggplot() +
+    geom_point(data = xy[!is_epithelial, , drop = FALSE], aes(x = x, y = y),
+        color = "grey", size = 0.1, alpha = 0.5) +
+    geom_point(data = xy[is_epithelial, , drop = FALSE], aes(x = x, y = y),
+        color = "blue", size = 0.1, alpha = 0.5) +
+    geom_polygon(data = poly_df, aes(x = x, y = y, group = patch),
+        fill = NA, color = "black", linewidth = 0.5, show.legend = FALSE) +
+    coord_fixed() +
+    theme_minimal() +
+    labs(title = "Patches of epithelial cells",
+         subtitle = "All outlined patches are included in the DE comparison") +
+    theme(legend.position = "none")
+```
+
+### Same data and model, different variance inference
+
+Both calls below compute the same patch-specific Pearson residuals. The only
+difference is whether residual variances are estimated independently by OLS or
+moderated across genes by limma.
+
+```{r real-models}
+hasty_timing <- system.time(real_hasty <- patchDE(
+  y = real_y,
+  df = real_df,
+  patch = real_patch,
+  method = "hasty",
+  pearson = TRUE,
+  tot = selected_totals,
+  return_residuals = TRUE,
+  verbose = FALSE
+))
+limma_timing <- system.time(real_limma <- patchDE(
+  y = real_y,
+  df = real_df,
+  patch = real_patch,
+  method = "limma",
+  pearson = TRUE,
+  tot = selected_totals,
+  return_residuals = TRUE,
+  verbose = FALSE
+))
+
+hasty_result <- real_hasty$de$immune_density
+limma_result <- real_limma$de$immune_density
+real_effect_difference <- max(
+  abs(hasty_result$ests - limma_result$ests), na.rm = TRUE
+)
+real_residual_difference <- max(
+  abs(real_hasty$residuals - real_limma$residuals), na.rm = TRUE
+)
+```
+
+As expected for the same linear model, the maximum absolute effect difference
+is `r format(real_effect_difference, scientific = TRUE, digits = 3)` and the
+maximum residual difference is
+`r format(real_residual_difference, scientific = TRUE, digits = 3)`.
+
+```{r real-comparison-plots, echo=FALSE, fig.height=7.0}
+hasty_effect <- as.vector(hasty_result$ests)
+limma_effect <- as.vector(limma_result$ests)
+hasty_se <- as.vector(hasty_result$ses)
+limma_se <- as.vector(limma_result$ses)
+hasty_p <- as.vector(hasty_result$pvals)
+limma_p <- as.vector(limma_result$pvals)
+finite_pair <- is.finite(hasty_effect) & is.finite(limma_effect) &
+  is.finite(hasty_se) & is.finite(limma_se) &
+  is.finite(hasty_p) & is.finite(limma_p)
+
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+plot(
+  hasty_effect[finite_pair], limma_effect[finite_pair],
+  pch = 16, cex = 0.55, col = "#55555580",
+  xlab = "hastyDE effect", ylab = "limmaDE effect",
+  main = "Estimated effects"
+)
+abline(0, 1, lty = 2)
+
+plot(
+  hasty_se[finite_pair], limma_se[finite_pair],
+  pch = 16, cex = 0.55, col = "#377EB880",
+  xlab = "hastyDE SE", ylab = "limmaDE moderated SE",
+  main = "Standard errors"
+)
+abline(0, 1, lty = 2)
+
+plot(
+  -log10(hasty_p[finite_pair]), -log10(limma_p[finite_pair]),
+  pch = 16, cex = 0.55, col = "#7570B380",
+  xlab = "hastyDE -log10(p)", ylab = "limmaDE -log10(p)",
+  main = "Gene-level evidence"
+)
+abline(0, 1, lty = 2)
+
+hasty_rank <- apply(
+  hasty_result$pvals, 2, rank, ties.method = "average", na.last = "keep"
+)
+limma_rank <- apply(
+  limma_result$pvals, 2, rank, ties.method = "average", na.last = "keep"
+)
+plot(
+  as.vector(hasty_rank), as.vector(limma_rank),
+  pch = 16, cex = 0.55, col = "#1B9E7780",
+  xlab = "hastyDE p-value rank", ylab = "limmaDE p-value rank",
+  main = "Gene prioritization"
+)
+abline(0, 1, lty = 2)
+```
+
+The effects remain fixed, whereas movement away from the identity line in the
+other panels quantifies the practical impact of moderation. In particular,
+ranking changes occur because limma stabilizes gene-wise uncertainty, not
+because it changes the estimated association.
+
+### Impact on nominal significance calls
+
+Patch-level p-values are not adjusted for testing many genes across many
+patches. Consequently, the threshold (p < 0.05) is used here only as a
+descriptive reference point. These are **nominal calls**, not reportable DE
+discoveries; multiplicity should be addressed at the final meta-analysis stage.
+
+```{r real-significance-summary, echo=FALSE}
+hasty_significant <- hasty_result$pvals < 0.05
+limma_significant <- limma_result$pvals < 0.05
+valid_tests <- is.finite(hasty_result$pvals) & is.finite(limma_result$pvals)
+
+call_summary <- data.frame(
+  Classification = c(
+    "Significant with both methods",
+    "hastyDE only",
+    "limmaDE only",
+    "Not significant with either method"
+  ),
+  `Gene-patch pairs` = c(
+    sum(valid_tests & hasty_significant & limma_significant),
+    sum(valid_tests & hasty_significant & !limma_significant),
+    sum(valid_tests & !hasty_significant & limma_significant),
+    sum(valid_tests & !hasty_significant & !limma_significant)
+  ),
+  check.names = FALSE
+)
+call_summary$Percent <- 100 * call_summary$`Gene-patch pairs` /
+  sum(call_summary$`Gene-patch pairs`)
+knitr::kable(call_summary, digits = 2, row.names = FALSE)
+```
+
+The following table focuses on the top 10 discordant pairs: cases where the selected DE
+backend changes whether the nominal threshold is crossed. Pairs are ordered by
+their strongest p-value, so the table emphasizes changes closest to the
+evidence-bearing end of the results rather than the largest arbitrary rank
+movements.
+
+```{r real-discordant-table, echo=FALSE}
+discordant <- valid_tests & xor(hasty_significant, limma_significant)
+discordant_index <- which(discordant)
+discordant_index <- discordant_index[
+  order(
+    pmin(
+      hasty_result$pvals[discordant_index],
+      limma_result$pvals[discordant_index]
+    )
+  )
+]
+shown_index <- head(discordant_index, 10)
+pair_index <- arrayInd(shown_index, dim(hasty_result$pvals))
+
+discordant_table <- data.frame(
+  Gene = rownames(hasty_result$pvals)[pair_index[, 1]],
+  Patch = colnames(hasty_result$pvals)[pair_index[, 2]],
+  Effect = hasty_result$ests[shown_index],
+  `hasty SE` = hasty_result$ses[shown_index],
+  `limma SE` = limma_result$ses[shown_index],
+  `hasty p` = hasty_result$pvals[shown_index],
+  `limma p` = limma_result$pvals[shown_index],
+  `Nominal call` = ifelse(
+    hasty_significant[shown_index], "hastyDE only", "limmaDE only"
+  ),
+  check.names = FALSE
+)
+knitr::kable(discordant_table, digits = 4, row.names = FALSE)
+```
+
+Discordance arises only from variance moderation: the estimated effect is the
+same, but the moderated standard error changes the corresponding test statistic
+and p-value.
+
+### Runtime
+
+```{r real-runtime, echo=FALSE}
+runtime_hasty <- hasty_timing[["elapsed"]]
+runtime_limma <- limma_timing[["elapsed"]]
+
+knitr::kable(
+  data.frame(
+    Method = c("hasty", "limma"),
+    `Elapsed seconds` = c(runtime_hasty, runtime_limma),
+    check.names = FALSE
+  ),
+  digits = 4,
+  row.names = FALSE
+)
+```
+
+These timings describe one execution across the eligible patches on the current
+machine. They show practical overhead but are not a full benchmark.
+
+## Conclusion and limitations
+
+This toy study confirms the intended mechanism: `limmaDE()` preserves the
+estimated effects and residuals while moderating uncertainty across genes. In
+this realization, both methods show broadly similar null calibration, while
+the changes in standard errors are clearly visible. The real-data example then
+shows how those changes propagate to p-values and within-patch gene
+prioritization across data-driven spatial patches, without implying that either
+ranking is ground truth.
+
+The study is deliberately small and explanatory. It does **not** establish that
+one method is generally superior. A decision about the default SpaceMosaic
+backend should rely on repeated simulations spanning patch size, sparsity,
+effect size, variance heterogeneity and residual spatial autocorrelation.
