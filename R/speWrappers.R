@@ -1,15 +1,18 @@
-#' @describeIn getPatches Method for \code{SpatialExperiment} objects.
-#'   Resolves `X` from `colData(spe)` and `Z` from `reducedDims(spe)`, runs
-#'   `getPatches()` on `spatialCoords(spe)`, and attaches the result back onto
-#'   `spe` rather than returning it standalone. Optionally computes patch-level
-#'   diagnostics and patch polygons using `patchDiagnostics()` and
-#'   `patchPolys()`, respectively.
+#' @describeIn getPatches Method for `SpatialExperiment` objects.
 #'
+#' Convenience wrapper for the SpaceMosaic patching workflow on a
+#' `SpatialExperiment`. The workflow consists of three steps:
+#' `getPatches()` identifies spatial patches, `patchDiagnostics()` computes
+#' patch-level information from the resulting patch assignments, and
+#' `getPatchPolys()` constructs patch polygons using the patch assignments
+#' and diagnostic information. Results are stored directly in the
+#' `SpatialExperiment` object.
+#' 
 #' @param spe SpatialExperiment object. Must have rownames.
 #' @param X Design variables for each spatial unit. A character vector of
 #'   column names in `colData(spe)`. Each column is scaled to unit SD.
 #' @param Z Optional per-cell context embeddings (cells x features). A single
-#'   character string naming an entry in `reducedDims(spe)`, or a numeric matrix.
+#'   character string naming an entry in `reducedDims(spe)`.
 #'   If supplied, patches will prefer Z-coherent regions. NULL disables.
 #' @param patch_column Column name in `colData(spe)` where to store patch
 #'   assignments. Default = 'patch'.
@@ -102,42 +105,40 @@ getPatches.spe <- function(spe, X, npatches,
              log_iters = log_iters,
              verbose = verbose)
 
-    if (log_iters) {
-        patch_vec      <- patchResult$patch
-        membership_log <- patchResult$membership_log[colnames(spe), , drop = FALSE]
-        ss_log         <- patchResult$ss_log
-    } else {
-        patch_vec      <- patchResult
-        membership_log <- NULL
-        ss_log         <- NULL
-    }
+      if (log_iters) {
+          patch_vec      <- patchResult$patch[colnames(spe)]
+          membership_log <- patchResult$membership_log[colnames(spe), , drop = FALSE]
+          ss_log         <- patchResult$ss_log
+      } else {
+          patch_vec <- patchResult[colnames(spe)]
+      }
 
-    patch_vec <- patch_vec[colnames(spe)]
-    SummarizedExperiment::colData(spe)[[patch_column]] <- patch_vec
+      SummarizedExperiment::colData(spe)[[patch_column]] <- patch_vec
 
-    if (log_iters) {
-       patch_metadata <- list(
-           membership_log = membership_log,
-           ss_log = ss_log
-        )
-        S4Vectors::metadata(spe)[["SpaceMosaic"]][["patch_iterations"]] <- patch_metadata
-        patch_metadata$patch <- patch_vec
-
-
-    } else {
-      patch_metadata <- patch_vec
-    }
+      if (log_iters) {
+          S4Vectors::metadata(spe)[["SpaceMosaic"]][["patch_iterations"]] <- list(
+              patch = patch_vec,
+              membership_log = membership_log,
+              ss_log = ss_log
+          )
+          patch_metadata <- S4Vectors::metadata(spe)[["SpaceMosaic"]][["patch_iterations"]]
+      } else {
+          patch_metadata <- patch_vec
+      }
 
     if(patch_diagnostics) {
-      patch_data <- getPatchDiagnostics(
+      patch_diagnostics_list <- getPatchDiagnostics(
             xy = spatialCoords(spe),
             X = X_mat,
             patch = patch_metadata,
             k = k,
             strict_k = strict_k
         )
-      metadata(spe)$SpaceMosaic$patch_diagnostics <- patch_data 
-      patch_data <- patch_data$patch_diagnostics
+       metadata(spe)$SpaceMosaic <- c(
+        metadata(spe)$SpaceMosaic,
+        patch_diagnostics_list
+    )
+      patch_data <- patch_diagnostics_list$patch_diagnostics
     } else{
       patch_data <- NULL
     }

@@ -137,7 +137,7 @@ experiment-specific failure modes.
 
 ```{r patch-diagnostics, eval=FALSE}
 
-patch_diagnostics <- metadata(spe_use)$SpaceMosaic$patch_diagnostics$patch_diagnostics
+patch_diagnostics <- metadata(spe_use)$SpaceMosaic$patch_diagnostics
 
 # CHANGE to the X column that should be inspected when X is multivariable.
 x_sd_column <- if (length(X) == 1L) "x_sd" else paste0("x_sd_", X[1])
@@ -196,8 +196,15 @@ rows can carry any patch-level diagnostic or annotation supplied through
 `patch_data`.
 
 ```{r patch-map, eval=FALSE}
+library(ggspavis)
 
-plotCoords(spe_use,annotate = 'distance',in_tissue=NULL)  +
+spe$distance_use <- ifelse(
+  spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance),
+  spe$distance,
+  NA
+)
+
+plotCoords(spe,annotate = 'distance_use',in_tissue=NULL)  +
   geom_polygon(
     data = metadata(spe_use)$SpaceMosaic$patch_polys,
     aes(x, y, group = patch),
