@@ -185,14 +185,11 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
     spe
 }
 
-
-#' Run patch-level differential expression and optional meta-analysis
+#' Run patch-level differential expression
 #'
 #' Runs \code{patchDE()} on the expression data and patch assignments stored
-#' in a \code{SpatialExperiment} object, and packages the results into a
-#' \code{SingleCellExperiment}. Optionally performs patch-level meta-analysis
-#' using \code{patchMetaAnalysis()} and the embedding-derived patch attributes
-#' from \code{getPatchAttributes()}.
+#' in a \code{SpatialExperiment} object and packages the results into a
+#' \code{SingleCellExperiment}.
 #'
 #' @param spe A \code{SpatialExperiment} object. Must contain the requested
 #'   expression assay and patch assignments in \code{colData(spe)}.
@@ -203,15 +200,8 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #' @param patch_column Character string specifying the column in
 #'   \code{colData(spe)} containing patch assignments. Default is
 #'   \code{"patch"}.
-#' @param embedding_name Character string specifying the entry in
-#'   \code{reducedDims(spe)} to use for meta-analysis. Default is \code{"Z"}.
-#'   Ignored when \code{metaanalysis = FALSE}.
-#' @param metaanalysis Logical; if TRUE, perform patch-level meta-analysis
-#'   using \code{patchMetaAnalysis()}. The resulting embedding-derived patch
-#'   attributes are stored as reduced dimension \code{"W"} in the returned
-#'   \code{SingleCellExperiment}. Default is TRUE.
-#' @param pearson Logical; passed to \code{patchDE()} to control whether the
-#'   Pearson-based association method is used. Default is FALSE.
+#' @param pearson Logical; passed to \code{patchDE()} to control whether
+#'   the Pearson-based association method is used. Default is FALSE.
 #' @param tot Optional character string specifying the column in
 #'   \code{colData(spe)} containing per-cell total counts. If NULL, total
 #'   counts are handled by \code{patchDE()}. Default is NULL.
@@ -221,22 +211,9 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #'   Default is TRUE.
 #'
 #' @return A \code{SingleCellExperiment} object containing one column per
-#'   patch and one row per gene. The returned object contains:
-#'   \itemize{
-#'     \item one assay containing z-scores for each predictor, with assay names
-#'       corresponding to the predictor names;
-#'     \item \code{metadata()} entries containing the p-values, estimates,
-#'       and standard errors returned by \code{patchDE()};
-#'     \item if \code{metaanalysis = TRUE}, additional assays containing
-#'       meta-analysis z-scores, named using the corresponding predictor and
-#'       the \code{"_meta"} suffix;
-#'     \item if \code{metaanalysis = TRUE}, additional metadata entries
-#'       containing the p-values, estimates, and standard errors returned by
-#'       \code{patchMetaAnalysis()};
-#'     \item if \code{metaanalysis = TRUE}, \code{reducedDim(object, "W")}
-#'       containing the embedding-derived patch attributes used for
-#'       meta-analysis.
-#'   }
+#'   patch and one row per gene. The object contains one assay per predictor,
+#'   containing z-scores, and metadata entries containing the p-values,
+#'   estimates, and standard errors returned by \code{patchDE()}.
 #'
 #' @details
 #' The expression matrix is extracted from \code{assay(spe, assay)} and
@@ -244,26 +221,16 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #' \code{patchDE()}. Predictor variables are taken from \code{colData(spe)},
 #' and patch assignments are taken from \code{colData(spe)[[patch_column]]}.
 #'
-#' When \code{metaanalysis = TRUE}, the embedding specified by
-#' \code{embedding_name} is extracted from \code{reducedDims(spe)}.
-#' Patch-level attributes are calculated with \code{getPatchAttributes()}
-#' and supplied to \code{patchMetaAnalysis()} together with the
-#' \code{patchDE()} results.
-#'
 #' @seealso
 #' \code{\link{patchDE}},
-#' \code{\link{patchMetaAnalysis}},
-#' \code{\link{getPatchAttributes}}
+#' \code{\link{patchMetaAnalysis.spe}}
 #'
 #' @export
-
-patchDEWorkflow <- function(
+patchDE.spe <- function(
     spe,
     predictor_cols,
     assay = "logcounts",
     patch_column = "patch",
-    embedding_name = "Z",
-    metaanalysis = TRUE,
     pearson = FALSE,
     tot = NULL,
     resid_mse = FALSE,
@@ -273,7 +240,10 @@ patchDEWorkflow <- function(
     if (missing(predictor_cols) ||
         is.null(predictor_cols) ||
         length(predictor_cols) == 0) {
-        stop("`predictor_cols` must be a non-empty character vector of colData names.")
+        stop(
+            "`predictor_cols` must be a non-empty character vector ",
+            "of colData names."
+        )
     }
 
     missing_cols <- setdiff(
@@ -288,7 +258,8 @@ patchDEWorkflow <- function(
         )
     }
 
-    if (!patch_column %in% colnames(SummarizedExperiment::colData(spe))) {
+    if (!patch_column %in%
+        colnames(SummarizedExperiment::colData(spe))) {
         stop(sprintf(
             "'%s' not found in colData(spe).",
             patch_column
@@ -303,15 +274,17 @@ patchDEWorkflow <- function(
     )[, predictor_cols, drop = FALSE]
 
     if (!is.null(tot)) {
-    if (!tot %in% colnames(SummarizedExperiment::colData(spe))) {
-        stop(sprintf(
-            "'%s' not found in colData(spe).",
-            tot
-        ))
-    }
 
-    tot <- SummarizedExperiment::colData(spe)[[tot]]
-}
+        if (!tot %in%
+            colnames(SummarizedExperiment::colData(spe))) {
+            stop(sprintf(
+                "'%s' not found in colData(spe).",
+                tot
+            ))
+        }
+
+        tot <- SummarizedExperiment::colData(spe)[[tot]]
+    }
 
     # Run patchDE
     de_res <- patchDE(
@@ -325,9 +298,14 @@ patchDEWorkflow <- function(
     )
 
     # Patch IDs
-    patch_ids <- SummarizedExperiment::colData(spe)[[patch_column]]
+    patch_ids <- SummarizedExperiment::colData(
+        spe
+    )[[patch_column]]
+
     patch_ids <- as.character(
-        sort(unique(as.numeric(patch_ids[!is.na(patch_ids)])))
+        sort(unique(as.numeric(
+            patch_ids[!is.na(patch_ids)]
+        )))
     )
 
     # Output SCE
@@ -343,18 +321,12 @@ patchDEWorkflow <- function(
     rownames(patchDE_object) <- rownames(spe)
     colnames(patchDE_object) <- patch_ids
 
-    # ------------------------------------------------------------------
-    # Store p-values, estimates and SEs in metadata, and z-scores in
-    # one assay per predictor.
-    # ------------------------------------------------------------------
-
+    # Store p-values, estimates, SEs, and z-scores
     predictor_metadata <- list()
     z_assays <- list()
 
     for (predictor in predictor_cols) {
 
-        # Extract results for this predictor and retain the output
-        # corresponding to the patches in patchDE_object.
         de_res_predictor <- lapply(
             de_res[[predictor]],
             function(x) {
@@ -362,18 +334,14 @@ patchDEWorkflow <- function(
             }
         )
 
-
         pvals <- de_res_predictor[["pvals"]]
-        ests    <- de_res_predictor[["ests"]]
-        ses     <- de_res_predictor[["ses"]]
+        ests  <- de_res_predictor[["ests"]]
+        ses   <- de_res_predictor[["ses"]]
 
-        # Z score = estimate / standard error
         z <- ests / ses
 
-        # Store z-score as the assay for this predictor
         z_assays[[predictor]] <- z
 
-        # Store the three original quantities in metadata
         predictor_metadata[[predictor]] <- list(
             pvals = pvals,
             ests = ests,
@@ -381,103 +349,173 @@ patchDEWorkflow <- function(
         )
     }
 
-    # Add all predictor z-score assays at once
     SummarizedExperiment::assays(patchDE_object) <- z_assays
 
-    # Store pvalues / estimates / SEs
-    metadata(patchDE_object) <- predictor_metadata
+    S4Vectors::metadata(patchDE_object) <- predictor_metadata
 
-    # ------------------------------------------------------------------
-    # Meta-analysis
-    # ------------------------------------------------------------------
+    patchDE_object
+}
 
-    if (metaanalysis) {
+#' Run patch-level meta-analysis
+#'
+#' Performs patch-level meta-analysis on the results generated by
+#' \code{patchDE.spe()}, using embedding-derived patch attributes.
+#'
+#' @param spe A \code{SpatialExperiment} object containing the embedding
+#'   and patch assignments used to calculate patch-level attributes.
+#' @param patchDE_object A \code{SingleCellExperiment} returned by
+#'   \code{patchDE.spe()}.
+#' @param embedding_name Character string specifying the entry in
+#'   \code{reducedDims(spe)} to use for meta-analysis. Default is \code{"Z"}.
+#' @param patch_column Character string specifying the column in
+#'   \code{colData(spe)} containing patch assignments. Default is
+#'   \code{"patch"}.
+#'
+#' @return A \code{SingleCellExperiment} containing the original
+#'   patch-level differential expression results together with additional
+#'   meta-analysis z-score assays, metadata entries, and the embedding-derived
+#'   patch attributes stored as reduced dimension \code{"W"}.
+#'
+#' @details
+#' The embedding specified by \code{embedding_name} is extracted from
+#' \code{reducedDims(spe)}. Patch-level attributes are calculated using
+#' \code{getPatchAttributes()} and supplied to \code{patchMetaAnalysis()}
+#' together with the patch-level differential expression results.
+#'
+#' @seealso
+#' \code{\link{patchDE.spe}},
+#' \code{\link{patchMetaAnalysis.spe}},
+#' \code{\link{getPatchAttributes}}
+#'
+#' @export
+patchMetaAnalysis.spe <- function(
+    spe,
+    patchDE_object,
+    embedding_name = "Z",
+    patch_column = "patch"
+) {
 
-        if (!embedding_name %in%
-            SingleCellExperiment::reducedDimNames(spe)) {
-            stop(sprintf(
-                "Embedding '%s' not found in reducedDims(spe).",
-                embedding_name
-            ))
-        }
+    if (!patch_column %in%
+        colnames(SummarizedExperiment::colData(spe))) {
+        stop(sprintf(
+            "'%s' not found in colData(spe).",
+            patch_column
+        ))
+    }
 
-        Z <- SingleCellExperiment::reducedDim(
-            spe,
+    if (!embedding_name %in%
+        SingleCellExperiment::reducedDimNames(spe)) {
+        stop(sprintf(
+            "Embedding '%s' not found in reducedDims(spe).",
             embedding_name
-        )
+        ))
+    }
 
-        patch <- SummarizedExperiment::colData(
-            spe
-        )[[patch_column]]
-
-        W <- getPatchAttributes(Z, patch)
-
-        W <- W[
-            colnames(patchDE_object),
-            ,
-            drop = FALSE
-        ]
-
-        SingleCellExperiment::reducedDim(
-            patchDE_object,
-            "W"
-        ) <- W
-
-        de_res_meta <- patchMetaAnalysis(
-            de_res,
-            SingleCellExperiment::reducedDim(
-                patchDE_object,
-                "W"
-            )
-        )
-
-        # Store meta-analysis z-scores as additional assays.
-        meta_z_assays <- list()
-
-        for (predictor in predictor_cols) {
-
-    de_res_meta_predictor <- lapply(
-        de_res_meta[[predictor]],
-        function(x) {
-            x[, colnames(patchDE_object), drop = FALSE]
-        }
+    # Check that patch IDs match
+    spe_patches <- as.character(
+        sort(unique(as.numeric(
+            SummarizedExperiment::colData(spe)[[patch_column]]
+            [!is.na(SummarizedExperiment::colData(spe)[[patch_column]])]
+        )))
     )
 
-    if (!all(c("pvals", "ests", "ses") %in%
-             names(de_res_meta_predictor))) {
+    sce_patches <- colnames(patchDE_object)
+
+    if (!identical(spe_patches, sce_patches)) {
         stop(
-            "Expected `de_res_meta[[predictor]]` to contain ",
-            "`pvals`, `ests`, and `ses` for predictor '",
-            predictor,
-            "'."
+            "Patch IDs in `spe` do not match the columns of ",
+            "`patchDE_object`."
         )
     }
 
-    meta_ests <- de_res_meta_predictor[["ests"]]
-    meta_ses  <- de_res_meta_predictor[["ses"]]
-
-    meta_z_assays[[paste0(predictor, "_meta")]] <-
-        meta_ests / meta_ses
-
-    # Store meta-analysis results separately in metadata
-    metadata(patchDE_object)[[paste0(predictor, "_meta")]] <- list(
-        pvals = de_res_meta_predictor[["pvals"]],
-        ests = meta_ests,
-        ses = meta_ses
+    # Extract embedding
+    Z <- SingleCellExperiment::reducedDim(
+        spe,
+        embedding_name
     )
-}
 
-        # Add meta-analysis z-score assays
-        SummarizedExperiment::assays(patchDE_object) <-
-            c(
-                SummarizedExperiment::assays(patchDE_object),
-                meta_z_assays
+    patch <- SummarizedExperiment::colData(
+        spe
+    )[[patch_column]]
+
+    # Calculate patch-level embedding attributes
+    W <- getPatchAttributes(
+        Z,
+        patch
+    )
+
+    W <- W[
+        colnames(patchDE_object),
+        ,
+        drop = FALSE
+    ]
+
+    # Store patch attributes
+    SingleCellExperiment::reducedDim(
+        patchDE_object,
+        "W"
+    ) <- W
+
+    # Run meta-analysis
+    #
+    # IMPORTANT:
+    # patchMetaAnalysis() needs the original patchDE result, not the
+    # SCE containing the formatted results, unless its API explicitly
+    # accepts the latter.
+    #
+    # Therefore, see note below.
+    de_res_meta <- patchMetaAnalysis(
+        patchDE_object,
+        W
+    )
+
+    # Store meta-analysis results
+    meta_z_assays <- list()
+
+    for (predictor in names(de_res_meta)) {
+
+        de_res_meta_predictor <- lapply(
+            de_res_meta[[predictor]],
+            function(x) {
+                x[, colnames(patchDE_object), drop = FALSE]
+            }
+        )
+
+        if (!all(
+            c("pvals", "ests", "ses") %in%
+            names(de_res_meta_predictor)
+        )) {
+            stop(
+                "Expected `de_res_meta[[predictor]]` to contain ",
+                "`pvals`, `ests`, and `ses` for predictor '",
+                predictor,
+                "'."
             )
+        }
+
+        meta_ests <- de_res_meta_predictor[["ests"]]
+        meta_ses  <- de_res_meta_predictor[["ses"]]
+
+        meta_z_assays[[paste0(predictor, "_meta")]] <-
+            meta_ests / meta_ses
+
+        S4Vectors::metadata(patchDE_object)[[
+            paste0(predictor, "_meta")
+        ]] <- list(
+            pvals = de_res_meta_predictor[["pvals"]],
+            ests = meta_ests,
+            ses = meta_ses
+        )
     }
 
-    return(patchDE_object)
-}
+    SummarizedExperiment::assays(patchDE_object) <-
+        c(
+            SummarizedExperiment::assays(patchDE_object),
+            meta_z_assays
+        )
 
+    patchDE_object
+}
 
 
 #' @describeIn moranTest Method for \code{SpatialExperiment} objects. Extracts
