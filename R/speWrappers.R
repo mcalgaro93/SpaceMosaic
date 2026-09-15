@@ -302,29 +302,39 @@ patchDE.spe <- function(
         spe
     )[[patch_column]]
 
-    patch_ids <- as.character(
-        sort(unique(as.numeric(
-            patch_ids[!is.na(patch_ids)]
-        )))
-    )
-
+    
     # Output SCE
+    patch_diagnostics <- metadata(spe)$SpaceMosaic$patch_diagnostics
+
+    if (!is.null(patch_diagnostics)) {
+        
+        patch_ids <- intersect(patch_diagnostics$patch, as.character(patch_ids))
+        colData <- patch_diagnostics[patch_diagnostics$patch %in% patch_ids,]
+
+    } else {
+        patch_ids <- as.character(
+                sort(unique(as.numeric(
+                    patch_ids[!is.na(patch_ids)]
+                )))
+            )
+        colData <- S4Vectors::DataFrame(
+            patch = patch_ids
+        )
+    }
+
     patchDE_object <- SingleCellExperiment::SingleCellExperiment(
         rowData = S4Vectors::DataFrame(
             gene_id = rownames(spe)
         ),
-        colData = S4Vectors::DataFrame(
-            patch = patch_ids
-        )
+        colData = colData
     )
-
+    
     rownames(patchDE_object) <- rownames(spe)
     colnames(patchDE_object) <- patch_ids
 
     # Store p-values, estimates, SEs, and z-scores
     predictor_metadata <- list()
     z_assays <- list()
-
     for (predictor in predictor_cols) {
 
         de_res_predictor <- lapply(

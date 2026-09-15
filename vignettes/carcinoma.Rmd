@@ -229,7 +229,7 @@ appropriate for the assay and question.
 
 ```{r patch-de, eval=FALSE}
 
-de_result <- patchDEWorkflow(
+de_result <- patchDE.spe(
   spe = spe_use,
   predictor_cols = 'distance',
   pearson = FALSE
