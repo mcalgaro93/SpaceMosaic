@@ -200,6 +200,9 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #' @param patch_column Character string specifying the column in
 #'   \code{colData(spe)} containing patch assignments. Default is
 #'   \code{"patch"}.
+#' @param method Differential-expression backend. `"hasty"` uses ordinary
+#'   least squares and `"limma"` uses empirical-Bayes moderated inference.
+#'   Default `"hasty"` for backward compatibility.
 #' @param pearson Logical; passed to \code{patchDE()} to control whether
 #'   the Pearson-based association method is used. Default is FALSE.
 #' @param tot Optional character string specifying the column in
@@ -234,6 +237,7 @@ patchDE.spe <- function(
     predictor_cols,
     assay = "logcounts",
     patch_column = "patch",
+    method = c("hasty", "limma"),
     pearson = FALSE,
     tot = NULL,
     resid_mse = FALSE,
@@ -295,6 +299,7 @@ patchDE.spe <- function(
         y,
         df,
         SummarizedExperiment::colData(spe)[[patch_column]],
+        method = method,
         pearson = pearson,
         tot = tot,
         resid_mse = resid_mse,

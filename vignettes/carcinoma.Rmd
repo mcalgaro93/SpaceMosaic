@@ -232,7 +232,8 @@ appropriate for the assay and question.
 de_result <- patchDE.spe(
   spe = spe_use,
   predictor_cols = 'distance',
-  pearson = TRUE,
+  method = "limma",
+  pearson = FALSE,
   tot = 'nCount_Nanostring',
   return_residuals = TRUE
 )
