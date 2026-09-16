@@ -8,6 +8,7 @@ patchDE(
   y,
   df,
   patch,
+  method = c("hasty", "limma"),
   pearson = FALSE,
   tot = NULL,
   resid_mse = FALSE,
@@ -21,6 +22,10 @@ patchDE(
 \item{df}{Data frame to be used as DE predictors}
 
 \item{patch}{Vector of patch IDs}
+
+\item{method}{Differential-expression backend. \code{"hasty"} uses ordinary
+least squares and \code{"limma"} uses empirical-Bayes moderated inference.
+Default \code{"hasty"} for backward compatibility.}
 
 \item{pearson}{Logical; if TRUE, transform y to Pearson residuals before DE}
 
@@ -44,6 +49,11 @@ contain \code{NA}.
 }
 \description{
 patchDE: run DE over all patches
+}
+\details{
+When \code{method = "limma"}, \code{\link[=limmaDE]{limmaDE()}} is called with \code{trend = FALSE}
+for Pearson residuals and \code{trend = TRUE} otherwise. Robust empirical-Bayes
+estimation is used in both cases.
 }
 \examples{
 y <- cbind(gene_a = c(2, 4, 5, 8, 9, 13))

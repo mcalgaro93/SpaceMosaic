@@ -205,12 +205,19 @@ pearsonResiduals <- function(y, tot) {
 #' @param y Expression matrix, cells * genes
 #' @param df Data frame to be used as DE predictors
 #' @param patch Vector of patch IDs
+#' @param method Differential-expression backend. `"hasty"` uses ordinary
+#'   least squares and `"limma"` uses empirical-Bayes moderated inference.
+#'   Default `"hasty"` for backward compatibility.
 #' @param pearson Logical; if TRUE, transform y to Pearson residuals before DE
 #' @param tot Numeric vector of total counts per cell (required if pearson = TRUE)
 #' @param resid_mse Logical; if TRUE, include per-gene residual MSE in output
 #' @param return_residuals Logical; if TRUE, return an OLS residual matrix
 #'   aligned with the rows and columns of `y`. Default FALSE.
 #' @param verbose Show progress. Default TRUE.
+#' @details When `method = "limma"`, [limmaDE()] is called with `trend = FALSE`
+#'   for Pearson residuals and `trend = TRUE` otherwise. Robust empirical-Bayes
+#'   estimation is used in both cases.
+#'
 #' @return A list keyed by model variable. Each element contains `pvals`,
 #'   `ests`, and `ses` matrices with genes in rows and patches in columns.
 #'   If `resid_mse = TRUE`, the list also contains a `resid_mse` matrix with
@@ -232,9 +239,11 @@ pearsonResiduals <- function(y, tot) {
 #' fit$residuals
 #'
 #' @export
-patchDE <- function(y, df, patch, pearson = FALSE, tot = NULL,
+patchDE <- function(y, df, patch, method = c("hasty", "limma"),
+                    pearson = FALSE, tot = NULL,
                     resid_mse = FALSE, return_residuals = FALSE,
                     verbose = TRUE) {
+  method <- match.arg(method)
   if (length(patch) != nrow(y) || nrow(df) != nrow(y)) {
     stop("nrow(y), nrow(df), and length(patch) must be equal.")
   }
@@ -272,11 +281,17 @@ patchDE <- function(y, df, patch, pearson = FALSE, tot = NULL,
       ysub <- pearsonResiduals(ysub, tot = tot[cell_index])
     }
     patch_name <- as.character(patchid)
-    results[[patch_name]] <- hastyDE(
+    de_function <- switch(method, hasty = hastyDE, limma = limmaDE)
+    de_args <- list(
       y = ysub,
       df = df[cell_index, , drop = FALSE],
       return_residuals = return_residuals
     )
+    if (method == "limma") {
+      de_args$trend <- !pearson
+      de_args$robust <- TRUE
+    }
+    results[[patch_name]] <- do.call(de_function, de_args)
     if (return_residuals) {
       residual_matrix[cell_index, ] <- results[[patch_name]]$residuals
       # The residual matrix is returned separately and is not needed while the
