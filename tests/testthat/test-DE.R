@@ -241,6 +241,35 @@ test_that("patchDE dispatches to limmaDE", {
   expect_equal(result$residuals[patch == "one", ], expected_one$residuals)
 })
 
+test_that("patchDE returns the same results with serial and parallel backends", {
+  y <- cbind(
+    gene_a = c(1, 3, 4, 8, 9, 12, 14, 20),
+    gene_b = c(10, 8, 7, 3, 9, 7, 4, 2)
+  )
+  rownames(y) <- paste0("cell_", seq_len(nrow(y)))
+  df <- data.frame(treatment = rep(0:3, 2))
+  patch <- rep(c("one", "two"), each = 4)
+
+  for (method in c("hasty", "limma")) {
+    serial <- patchDE(
+      y, df, patch,
+      method = method,
+      return_residuals = TRUE,
+      BPPARAM = BiocParallel::SerialParam(),
+      verbose = FALSE
+    )
+    parallel <- patchDE(
+      y, df, patch,
+      method = method,
+      return_residuals = TRUE,
+      BPPARAM = BiocParallel::SnowParam(workers = 2),
+      verbose = FALSE
+    )
+
+    expect_identical(parallel, serial)
+  }
+})
+
 test_that("patchDE disables the limma trend for Pearson residuals", {
   y <- cbind(
     gene_a = c(1, 3, 4, 8, 9, 12),

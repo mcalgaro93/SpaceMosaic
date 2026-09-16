@@ -39,6 +39,9 @@
 #' @param adjustment_scope Scope of the multiple-test correction: `"global"`
 #'   across every gene-patch test, `"patch"` separately within each patch, or
 #'   `"gene"` separately within each gene. Default `"global"`.
+#' @param BPPARAM A [BiocParallel::BiocParallelParam] object controlling
+#'   patch-level parallelization. By default patches are processed serially.
+#'   Set its `RNGseed` when reproducible parallel permutations are required.
 #'
 #' @return A data frame with one row per gene and patch. It contains patch and
 #'   gene identifiers, number of cells, observed and expected Moran's I, raw and
@@ -58,7 +61,8 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
                       n_permutations = 999L,
                       alternative = c("greater", "less", "two.sided"),
                       p_adjust_method = "BH",
-                      adjustment_scope = c("global", "patch", "gene")) {
+                      adjustment_scope = c("global", "patch", "gene"),
+                      BPPARAM = BiocParallel::SerialParam()) {
   if (is.numeric(residuals) && is.null(dim(residuals))) {
     residuals <- matrix(residuals, ncol = 1L)
     colnames(residuals) <- "residual"
@@ -112,11 +116,11 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
     stop("p_adjust_method must be 'none' or a method supported by p.adjust().")
   }
 
-  results <- vector("list", length(patch_names) * ncol(residuals))
-  result_index <- 0L
-
-  for (patch_name in patch_names) {
-    cell_index <- which(!is.na(patch) & as.character(patch) == patch_name)
+  patch_character <- as.character(patch)
+  analyze_patch <- function(patch_name, permutation_test,
+                            prepare_moran, moran_from_centered) {
+    cell_index <- which(!is.na(patch_character) &
+                        patch_character == patch_name)
     n_cells <- length(cell_index)
     patch_residuals <- residuals[cell_index, , drop = FALSE]
 
@@ -131,8 +135,7 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
       s0 <- NULL
     }
 
-    for (gene in colnames(residuals)) {
-      result_index <- result_index + 1L
+    patch_results <- lapply(colnames(residuals), function(gene) {
       values <- patch_residuals[, gene]
       status <- "ok"
       test_result <- NULL
@@ -144,16 +147,18 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
       } else if (all(values == values[1L])) {
         status <- "constant residuals"
       } else {
-        test_result <- .moranPermutationTest(
+        test_result <- permutation_test(
           x = values,
           W = W,
           n_permutations = n_permutations,
           alternative = alternative,
-          s0 = s0
+          s0 = s0,
+          .prepare_fun = prepare_moran,
+          .statistic_fun = moran_from_centered
         )
       }
 
-      results[[result_index]] <- data.frame(
+      data.frame(
         patch = patch_name,
         gene = gene,
         n_cells = n_cells,
@@ -168,8 +173,18 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
         status = status,
         stringsAsFactors = FALSE
       )
-    }
+    })
+    do.call(rbind, patch_results)
   }
+
+  results <- BiocParallel::bplapply(
+    patch_names,
+    analyze_patch,
+    permutation_test = .moranPermutationTest,
+    prepare_moran = .prepareMoran,
+    moran_from_centered = .moranIFromCentered,
+    BPPARAM = BPPARAM
+  )
 
   out <- do.call(rbind, results)
   rownames(out) <- NULL
@@ -340,7 +355,9 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
 .moranPermutationTest <- function(x, W, n_permutations = 999L,
                                   alternative = c("greater", "less",
                                                   "two.sided"),
-                                  s0 = NULL) {
+                                  s0 = NULL,
+                                  .prepare_fun = .prepareMoran,
+                                  .statistic_fun = .moranIFromCentered) {
   if (length(n_permutations) != 1L || !is.numeric(n_permutations) ||
       !is.finite(n_permutations) || n_permutations < 1 ||
       n_permutations != floor(n_permutations)) {
@@ -349,16 +366,16 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
   alternative <- match.arg(alternative)
   n_permutations <- as.integer(n_permutations)
 
-  moran_data <- .prepareMoran(x, W, s0 = s0)
+  moran_data <- .prepare_fun(x, W, s0 = s0)
   z <- moran_data$z
   scale <- moran_data$scale
-  observed <- .moranIFromCentered(z, W, scale)
+  observed <- .statistic_fun(z, W, scale)
 
   # Permutation preserves the mean and sum of squared centered values, so only
   # the spatial cross-product needs to be recalculated on each iteration.
   simulated <- vapply(
     seq_len(n_permutations),
-    function(i) .moranIFromCentered(sample(z), W, scale),
+    function(i) .statistic_fun(sample(z), W, scale),
     numeric(1)
   )
 

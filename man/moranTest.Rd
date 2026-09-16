@@ -12,7 +12,8 @@ moranTest(
   n_permutations = 999L,
   alternative = c("greater", "less", "two.sided"),
   p_adjust_method = "BH",
-  adjustment_scope = c("global", "patch", "gene")
+  adjustment_scope = c("global", "patch", "gene"),
+  BPPARAM = BiocParallel::SerialParam()
 )
 }
 \arguments{
@@ -43,6 +44,10 @@ correction. Use \code{"none"} to leave p-values unadjusted. Default \code{"BH"}.
 \item{adjustment_scope}{Scope of the multiple-test correction: \code{"global"}
 across every gene-patch test, \code{"patch"} separately within each patch, or
 \code{"gene"} separately within each gene. Default \code{"global"}.}
+
+\item{BPPARAM}{A \link[BiocParallel:BiocParallelParam]{BiocParallel::BiocParallelParam} object controlling
+patch-level parallelization. By default patches are processed serially.
+Set its \code{RNGseed} when reproducible parallel permutations are required.}
 }
 \value{
 A data frame with one row per gene and patch. It contains patch and

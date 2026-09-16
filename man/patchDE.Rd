@@ -13,7 +13,8 @@ patchDE(
   tot = NULL,
   resid_mse = FALSE,
   return_residuals = FALSE,
-  verbose = TRUE
+  verbose = TRUE,
+  BPPARAM = BiocParallel::SerialParam()
 )
 }
 \arguments{
@@ -37,6 +38,9 @@ Default \code{"hasty"} for backward compatibility.}
 aligned with the rows and columns of \code{y}. Default FALSE.}
 
 \item{verbose}{Show progress. Default TRUE.}
+
+\item{BPPARAM}{A \link[BiocParallel:BiocParallelParam]{BiocParallel::BiocParallelParam} object controlling
+patch-level parallelization. By default patches are processed serially.}
 }
 \value{
 A list keyed by model variable. Each element contains \code{pvals},

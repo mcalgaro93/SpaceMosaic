@@ -102,6 +102,28 @@ test_that("moranTest handles multiple genes and patches", {
   expect_equal(result$p_adjusted, stats::p.adjust(result$p_value, "BH"))
 })
 
+test_that("moranTest is reproducible across parallel backends", {
+  xy <- cbind(x = rep(0:3, 2), y = rep(c(0, 10), each = 4))
+  patch <- rep(c("one", "two"), each = 4)
+  residuals <- cbind(
+    gene_a = c(-2, -1, 1, 2, 2, 1, -1, -2),
+    gene_b = c(1, 3, 2, 8, 4, 1, 7, 2)
+  )
+
+  serial <- moranTest(
+    residuals, xy, patch = patch,
+    k = 2, n_permutations = 19,
+    BPPARAM = BiocParallel::SerialParam(RNGseed = 29)
+  )
+  parallel <- moranTest(
+    residuals, xy, patch = patch,
+    k = 2, n_permutations = 19,
+    BPPARAM = BiocParallel::SnowParam(workers = 2, RNGseed = 29)
+  )
+
+  expect_identical(parallel, serial)
+})
+
 test_that("moranTest reports non-testable genes without stopping a batch", {
   xy <- cbind(x = 0:3, y = rep(0, 4))
   residuals <- cbind(

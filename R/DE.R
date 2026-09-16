@@ -214,6 +214,8 @@ pearsonResiduals <- function(y, tot) {
 #' @param return_residuals Logical; if TRUE, return an OLS residual matrix
 #'   aligned with the rows and columns of `y`. Default FALSE.
 #' @param verbose Show progress. Default TRUE.
+#' @param BPPARAM A [BiocParallel::BiocParallelParam] object controlling
+#'   patch-level parallelization. By default patches are processed serially.
 #' @details When `method = "limma"`, [limmaDE()] is called with `trend = FALSE`
 #'   for Pearson residuals and `trend = TRUE` otherwise. Robust empirical-Bayes
 #'   estimation is used in both cases.
@@ -242,7 +244,8 @@ pearsonResiduals <- function(y, tot) {
 patchDE <- function(y, df, patch, method = c("hasty", "limma"),
                     pearson = FALSE, tot = NULL,
                     resid_mse = FALSE, return_residuals = FALSE,
-                    verbose = TRUE) {
+                    verbose = TRUE,
+                    BPPARAM = BiocParallel::SerialParam()) {
   method <- match.arg(method)
   if (length(patch) != nrow(y) || nrow(df) != nrow(y)) {
     stop("nrow(y), nrow(df), and length(patch) must be equal.")
@@ -258,7 +261,6 @@ patchDE <- function(y, df, patch, method = c("hasty", "limma"),
   }
 
   # get DE results per patch:
-  results <- list()
   if (return_residuals) {
     residual_matrix <- matrix(
       NA_real_,
@@ -271,17 +273,19 @@ patchDE <- function(y, df, patch, method = c("hasty", "limma"),
   if (length(patches) == 0L) {
     stop("patch must contain at least one non-missing patch ID.")
   }
-  if (verbose) {
-    cli::cli_progress_bar("patchDE", total = length(patches))
-  }
-  for (patchid in patches) {
-    cell_index <- which(!is.na(patch) & patch == patchid)
+  patch_names <- as.character(patches)
+  cell_indices <- lapply(
+    patches,
+    function(patchid) which(!is.na(patch) & patch == patchid)
+  )
+  names(cell_indices) <- patch_names
+
+  de_function <- switch(method, hasty = hastyDE, limma = limmaDE)
+  analyze_patch <- function(cell_index) {
     ysub <- y[cell_index, , drop = FALSE]
     if (pearson) {
       ysub <- pearsonResiduals(ysub, tot = tot[cell_index])
     }
-    patch_name <- as.character(patchid)
-    de_function <- switch(method, hasty = hastyDE, limma = limmaDE)
     de_args <- list(
       y = ysub,
       df = df[cell_index, , drop = FALSE],
@@ -291,16 +295,34 @@ patchDE <- function(y, df, patch, method = c("hasty", "limma"),
       de_args$trend <- !pearson
       de_args$robust <- TRUE
     }
-    results[[patch_name]] <- do.call(de_function, de_args)
-    if (return_residuals) {
-      residual_matrix[cell_index, ] <- results[[patch_name]]$residuals
+    do.call(de_function, de_args)
+  }
+
+  if (verbose && BiocParallel::bpworkers(BPPARAM) == 1L) {
+    cli::cli_progress_bar("patchDE", total = length(patches))
+    results <- lapply(cell_indices, function(cell_index) {
+      result <- analyze_patch(cell_index)
+      cli::cli_progress_update()
+      result
+    })
+    cli::cli_progress_done()
+  } else {
+    results <- BiocParallel::bplapply(
+      cell_indices,
+      analyze_patch,
+      BPPARAM = BPPARAM
+    )
+  }
+
+  if (return_residuals) {
+    for (patch_name in names(results)) {
+      residual_matrix[cell_indices[[patch_name]], ] <-
+        results[[patch_name]]$residuals
       # The residual matrix is returned separately and is not needed while the
       # DE summaries are reformatted below.
       results[[patch_name]]$residuals <- NULL
     }
-    if (verbose) cli::cli_progress_update()
   }
-  if (verbose) cli::cli_progress_done()
   # reformat to a per-variable list:
   variables <- colnames(results[[1]][[1]])
   out <- list()
