@@ -237,6 +237,25 @@ de_result <- patchDE.spe(
   tot = 'nCount_Nanostring',
   return_residuals = TRUE
 )
+
+de_result <- patchMetaAnalysis.spe(
+  spe = spe_use,
+  patchDE_object = de_result,
+  embedding_name = 'Z',
+  patch_column = "patch",
+  summarize_subgroups = TRUE,
+  cellmeta_cols = c("celltype", "distance")
+)
+```
+
+```{r}
+
+moran_test <- moranTest(metadata(de_result)$residuals$limma$distance[,1:10], 
+spatialCoords(spe_use),
+ patch = colData(spe_use)$patch,
+ n_permutations = 20)
+
+
 ```
 
 

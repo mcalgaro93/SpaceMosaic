@@ -307,6 +307,8 @@ patchDE.spe <- function(
         verbose = verbose
     )
 
+    method <- match.arg(method)
+
     if(return_residuals){
         residuals <- de_res$residuals
         de_res <- de_res$de
@@ -351,29 +353,28 @@ patchDE.spe <- function(
 
     # Store p-values, estimates, SEs, and z-scores
     predictor_metadata <- list()
-    z_assays <- list()
+    de_assays <- list()
     for (predictor in predictor_cols) {
 
         de_res_predictor <- lapply(
             de_res[[predictor]],
             function(x) {
-              print(names(de_res[[predictor]]))
                 x[, colnames(patchDE_object), drop = FALSE]
             }
         )
 
-        z <- de_res_predictor[["ests"]] / de_res_predictor[["ses"]]
+        de_assays[[paste0(method,"_",predictor,"_pvals")]] <- de_res_predictor[["pvals"]] 
+        de_assays[[paste0(method,"_",predictor,"_ests")]] <- de_res_predictor[["ests"]] 
+        de_assays[[paste0(method,"_",predictor,"_ses")]] <- de_res_predictor[["ses"]]
 
-        z_assays[[predictor]] <- z
-
-        predictor_metadata[[predictor]] <- de_res_predictor
 
         if(return_residuals){
-            predictor_metadata[[predictor]]$residuals <- residuals
+            predictor_metadata[["residuals"]][[method]][[predictor]] <- residuals
         }
     }
 
-    SummarizedExperiment::assays(patchDE_object) <- z_assays
+  
+    SummarizedExperiment::assays(patchDE_object) <- de_assays
 
     S4Vectors::metadata(patchDE_object) <- predictor_metadata
 
@@ -417,7 +418,9 @@ patchMetaAnalysis.spe <- function(
     spe,
     patchDE_object,
     embedding_name = "Z",
-    patch_column = "patch"
+    patch_column = "patch",
+    summarize_subgroups = FALSE,
+    cellmeta_cols = NULL
 ) {
 
     if (!patch_column %in%
@@ -489,13 +492,28 @@ patchMetaAnalysis.spe <- function(
     # accepts the latter.
     #
     # Therefore, see note below.
+
+    DEObj <- list()
+    assaysPatchDE <- assays(patchDE_object)
+    for (nm in names(assaysPatchDE)) {
+      parts <- strsplit(nm, "_")[[1]]
+      
+      var  <- parts[2]
+      stat <- parts[3]
+      
+      if (is.null(DEObj[[var]])) {
+        DEObj[[var]] <- list()
+      }
+      
+      DEObj[[var]][[stat]] <- assaysPatchDE[[nm]]
+    }
     de_res_meta <- patchMetaAnalysis(
-        patchDE_object,
+        DEObj,
         W
     )
 
     # Store meta-analysis results
-    meta_z_assays <- list()
+    meta_de_assays <- list()
 
     for (predictor in names(de_res_meta)) {
 
@@ -518,26 +536,26 @@ patchMetaAnalysis.spe <- function(
             )
         }
 
-        meta_ests <- de_res_meta_predictor[["ests"]]
-        meta_ses  <- de_res_meta_predictor[["ses"]]
+        subgroups_mat <- de_res_meta_predictor[["subgroups"]]
+        meta_de_assays[[paste0(parts[1],"_",predictor,"_meta_pvals")]] <- de_res_meta_predictor[["pvals"]] 
+        meta_de_assays[[paste0(parts[1],"_",predictor,"_meta_ests")]] <- de_res_meta_predictor[["ests"]] 
+        meta_de_assays[[paste0(parts[1],"_",predictor,"_meta_ses")]] <- de_res_meta_predictor[["ses"]]
+        meta_de_assays[[paste0(parts[1],"_",predictor,"_meta_subgroups")]] <- subgroups_mat
 
-        meta_z_assays[[paste0(predictor, "_meta")]] <-
-            meta_ests / meta_ses
-
-        S4Vectors::metadata(patchDE_object)[[
-            paste0(predictor, "_meta")
-        ]] <- list(
-            pvals = de_res_meta_predictor[["pvals"]],
-            ests = meta_ests,
-            ses = meta_ses
-        )
     }
+
+
 
     SummarizedExperiment::assays(patchDE_object) <-
         c(
             SummarizedExperiment::assays(patchDE_object),
-            meta_z_assays
+            meta_de_assays
         )
+    
+    if(summarize_subgroups){
+      metadata(patchDE_object)$subgroups_summary <- summarizeSubgroups(
+        de_res_meta, patch = colData(spe)$patch, cellmeta = colData(spe)[, cellmeta_cols, drop = FALSE])
+    }
 
     patchDE_object
 }
