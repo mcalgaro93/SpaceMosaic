@@ -270,6 +270,16 @@ test_that("patchDE returns the same results with serial and parallel backends", 
   }
 })
 
+test_that("patchDE updates serial progress from inside the patch loop", {
+  y <- cbind(gene_a = c(1, 3, 4, 8, 9, 12))
+  df <- data.frame(treatment = rep(0:2, 2))
+  patch <- rep(c("one", "two"), each = 3)
+
+  expect_no_error(
+    patchDE(y, df, patch, verbose = TRUE)
+  )
+})
+
 test_that("patchDE disables the limma trend for Pearson residuals", {
   y <- cbind(
     gene_a = c(1, 3, 4, 8, 9, 12),

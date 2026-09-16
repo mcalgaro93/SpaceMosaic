@@ -299,13 +299,13 @@ patchDE <- function(y, df, patch, method = c("hasty", "limma"),
   }
 
   if (verbose && BiocParallel::bpworkers(BPPARAM) == 1L) {
-    cli::cli_progress_bar("patchDE", total = length(patches))
+    progress_id <- cli::cli_progress_bar("patchDE", total = length(patches))
     results <- lapply(cell_indices, function(cell_index) {
       result <- analyze_patch(cell_index)
-      cli::cli_progress_update()
+      cli::cli_progress_update(id = progress_id)
       result
     })
-    cli::cli_progress_done()
+    cli::cli_progress_done(id = progress_id)
   } else {
     results <- BiocParallel::bplapply(
       cell_indices,
