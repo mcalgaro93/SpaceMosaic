@@ -27,6 +27,14 @@ This folder is for ad hoc method development and tuning experiments.
   question, rationale, simulation and real within-patch comparison of
   `hastyDE()` and `limmaDE()`. The rendered HTML is written to
   `dev/runs/limmaDE_toy_report.html`.
+- benchmark_patch_parallelization.R: synthetic benchmark comparing serial,
+  two-worker, and four-worker execution. It measures both `hasty` and `limma`
+  `patchDE()` backends with many small patches and fewer larger patches, plus
+  `moranTest()` with many patches. Raw timings are written to
+  `dev/runs/parallel_patch_benchmark.csv` and a summary figure to
+  `dev/runs/parallel_patch_benchmark.pdf`; workload sizes, repetitions, workers,
+  and permutation count are configurable through the environment variables at
+  the top of the script.
 - runs/: optional outputs from local runs (CSV summaries, plots, notes).
 
 ## Usage Notes
