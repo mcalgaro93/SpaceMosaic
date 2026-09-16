@@ -255,7 +255,6 @@ spatialCoords(spe_use),
  patch = colData(spe_use)$patch,
  n_permutations = 20)
 
-
 ```
 
 
@@ -267,7 +266,7 @@ posterior p-values, subgroup membership, and biological relevance should also
 be considered; very small p-values alone are not sufficient.
 
 ```{r result-summary, eval=FALSE}
-z_score <- assays(de_result)[[2]]
+z_score <- assays(de_result)[["limma_distance_meta_ests"]] / assays(de_result)[["limma_distance_meta_ses"]]
 
 gene_summary <- data.frame(
   gene = rownames(z_score),
@@ -292,10 +291,11 @@ Finally, project representative effects back onto the tissue. Confirm that
 their direction agrees with the predictor and is not driven by an unmodeled
 sample, anatomical compartment, low-quality region, or segmentation artifact.
 
-{r spatial-validation, eval=FALSE}
+```{r spatial-validation, eval=FALSE}
+poly_df <- metadata(spe_use)$SpaceMosaic$patch_polys
 gene <- top_genes[1]
 poly_gene <- poly_df
-poly_gene$z_score <- z_score[gene, as.character(poly_gene$patch)]
+poly_gene$z_score <- z_score[gene, ][as.character(poly_gene$patch)]
 
 ggplot(poly_gene, aes(x, y, group = patch, fill = z_score)) +
   geom_polygon(color = "grey30", linewidth = 0.2) +
@@ -306,27 +306,4 @@ ggplot(poly_gene, aes(x, y, group = patch, fill = z_score)) +
   theme_minimal() +
   labs(title = gene, fill = "Posterior Z")
 
-
-For exploratory work, the interactive plotter can overlay cells and patches
-and color patches by meta-analysis Z-scores or arbitrary patch annotations.
-
-{r interactive-plotter, eval=FALSE, options(shiny.reactlog = TRUE)}
-
-runInteractivePlotter(
-  spe = spe[, use],
-  patches = patch,
-  metats = z_score,
-  meaningful_vars = c("celltype"),
-  patch_data = patch_diagnostics
-)
-
-
-
-# 7. Reporting checklist
-
-Record the definition and transformation of $X$, response-cell inclusion
-criteria, construction of $Z$ and $W$, all `getPatches()` tuning parameters,
-the random seed, patch-filtering thresholds, expression preprocessing,
-covariates, meta-analysis parameters, and the number of retained cells and
-patches. Report spatial validation and sensitivity analyses alongside the main
-gene-level results.
+```

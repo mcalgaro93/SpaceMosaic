@@ -1,3 +1,48 @@
+#' Embed cellular neighborhoods in a SpatialExperiment
+#'
+#' Creates a neighborhood embedding for a \code{SpatialExperiment} object by
+#' calling \code{\link{embedCellNeighborhoods}} on a stored reduced dimension
+#' and the object's spatial coordinates, then storing the result as a new
+#' reduced dimension.
+#'
+#' @param spe A SpatialExperiment object.
+#' @param embedding A single character string giving the name of a reduced
+#'   dimension stored in \code{reducedDim(spe)} with a 
+#'   single cell embeddings matrix (cells x features).
+#' @param ks Vector giving the number of nearest neighbors for each scale.
+#'   Default \code{c(5, 50)}.
+#' @param tissue Optional character string giving the name of a column in
+#'   \code{colData(spe)} containing tissue IDs to prevent cross-tissue
+#'   neighbor edges. Default NULL.
+#' @param name Character string giving the name under which the result is
+#'   stored via \code{reducedDim(spe, name)}. Default \code{"Z"}.
+#' @return \code{spe} with a new reduced dimension, named according to
+#'   \code{name}, added via \code{reducedDim(spe, name)}. This matrix has
+#'   dimensions n cells x (ncol(embedding_mat) * length(ks)).
+#' @seealso \code{\link{embedCellNeighborhoods}}, which does the multi-scale
+#'   neighborhood averaging on a plain matrix.
+#'
+#' @importFrom SingleCellExperiment reducedDim reducedDim<- reducedDimNames
+#' @importFrom SpatialExperiment spatialCoords
+#' @importFrom SummarizedExperiment colData
+#' @export
+embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = NULL,
+                                       name = "Z") {
+
+    if (!embedding %in% reducedDimNames(spe)) {
+      stop("`embedding` = '", embedding, "' not found in reducedDimNames(spe). ",
+           "Available: ", paste(reducedDimNames(spe), collapse = ", "))
+    }
+    if(!tissue %in% colnames(colData(spe)) && !is.null(tissue)){
+      stop("`tissue` = '", tissue, "' not found in colData(spe). ",
+           "Available: ", paste(colnames(colData(spe)), collapse = ", "))
+    }
+    embedding_mat <- SingleCellExperiment::reducedDim(spe, embedding)
+    reducedDim(spe, name) <- embedCellNeighborhoods(embedding_mat, spatialCoords(spe), ks, tissue = colData(spe)[[tissue]])
+    spe
+}
+
+
 #' @describeIn getPatches Method for `SpatialExperiment` objects.
 #'
 #' Convenience wrapper for the SpaceMosaic patching workflow on a
@@ -155,35 +200,7 @@ getPatches.spe <- function(spe, X, npatches,
 }
 
 
-#' @describeIn embedCellNeighborhoods Method for \code{SpatialExperiment}
-#'   objects. Resolves `embedding` from `reducedDims(spe)` (or takes it as a
-#'   matrix directly), runs `embedCellNeighborhoods()` against
-#'   `spatialCoords(spe)`, and stores the result back as a new reduced
-#'   dimension on `spe`. See `embedCellNeighborhoods` for how the
-#'   multi-scale neighborhood averaging works.
-#'
-#' @param spe A SpatialExperiment object.
-#' @param embedding Either a matrix of single cell embeddings (cells x
-#'   features, with one row per column of \code{spe}), or a single character
-#'   string giving the name of a reduced dimension already stored in
-#'   \code{reducedDim(spe)}.
-#' @param name Character string giving the name under which the result is
-#'   stored via \code{reducedDim(spe, name)}. Default \code{"Z"}.
-#' @return \code{spe} with a new reduced dimension, named according to
-#'   \code{name}, added via \code{reducedDim(spe, name)}. This matrix has
-#'   dimensions n cells x (ncol(embedding_mat) * length(ks)).
-#' @export
-embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = NULL,
-                                       name = "Z") {
 
-    if (!embedding %in% reducedDimNames(spe)) {
-      stop("`embedding` = '", embedding, "' not found in reducedDimNames(spe). ",
-           "Available: ", paste(reducedDimNames(spe), collapse = ", "))
-    }
-    embedding_mat <- SingleCellExperiment::reducedDim(spe, embedding)
-    reducedDim(spe, name) <- embedCellNeighborhoods(embedding_mat, spatialCoords(spe), ks, tissue)
-    spe
-}
 
 #' Run patch-level differential expression
 #'
@@ -546,11 +563,9 @@ patchMetaAnalysis.spe <- function(
 
 
 
-    SummarizedExperiment::assays(patchDE_object) <-
-        c(
-            SummarizedExperiment::assays(patchDE_object),
-            meta_de_assays
-        )
+    assays <- SummarizedExperiment::assays(patchDE_object)
+    assays[names(meta_de_assays)] <- meta_de_assays
+    SummarizedExperiment::assays(patchDE_object) <- assays
     
     if(summarize_subgroups){
       metadata(patchDE_object)$subgroups_summary <- summarizeSubgroups(
