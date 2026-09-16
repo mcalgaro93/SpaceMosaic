@@ -25,6 +25,11 @@
 #' @importFrom SingleCellExperiment reducedDim reducedDim<- reducedDimNames
 #' @importFrom SpatialExperiment spatialCoords
 #' @importFrom SummarizedExperiment colData
+#' @examples 
+#' library(SpatialExperiment)
+#' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
+#' spe <- embedCellNeighborhoods.spe(spe, embedding = "PCA", ks = c(5, 50))
+#' reducedDim(spe, "Z")[1:3, 1:4]
 #' @export
 embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = NULL,
                                        name = "Z") {
@@ -43,44 +48,130 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 }
 
 
-#' @describeIn getPatches Method for `SpatialExperiment` objects.
+#' Run the SpaceMosaic patching workflow on a `SpatialExperiment`
 #'
 #' Convenience wrapper for the SpaceMosaic patching workflow on a
-#' `SpatialExperiment`. The workflow consists of three steps:
-#' `getPatches()` identifies spatial patches, `patchDiagnostics()` computes
+#' `SpatialExperiment`. This wrapper contains three steps:
+#' `getPatches()` identifies spatial patches, `getPatchDiagnostics()` computes
 #' patch-level information from the resulting patch assignments, and
-#' `getPatchPolys()` constructs patch polygons using the patch assignments
-#' and diagnostic information. Results are stored directly in the
+#' `getPatchPolys()` constructs patch polygons using the patch assignments and
+#' diagnostic information. Results are stored directly in the
 #' `SpatialExperiment` object.
-#' 
-#' @param spe SpatialExperiment object. Must have rownames.
+#'
+#' Spatial coordinates are taken from `spatialCoords(spe)`, design variables
+#' from `colData(spe)`, and (optionally) context embeddings from
+#' `reducedDims(spe)`. All results are returned attached to `spe`; nothing is
+#' written to the global environment.
+#'
+#' @param spe A `SpatialExperiment` object. Must have `colnames` (cell
+#'   identifiers), non-empty `spatialCoords()`, and the columns named in `X`
+#'   present in `colData(spe)`.
 #' @param X Design variables for each spatial unit. A character vector of
-#'   column names in `colData(spe)`. Each column is scaled to unit SD.
+#'   column names in `colData(spe)`. Each column is scaled to unit SD by
+#'   `getPatches()`.
+#' @param npatches Number of patches to create.
 #' @param Z Optional per-cell context embeddings (cells x features). A single
-#'   character string naming an entry in `reducedDims(spe)`.
-#'   If supplied, patches will prefer Z-coherent regions. NULL disables.
-#' @param patch_column Column name in `colData(spe)` where to store patch
-#'   assignments. Default = 'patch'.
-#' @param patch_diagnostics Logical; if TRUE, compute patch-level diagnostics
-#'   using `patchDiagnostics()` and store the result in
-#'   `metadata(spe)$SpaceMosaic$patch_diagnostics`.
-#' @param patch_polys Logical; if TRUE, compute patch polygons using
-#'   `patchPolys()` and store the result in
-#'   `metadata(spe)$SpaceMosaic$patch_polys`.
+#'   character string naming an entry in `reducedDimNames(spe)`. If supplied,
+#'   patches will prefer Z-coherent regions. `NULL` (default) disables.
+#' @param alpha Weight of the Z penalty. Typical range 0.2--1.0; default 0.5.
+#'   Higher values force patches to respect microenvironment boundaries at the
+#'   cost of spatial compactness. Set to 0 to ignore Z entirely.
+#' @param beta Weight of the X diversity boost. Typical range 0.5/K--3/K where
+#'   K = `length(X)`; default 1 (appropriate for a single design variable). For
+#'   multiple design variables, scale down proportionally (e.g. `beta = 0.2`
+#'   for K = 5). Raise if patches are too homogeneous; lower if patches are
+#'   spatially fragmented.
+#' @param hunger_weight Controls how aggressively low-variance patches grab
+#'   cells. Typical range 0.3--0.7; default 0.5. 0 = all patches equally hungry
+#'   (uniform sizes), 1 = hunger proportional to 1/totvar (maximizes variance
+#'   reduction but allows extreme size imbalance).
+#' @param max_elongation Maximum ratio of largest to smallest eigenvalue of a
+#'   patch covariance matrix. Typical range 2--8; default 4. Lower values force
+#'   rounder patches.
+#' @param max_radius Maximum Euclidean distance from a patch centroid for
+#'   assignment. Cells beyond this get zero spatial score. Default `NULL`
+#'   (auto: 3x the expected patch radius assuming uniform circular patches).
+#' @param mahal_radius Maximum Mahalanobis radius for assignment. Cells beyond
+#'   this (in each patch's own coordinate system) get zero spatial score.
+#'   Typical range 2--4; default 3. `Inf` disables the cutoff entirely.
+#' @param n_candidates Number of nearest patch centroids to evaluate per cell.
+#'   Typical range 10--50; default 20. Higher values are more accurate but
+#'   slower.
+#' @param n_iters Number of outer iterations. Typical range 10--30; default 15.
+#' @param init_method Initialization method for patch seeds. `"kmeans"`
+#'   (default) uses isotropic k-means seeding; `"gradient_ellipse"` orients
+#'   initial ellipses along the local spatial gradient of X and currently
+#'   requires `length(X) == 1`.
+#' @param init_gradient_k Number of nearest neighbors used to estimate local
+#'   spatial gradients of X when `init_method = "gradient_ellipse"`. A finite
+#'   integer >= 3; default 30.
+#' @param init_gradient_elongation Target initial ellipse elongation ratio
+#'   (major/minor eigenvalue ratio) for `init_method = "gradient_ellipse"`.
+#'   Finite and >= 1; default 4.
+#' @param x_weighted_ellipse_second_pass Logical; if `TRUE`, the ellipse re-fit
+#'   up-weights cells whose X is farther from their patch mean, which can
+#'   encourage elongated patches along smooth X gradients. Applied only when
+#'   `length(X) == 1`. Default `FALSE`.
+#' @param x_ellipse_gamma Strength of X-based up-weighting in second-pass
+#'   ellipse fitting. 0 disables weighting; typical range 0.5--1.5; default 1.
+#' @param x_ellipse_wmax Cap on standardized X-deviation used in the weighting
+#'   rule, to limit outlier influence. Typical range 2--4; default 3.
+#' @param log_iters Logical; if `TRUE` (default), per-iteration diagnostics are
+#'   retained and stored in
+#'   `metadata(spe)$SpaceMosaic$patch_iterations`.
+#' @param patch_diagnostics Logical; if `TRUE` (default), compute patch-level
+#'   diagnostics with `getPatchDiagnostics()` and merge its elements
+#'   (`patch_diagnostics`, `assignment_summary`, `connectivity_curve`) into
+#'   `metadata(spe)$SpaceMosaic`.
+#' @param k Maximum number of spatial neighbors used by `getPatchDiagnostics()`.
+#'   Default 10. Limited internally to `n - 1` for small datasets. Ignored when
+#'   `patch_diagnostics = FALSE`.
+#' @param strict_k Neighbors used for `strict_component_fraction` in
+#'   `getPatchDiagnostics()`. Must be no greater than `k`; `NULL` (default)
+#'   uses `min(5, k)`. Ignored when `patch_diagnostics = FALSE`.
+#' @param patch_polys Logical; if `TRUE` (default), compute patch polygons with
+#'   `getPatchPolys()` and store the result in
+#'   `metadata(spe)$SpaceMosaic$patch_polys`. When `patch_diagnostics = FALSE`,
+#'   polygons are built without diagnostic information (`patch_data = NULL`).
+#' @param patch_column Column name in `colData(spe)` where patch assignments are
+#'   stored. Default `"patch"`. An existing column of the same name is
+#'   overwritten.
+#' @param verbose Logical; show progress. Default `TRUE`.
+#'
 #' @return The input `spe`, with results attached:
 #'   \itemize{
 #'     \item `colData(spe)[[patch_column]]`: named vector/factor of final patch
-#'       assignments.
-#'     \item `metadata(spe)$SpaceMosaic$patch_diagnostics`: patch-level
-#'       diagnostics, if `patch_diagnostics = TRUE`.
+#'       assignments, ordered to match `colnames(spe)`. `NA` denotes an
+#'       unassigned cell.
+#'     \item `metadata(spe)$SpaceMosaic$patch_iterations`: if
+#'       `log_iters = TRUE`, a list with `patch` (final assignments),
+#'       `membership_log` (n_cells x n_iters matrix of patch assignments per
+#'       iteration) and `ss_log` (npatches x n_iters matrix of per-patch
+#'       sum-of-squares of X across iterations).
+#'     \item `metadata(spe)$SpaceMosaic$patch_diagnostics`,
+#'       `$assignment_summary` and `$connectivity_curve`: the three data frames
+#'       returned by `getPatchDiagnostics()`, if `patch_diagnostics = TRUE`.
 #'     \item `metadata(spe)$SpaceMosaic$patch_polys`: patch polygons, if
 #'       `patch_polys = TRUE`.
-#'     \item `metadata(spe)$SpaceMosaic$patch_iterations`: if `log_iters = TRUE`,
-#'       a list containing `membership_log` (n_cells x n_iters matrix of patch
-#'       assignments per iteration) and `ss_log` (npatches x n_iters matrix of
-#'       per-patch sum-of-squares of X across iterations).
 #'   }
-#' @export
+#'
+#' @seealso [getPatches()], [getPatchDiagnostics()], [getPatchPolys()]
+#'
+#' @examples
+#' library(SpatialExperiment)
+#' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
+#' spe <- embedCellNeighborhoods.spe(spe, embedding = "PCA", ks = c(5, 50))
+#' spe <- getPatches.spe(
+#'   spe = spe,
+#'   X = "distance",
+#'   npatches = 50,
+#'   Z = "Z",
+#'   patch_column = "patch"
+#' )
+#' head(colData(spe)$patch)
+#' metadata(spe)$SpaceMosaic$patch_diagnostics
+#'
+#' @export getPatches.spe
 getPatches.spe <- function(spe, X, npatches,
                             Z = NULL,
                             alpha = 0.5,
@@ -179,10 +270,7 @@ getPatches.spe <- function(spe, X, npatches,
             k = k,
             strict_k = strict_k
         )
-       metadata(spe)$SpaceMosaic <- c(
-        metadata(spe)$SpaceMosaic,
-        patch_diagnostics_list
-    )
+      metadata(spe)$SpaceMosaic[names(patch_diagnostics_list)] <- patch_diagnostics_list
       patch_data <- patch_diagnostics_list$patch_diagnostics
     } else{
       patch_data <- NULL
@@ -202,7 +290,7 @@ getPatches.spe <- function(spe, X, npatches,
 
 
 
-#' Run patch-level differential expression
+#' Run patch-level differential expression on a SpatialExperiment
 #'
 #' Runs \code{patchDE()} on the expression data and patch assignments stored
 #' in a \code{SpatialExperiment} object and packages the results into a
@@ -211,44 +299,66 @@ getPatches.spe <- function(spe, X, npatches,
 #' @param spe A \code{SpatialExperiment} object. Must contain the requested
 #'   expression assay and patch assignments in \code{colData(spe)}.
 #' @param predictor_cols Character vector of column names in
-#'   \code{colData(spe)} to use as predictors in \code{patchDE()}.
-#' @param assay Character string specifying the assay in \code{spe} containing
-#'   the expression matrix. Default is \code{"logcounts"}.
-#' @param patch_column Character string specifying the column in
-#'   \code{colData(spe)} containing patch assignments. Default is
-#'   \code{"patch"}.
-#' @param method Differential-expression backend. `"hasty"` uses ordinary
-#'   least squares and `"limma"` uses empirical-Bayes moderated inference.
-#'   Default `"hasty"` for backward compatibility.
-#' @param pearson Logical; passed to \code{patchDE()} to control whether
-#'   the Pearson-based association method is used. Default is FALSE.
-#' @param tot Optional character string specifying the column in
-#'   \code{colData(spe)} containing per-cell total counts. If NULL, total
-#'   counts are handled by \code{patchDE()}. Default is NULL.
-#' @param resid_mse Logical; passed to \code{patchDE()} to control whether
-#'   residual mean squared errors are returned. Default is FALSE.
-#' @param return_residuals Logical; if TRUE, return an OLS residual matrix
-#'   aligned with the rows and columns of `y`. Default FALSE.
-#' @param verbose Show progress. Default TRUE.
-#' @param verbose Logical; passed to \code{patchDE()} to control verbosity.
-#'   Default is TRUE.
+#'   \code{colData(spe)} to use as predictors in \code{patchDE()}. Must be
+#'   non-empty.
+#' @param assay Character string naming the assay in \code{spe} that contains
+#'   the expression matrix. Default \code{"logcounts"}.
+#' @param patch_column Character string naming the column in
+#'   \code{colData(spe)} that contains patch assignments. Cells with \code{NA}
+#'   here are dropped by \code{patchDE()}. Default \code{"patch"}.
+#' @param method Differential-expression backend. \code{"hasty"} uses ordinary
+#'   least squares and \code{"limma"} uses empirical-Bayes moderated inference.
+#'   Default \code{"hasty"} for backward compatibility. The chosen backend is
+#'   used as a prefix in the assay names of the returned object.
+#' @param pearson Logical; if TRUE, expression values are converted to Pearson
+#'   residuals within each patch before the model is fitted. Requires
+#'   \code{tot}. When \code{method = "limma"} this also disables the
+#'   mean-variance trend. Default FALSE.
+#' @param tot Optional character string naming a column in
+#'   \code{colData(spe)} that holds per-cell total counts. Required when
+#'   \code{pearson = TRUE}; ignored otherwise. Default NULL.
+#' @param resid_mse Logical; passed to \code{patchDE()} to request per-gene
+#'   residual mean squared errors. Note that these are not currently carried
+#'   through into the returned \code{SingleCellExperiment}. Default FALSE.
+#' @param return_residuals Logical; if TRUE, the cells-by-genes residual matrix
+#'   produced by \code{patchDE()} is stored in the metadata of the returned
+#'   object. Default FALSE.
+#' @param verbose Logical; show a progress bar over patches. Default TRUE.
 #'
-#' @return A \code{SingleCellExperiment} object containing one column per
-#'   patch and one row per gene. The object contains one assay per predictor,
-#'   containing z-scores, and metadata entries containing the p-values,
-#'   estimates, and standard errors returned by \code{patchDE()}.
+#' @return A \code{SingleCellExperiment} with one row per gene (in the order of
+#'   \code{rownames(spe)}) and one column per patch. For every entry of
+#'   \code{predictor_cols} the object gains three assays, named
+#'   \code{<method>_<predictor>_pvals}, \code{<method>_<predictor>_ests}, and
+#'   \code{<method>_<predictor>_ses}, holding p-values, coefficient estimates,
+#'   and standard errors respectively. When \code{return_residuals = TRUE},
+#'   \code{metadata(x)$residuals[[method]][[predictor]]} holds the residual
+#'   matrix; the same matrix is stored under each predictor, since
+#'   \code{patchDE()} returns one residual matrix per fit rather than one per
+#'   predictor.
 #'
 #' @details
 #' The expression matrix is extracted from \code{assay(spe, assay)} and
 #' transposed from genes-by-cells to cells-by-genes before being passed to
 #' \code{patchDE()}. Predictor variables are taken from \code{colData(spe)},
-#' and patch assignments are taken from \code{colData(spe)[[patch_column]]}.
+#' and patch assignments from \code{colData(spe)[[patch_column]]}.
+#'
+#' The columns of the result depend on whether patch diagnostics are present.
+#' If \code{metadata(spe)$SpaceMosaic$patch_diagnostics} exists, it is used as
+#' the \code{colData} of the returned object and the columns are restricted to
+#' the patches it lists. Otherwise the result has one column per non-missing
+#' patch ID, sorted numerically, and a \code{colData} with a single
+#' \code{patch} column. Differential expression is run on every patch in
+#' \code{spe} regardless, so the diagnostics table subsets the output rather
+#' than reducing the work done.
+#'
 #'
 #' @seealso
 #' \code{\link{patchDE}},
 #' \code{\link{patchMetaAnalysis.spe}}
 #'
+#' @importFrom S4Vectors metadata DataFrame
 #' @export
+
 patchDE.spe <- function(
     spe,
     predictor_cols,
