@@ -35,7 +35,11 @@ Imports:
     Matrix,
     spatstat.geom,
     stats,
-    utils
+    utils,
+    S4Vectors,
+    SingleCellExperiment,
+    SpatialExperiment,
+    SummarizedExperiment
 Suggests:
     BiocStyle,
     circlize,
@@ -47,10 +51,7 @@ Suggests:
     MerfishData,
     patchwork,
     rmarkdown,
-    S4Vectors,
     shiny,
-    SpatialExperiment,
-    SummarizedExperiment,
     testthat (>= 3.0.0),
     tidyr,
     uwot,

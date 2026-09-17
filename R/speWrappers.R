@@ -28,7 +28,7 @@
 #' @examples 
 #' library(SpatialExperiment)
 #' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
-#' spe <- embedCellNeighborhoods.spe(spe, embedding = "PCA", ks = c(5, 50))
+#' spe <- embedCellNeighborhoods.spe(spe, embedding = "PCA", ks = c(5, 50), tissue = 'sample_id')
 #' reducedDim(spe, "Z")[1:3, 1:4]
 #' @export
 embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = NULL,
@@ -160,7 +160,7 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #' @examples
 #' library(SpatialExperiment)
 #' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
-#' spe <- embedCellNeighborhoods.spe(spe, embedding = "PCA", ks = c(5, 50))
+#' spe <- embedCellNeighborhoods.spe(spe, embedding = "PCA", ks = c(5, 50), tissue = 'sample_id')
 #' spe <- getPatches.spe(
 #'   spe = spe,
 #'   X = "distance",
