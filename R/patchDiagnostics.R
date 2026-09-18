@@ -4,7 +4,8 @@
 #' coverage, and final membership stability when iteration logs are available.
 #'
 #' @param xy Numeric matrix with cells in rows and x/y coordinates in columns.
-#' @param X Numeric vector or matrix with cells in rows.
+#' @param X Numeric vector or matrix with cells in rows. Must contain only
+#'   finite values.
 #' @param patches Final patch vector or the list returned by
 #'   `getPatches(log_iters = TRUE)`. `NA` denotes an unassigned cell. A vector
 #'   gives `NA` stability; a logged result compares the last two iterations and
@@ -19,13 +20,11 @@
 #'
 #' \describe{
 #'   \item{`n_cells`}{Number of cells assigned to the patch.}
-#'   \item{`x_sd` and `x_n`}{`x_sd` measures variation in a design variable
-#'     within the patch. Values near zero indicate little within-patch contrast
-#'     for estimating its effect. Larger values indicate more contrast, but the
-#'     magnitude depends on the scale of `X`. `x_n`
-#'     is the number of finite values used.
-#'     The SD is `NA` with fewer than two finite values or if the patch contains
-#'     `NaN` or infinite values.}
+#'   \item{`x_sd`}{Measures variation in a design variable within the patch.
+#'     Values near zero indicate little within-patch contrast for estimating
+#'     its effect. Larger values indicate more contrast, but the magnitude
+#'     depends on the scale of `X`. It is `NA` for patches with fewer than
+#'     two cells.}
 #'   \item{`strict_component_fraction`}{Fraction of patch cells in the largest
 #'     connected component at `strict_k`. One indicates full connectivity;
 #'     smaller values indicate greater fragmentation.}
@@ -56,10 +55,10 @@
 #'
 #' @return A list with three data frames:
 #'   \describe{
-#'     \item{patch_diagnostics}{One row per patch. A single `X` gives `x_sd`
-#'       and `x_n`; multiple columns give `x_sd_<name>` and `x_n_<name>`.
-#'       Other columns report patch size, strict connectivity, the first k with
-#'       full connectivity, and membership stability.}
+#'     \item{patch_diagnostics}{One row per patch. A single `X` gives `x_sd`;
+#'       multiple columns give `x_sd_<name>`. Other columns report patch size,
+#'       strict connectivity, the first k with full connectivity, and
+#'       membership stability.}
 #'     \item{assignment_summary}{Cell assignment counts and effective k values.}
 #'     \item{connectivity_curve}{`patch`, `k`, and `component_fraction`, where
 #'       the fraction is the largest connected component divided by patch size.}
@@ -180,10 +179,8 @@ getPatchDiagnostics <- function(xy, X, patches, k = 10L, strict_k = NULL) {
 
   if (ncol(X) == 1L) {
     x_sd_names <- "x_sd"
-    x_n_names <- "x_n"
   } else {
     x_sd_names <- paste0("x_sd_", colnames(X))
-    x_n_names <- paste0("x_n_", colnames(X))
   }
 
   if (length(patch_ids) == 0L) {
@@ -193,9 +190,6 @@ getPatchDiagnostics <- function(xy, X, patches, k = 10L, strict_k = NULL) {
       stringsAsFactors = FALSE
     )
     for (column in x_sd_names) patch_diagnostics[[column]] <- numeric()
-    for (column in x_n_names) {
-      patch_diagnostics[[column]] <- integer()
-    }
     patch_diagnostics$strict_component_fraction <- numeric()
     patch_diagnostics$min_connectivity_k <- integer()
     patch_diagnostics$membership_stability <- numeric()
@@ -232,16 +226,12 @@ getPatchDiagnostics <- function(xy, X, patches, k = 10L, strict_k = NULL) {
     cell_index <- cell_indices[[i]]
 
     x_sds <- numeric(ncol(X))
-    x_n <- integer(ncol(X))
     for (j in seq_len(ncol(X))) {
       values <- X[cell_index, j]
-      finite <- is.finite(values)
-      x_n[j] <- sum(finite)
-      if (any(is.nan(values) | is.infinite(values)) ||
-          x_n[j] < 2L) {
-        x_sds[j] <- NA_real_
+      x_sds[j] <- if (length(values) < 2L) {
+        NA_real_
       } else {
-        x_sds[j] <- stats::sd(values[finite])
+        stats::sd(values)
       }
     }
 
@@ -258,9 +248,6 @@ getPatchDiagnostics <- function(xy, X, patches, k = 10L, strict_k = NULL) {
       stringsAsFactors = FALSE
     )
     for (j in seq_along(x_sd_names)) row[[x_sd_names[j]]] <- x_sds[j]
-    for (j in seq_along(x_n_names)) {
-      row[[x_n_names[j]]] <- x_n[j]
-    }
     row$strict_component_fraction <-
       connectivity$strict_component_fraction[i]
     row$min_connectivity_k <- connectivity$min_connectivity_k[i]
@@ -304,6 +291,9 @@ getPatchDiagnostics <- function(xy, X, patches, k = 10L, strict_k = NULL) {
   }
   if (ncol(X) < 1L) {
     stop("X must contain at least one variable.", call. = FALSE)
+  }
+  if (any(!is.finite(X))) {
+    stop("X must contain only finite values.", call. = FALSE)
   }
   if (!is.null(xy_names) && !is.null(rownames(X)) &&
       !identical(rownames(X), xy_names)) {

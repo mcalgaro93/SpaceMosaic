@@ -135,18 +135,7 @@ rownames(polygon_data) <- NULL
 message("Parameter comparison:")
 print(assignment_summary, row.names = FALSE)
 
-# Save reusable numerical results without adding artifacts to the repository.
-# Set SPACEMOSAIC_PATCH_DIAGNOSTICS_DIR to choose a permanent output folder.
-output_dir <- Sys.getenv(
-  "SPACEMOSAIC_PATCH_DIAGNOSTICS_DIR",
-  unset = file.path(
-    Sys.getenv("TMPDIR", unset = tempdir()),
-    "SpaceMosaic_patch_diagnostics"
-  )
-)
-dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-
-results_path <- file.path(output_dir, "mouse_colon_patch_diagnostics.rds")
+# Save results.
 saveRDS(
   list(
     npatches_grid = npatches_grid,
@@ -159,7 +148,7 @@ saveRDS(
     connectivity_curve = connectivity_curve,
     polygon_data = polygon_data
   ),
-  results_path
+  "mouse_colon_patch_diagnostics.rds"
 )
 
 # 1. Spatial view: where the patches lie relative to immune-cell exposure.
@@ -420,7 +409,7 @@ distribution_tuning_page <- patchwork::wrap_plots(
   heights = c(2.1, 1)
 )
 
-plot_path <- file.path(output_dir, "mouse_colon_patch_diagnostics.pdf")
+plot_path <- "mouse_colon_patch_diagnostics.pdf"
 grDevices::pdf(plot_path, width = 13, height = 9, onefile = TRUE)
 print(spatial_plot)
 print(diagnostic_connectivity_page)
