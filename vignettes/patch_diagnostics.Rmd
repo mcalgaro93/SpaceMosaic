@@ -1,0 +1,544 @@
+---
+title: "Patch diagnostics"
+author: "Peiying Cai"
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+vignette: >
+  %\VignetteIndexEntry{Patch diagnostics}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6
+)
+library(SpaceMosaic)
+library(HDF5Array)
+library(SpatialExperiment)
+library(ggplot2)
+library(viridis)
+library(patchwork)
+```
+
+# Introduction
+
+`getPatchDiagnostics()` reports, for every patch produced by `getPatches()`, its size, its within-patch variation in the design variable `X`, whether its cells form one connected physical region, and (when iteration logs are available) the extent to which cell-to-patch assignments were still changing near the end of the algorithm.
+
+This vignette uses the mouse colon dataset to show:
+
+- how to run `getPatches()` and `getPatchDiagnostics()` together,
+- what each diagnostic column means and how to read it,
+- how to trace a diagnostic outlier (for example, a fragmented patch) back to its spatial location,
+- how the diagnostics change across alternative `getPatches()` settings, to help choose `npatches`, and
+- how to turn diagnostics into an investigative filtering step.
+
+Differential expression and meta-analysis on the retained patches are covered separately in `vignette("mouse_colon")`.
+
+# Setup: patches and diagnostics
+
+We reuse the "Immune Surveillance" scenario from `vignette("mouse_colon")`: *how does the transcriptional state of the colon epithelium change as a function of its proximity to immune cells?* Epithelial cells are the analysis unit, and `X` is the number of immune cells among each cell's 100 nearest neighbors.
+
+```{r data-load, fig.cap="Spatial distribution of epithelial and immune cells in the mouse colon sample. All other cell types are grey.", fig.align = 'center'}
+h5_path <- system.file("extdata", "mouse_colon", package = "SpaceMosaic")
+spe <- HDF5Array::loadHDF5SummarizedExperiment(h5_path)
+rownames(spatialCoords(spe)) <- spe$cell_id
+xy <- spatialCoords(spe)
+cell_types <- spe$tier1
+
+# Spatial distribution of epithelial and immune cells
+coords <- data.frame(xy, cell_types = as.character(cell_types))
+ggplot(coords, aes(x, y, color = ifelse(cell_types %in% c("Epithelial", "Immune"),
+                   cell_types, "Other"))) +
+  geom_point(size = 0.1) +
+  coord_fixed() +
+  theme_classic() +
+  scale_color_manual(values = c(
+    Epithelial = "blue",
+    Immune = "orange",
+    Other = "grey80")) +
+  labs(color = "Cell Type") +
+  guides(color = guide_legend(override.aes = list(size = 3)))
+```
+
+```{r embedding-and-predictor, class.source = "fold-show"}
+# Compute Cellular Neighborhoods (Z)
+Z <- embedCellNeighborhoods(
+  mat = reducedDim(spe, "PCA"),
+  xy = xy,
+  ks = c(5, 50)
+)
+
+# Global setup
+is_epithelial <- cell_types == "Epithelial"
+is_immune <- cell_types == "Immune"
+
+k_neighbors <- 100
+nn_indices <- FNN::get.knn(data = as.matrix(xy), k = k_neighbors)$nn.index
+X <- apply(nn_indices, 1, function(row) sum(is_immune[row]))
+use <- is_epithelial
+```
+
+```{r patches, class.source = "fold-show"}
+# Construct patches
+set.seed(123)
+patches_res <- getPatches(
+  xy = spatialCoords(spe)[use, ],
+  X = X[use],
+  Z = Z[use, ],
+  npatches = 100,
+  n_iters = 15,
+  log_iters = TRUE
+)
+patches <- patches_res$patch
+
+# Patch diagnostics
+diagnostics <- getPatchDiagnostics(
+  xy = as.matrix(spatialCoords(spe)[use, , drop = FALSE]),
+  X = X[use],
+  patches = patches_res
+)
+names(diagnostics)
+```
+
+`getPatchDiagnostics()` returns a list with three data frames:
+
+- `patch_diagnostics`: one row per patch, describing its size, within-patch variation in `X`, spatial connectivity, and membership stability (only when `getPatches(log_iters = TRUE)`).
+- `assignment_summary`: one row describing coverage over all analyzed cells, such as how many were assigned to a patch and the neighbor counts used to evaluate connectivity.
+- `connectivity_curve`: one row per patch per tested `k` neighbors, used below to show spatial fragmentation.
+
+<details id="connectivity-details">
+<summary>Details: how spatial connectivity is measured (click to expand)</summary>
+
+`getPatches()` checks contiguity on a symmetric 10-nearest-neighbor (10-NN)
+graph after every iteration and removes cells outside the largest connected
+component of each patch. The diagnostics apply the same graph definition over
+a range of neighborhood sizes: `strict_k = 5` by default for a deliberately
+local check, and values up to `k = 10` by default. For each value of `k`, the
+graph is first built among all cells supplied to `getPatchDiagnostics()`. An
+edge is then retained only when both cells have the same non-missing patch
+label. A chain of retained edges connects two cells, and a connected component
+is the complete set of patch cells reachable through such chains.
+
+The `largest-component fraction` is the size of a patch's biggest connected component divided by its total size (`n_cells`). It is 1 when the whole patch is one piece, and lower when part of it sits in smaller, disconnected pieces. It depends on `k`: a small `k` is a strict test, a larger `k` makes full connectivity easier to reach. `getPatchDiagnostics()` evaluates it across a range of `k` and reports it three ways: `connectivity_curve` (the fraction at every tested `k`), `strict_component_fraction` (the fraction at one small, fixed `strict_k`), and `min_connectivity_k` (the smallest `k` at which the fraction first reaches 1; `NA` if it never does, `0` for single-cell patches).
+
+</details>
+
+```{r patch-diagnostics-table, class.source = "fold-show"}
+patch_data <- diagnostics$patch_diagnostics
+head(patch_data)
+```
+
+`n_cells` is the number of cells assigned to the patch, and `x_sd` is the standard deviation of `X` within it. `strict_component_fraction` and `min_connectivity_k` summarize spatial connectivity (see [details above](#connectivity-details)). `membership_stability` is the fraction of the patch's final cells that were assigned to it in the preceding iteration. The rest of this vignette interprets each of these in turn.
+
+```{r assignment-summary-table, class.source = "fold-show"}
+diagnostics$assignment_summary
+```
+
+Here `r diagnostics$assignment_summary$n_unassigned_cells` of `r diagnostics$assignment_summary$n_analyzed_cells` epithelial cells (`r sprintf("%.1f%%", 100 * diagnostics$assignment_summary$fraction_unassigned)`) were not assigned to any of the `r diagnostics$assignment_summary$n_nonempty_patches` non-empty patches. Connectivity was evaluated up to `r diagnostics$assignment_summary$connectivity_k` neighbors (`connectivity_k`), using `r diagnostics$assignment_summary$strict_connectivity_k` neighbors (`strict_connectivity_k`) for the strict fraction below.
+
+```{r connectivity-curve-table, class.source = "fold-show"}
+head(diagnostics$connectivity_curve)
+```
+
+For each patch, this reports the largest connected component's size divided by the patch's total size, across every tested `k` from 1 up to `connectivity_k`. Here `k` is the number of spatial neighbors used to build the connectivity graph. Traced across `k`, these fractions form the connectivity curve.
+
+# Overview of diagnostics results
+
+We start with a scatter plot of cells per patch and the standard deviation of `X` within the patch, colored by membership stability and shaped by connectivity.
+
+```{r core-diagnostics, fig.width=8, fig.height=6, fig.cap="Cells per patch versus within-patch SD of the immune-neighbor predictor. Colored by membership stability; shape marks connectivity."}
+patch_data$connectivity <- factor(
+  ifelse(patch_data$strict_component_fraction == 1, "Connected", "Fragmented"),
+  levels = c("Connected", "Fragmented")
+)
+
+ggplot(patch_data, aes(x = n_cells, y = x_sd)) +
+  geom_point(aes(color = membership_stability, shape = connectivity), size = 2) +
+  scale_color_viridis_c(limits = c(0, 1), na.value = "grey70") +
+  scale_shape_manual(values = c(Connected = 16, Fragmented = 4)) +
+  theme_minimal() +
+  labs(
+    x = "Cells per patch",
+    y = "Within-patch SD of immune-neighbor count",
+    color = "Membership stability",
+    shape = "Connectivity"
+  )
+```
+
+Points near the bottom-left are small and nearly constant in `X`. Relative to
+larger patches with more variation, they generally provide less information
+for estimating a within-patch association with `X`. Dark, low-stability points
+identify patches whose membership was still changing in the final update.
+Crosses mark patches split into multiple spatial components at `strict_k`.
+
+There is no universal cutoff for any of these values. In general, a good patch has enough cells and enough within-patch variation in `X`, is not so large that it loses spatial resolution, and forms one connected piece.
+
+# Patch size and within-patch variation
+
+```{r patch-polys}
+# getPatchPolys() returns each patch's convex-hull vertices and joins the
+# supplied patch-level diagnostics to those vertices for plotting.
+
+poly_df <- getPatchPolys(
+  xy = spatialCoords(spe)[use, ],
+  patch = patches,
+  patch_data = patch_data
+)
+```
+
+```{r size-variation-map, fig.width=18, fig.height=6, fig.cap="Patch maps: predictor, within-patch variation, and size. Left: cells colored by X, with patch outlines. Middle: patches filled by within-patch SD of X. Right: patch size, highlighting the three smallest and three largest patches by n_cells."}
+sel <- as.data.frame(xy)[use, ]
+sel$patch <- patches
+sel$X <- X[use]
+
+# The three smallest and three largest patches by n_cells, highlighted below.
+patch_centroids <- aggregate(cbind(x, y) ~ patch, data = sel, FUN = mean)
+n_label <- 3
+size_order <- patch_data$patch[order(patch_data$n_cells)]
+extreme_patches <- c(head(size_order, n_label), tail(size_order, n_label))
+label_df <- merge(
+  patch_centroids[patch_centroids$patch %in% extreme_patches, ],
+  patch_data[patch_data$patch %in% extreme_patches, c("patch", "n_cells")],
+  by = "patch"
+)
+
+# Left: the predictor, with patch outlines
+p_predictor <- ggplot() +
+  geom_point(data = sel, aes(x, y, color = X), size = 0.4) +
+  geom_polygon(data = poly_df, aes(x, y, group = patch), fill = NA, color = "#39FF14", linewidth = 0.7) +
+  coord_fixed() + scale_color_viridis_c(option = "plasma") + theme_void() +
+  labs(color = "X (immune neighbors)", x = NULL, y = NULL)
+
+# Middle: within-patch variation
+p_variation <- ggplot() +
+  geom_polygon(data = poly_df, aes(x, y, group = patch, fill = x_sd), color = "black", linewidth = 0.7) +
+  coord_fixed() + scale_fill_gradient(low = "white", high = "yellow") + theme_void() +
+  labs(fill = "x_sd", x = NULL, y = NULL)
+
+# Right: patch size
+p_size <- ggplot() +
+  geom_polygon(data = poly_df, aes(x, y, group = patch), fill = NA, color = "grey80", linewidth = 0.2) +
+  geom_polygon(
+    data = subset(poly_df, patch %in% extreme_patches),
+    aes(x, y, group = patch, fill = n_cells), color = "black", linewidth = 0.6
+  ) +
+  geom_text(data = label_df, aes(x, y, label = n_cells), fontface = "bold", size = 3) +
+  coord_fixed() + scale_fill_gradient(low = "white", high = "yellow") + theme_void() +
+  labs(fill = "n_cells", x = NULL, y = NULL)
+
+p_predictor + p_variation + p_size
+```
+
+The middle panel shows where the immune-neighbor predictor varies within a
+patch, whereas the right panel locates the most extreme patch sizes. These
+maps should be read descriptively: a low `x_sd` patch may be unsuitable for a
+regression on `X`, and an unusually small or large patch may merit inspection,
+but neither feature alone establishes that a patch is invalid.
+
+# Connectivity and stability
+
+## Spatial connectivity
+
+This section examines the connectivity output from `getPatchDiagnostics()`
+(see the [details above](#connectivity-details)).
+
+```{r connectivity-curve-setup, class.source = "fold-show"}
+# Extract strict_k, the fixed neighbor count used for strict_component_fraction calculation
+strict_k <- diagnostics$assignment_summary$strict_connectivity_k
+
+# Attach that connected/fragmented label
+connectivity_curve <- diagnostics$connectivity_curve
+connectivity_curve$connectivity <- patch_data$connectivity[
+  match(connectivity_curve$patch, patch_data$patch)]
+table(patch_data$connectivity)
+
+# Pick the patch with the lowest strict_component_fraction
+frag_patch <- patch_data$patch[which.min(patch_data$strict_component_fraction)]
+```
+
+With `strict_k` = `r strict_k`, `r sum(patch_data$connectivity == "Fragmented")` of the `r nrow(patch_data)` patches are flagged as fragmented.
+
+```{r connectivity-curve-plot, fig.width=7, fig.height=4.5, fig.cap="Connectivity curves for every patch. Colored by whether the patch is fragmented at strict_k; the dashed line marks strict_k, and the black line is the worked example discussed below."}
+ggplot(connectivity_curve, aes(k, component_fraction, group = patch)) +
+  geom_line(aes(color = connectivity), alpha = 0.5, linewidth = 0.3) +
+  geom_line(data = subset(connectivity_curve, patch == frag_patch), color = "black", linewidth = 1.2) +
+  geom_vline(xintercept = strict_k, linetype = "dashed", color = "grey30") +
+  scale_color_manual(values = c(Connected = "grey80", Fragmented = "#D55E00")) +
+  scale_x_continuous(breaks = seq_len(max(connectivity_curve$k))) +
+  theme_classic() +
+  labs(x = "Number of spatial neighbors (k)", y = "Largest-component fraction", color = "Connectivity")
+```
+
+The black curve, which has the lowest `strict_component_fraction`, reaches 1
+at `k = ` `r patch_data$min_connectivity_k[patch_data$patch == frag_patch]`. All patches reach 1
+by the default maximum of `k = 10`, as expected after the final 10-NN
+contiguity check in `getPatches()`.
+
+```{r fragmented-patch-example, class.source = "fold-show"}
+patch_data[patch_data$patch == frag_patch, c("patch", "n_cells", "strict_component_fraction", "min_connectivity_k")]
+```
+
+Patch `r frag_patch` has the lowest `strict_component_fraction`, and close to
+half of its `r patch_data$n_cells[patch_data$patch == frag_patch]` cells fall
+outside the largest component at `strict_k` = `r strict_k`. In the zoomed map,
+the cells occupy one local region but form two groups under the
+`r strict_k`-NN graph. Its `min_connectivity_k` of
+`r patch_data$min_connectivity_k[patch_data$patch == frag_patch]` means that the
+groups are nevertheless close enough to become connected when each cell can
+link to one additional neighbor. In this sense, the split is local and resolves
+after only a small increase in `k`.
+
+```{r fragmented-patch-zoom, fig.width=11, fig.height=5, fig.cap="Zooming in on the split patch. Left: epithelial cells colored by X, with the highlighted patch outlined in green. Right: the same patch zoomed in, with its cells in orange and all other cells in grey."}
+cell_idx <- !is.na(sel$patch) & sel$patch == frag_patch
+poly_frag <- subset(poly_df, patch == frag_patch)
+bbox <- apply(sel[cell_idx, c("x", "y")], 2, range)
+pad <- 0.15 * (bbox[2, ] - bbox[1, ])
+
+p_context <- ggplot() +
+  geom_point(data = sel, aes(x, y, color = X), size = 0.1) +
+  geom_polygon(data = poly_frag, aes(x, y, group = patch), fill = NA, color = "#39FF14", linewidth = 0.8) +
+  coord_fixed() + scale_color_viridis_c(option = "plasma") + theme_minimal() + labs(x = NULL, y = NULL)
+
+p_zoom <- ggplot() +
+  geom_point(data = as.data.frame(xy), aes(x, y), color = "grey85", size = 1) +
+  geom_point(data = sel[cell_idx, ], aes(x, y), color = "#D55E00", size = 1) +
+  geom_polygon(data = poly_frag, aes(x, y, group = patch), fill = NA, color = "black", linewidth = 0.6) +
+  coord_fixed(xlim = bbox[, "x"] + c(-1, 1) * pad["x"], ylim = bbox[, "y"] + c(-1, 1) * pad["y"]) +
+  theme_minimal() + labs(x = NULL, y = NULL)
+
+p_context + p_zoom
+```
+
+In the zoomed panel, orange points are epithelial cells assigned to the selected
+patch. Grey points are all other cells in the sample. They may be epithelial
+cells assigned to another patch or left unassigned, as well as non-epithelial
+cells.
+
+If a patch has a low `strict_component_fraction` and a comparatively large
+`min_connectivity_k`, its pieces remain separate under a local graph and warrant
+closer spatial inspection. For the default output of `getPatches()`, however,
+the final orphan-removal step already retains only the largest component at
+`k = 10`. The default diagnostics should therefore reach 1 by `k = 10`.
+
+```{r spatial-connectivity-map, fig.width=8, fig.height=6, fig.cap="Spatial map of patch connectivity. Epithelial cells are grey; patch outlines are colored by strict_component_fraction."}
+ggplot() +
+  geom_point(data = as.data.frame(xy)[use, ], aes(x, y), color = "grey85", size = 0.1) +
+  geom_polygon(data = poly_df, aes(x, y, group = patch, color = strict_component_fraction), fill = NA, linewidth = 0.5) +
+  coord_fixed() + scale_color_viridis_c(limits = c(0, 1)) + theme_minimal() +
+  labs(color = "strict_component_fraction", x = NULL, y = NULL)
+```
+
+
+## Membership stability
+
+`membership_stability` is the fraction of a patch's final cells that were assigned to the same patch in the preceding iteration; it requires `getPatches(log_iters = TRUE)` and is `NA` otherwise. Values near 1 indicate little membership change in the final update. Lower values indicate that membership was still being reshuffled.
+
+# Comparing different numbers of patches
+
+`npatches` controls an important trade-off. Fewer requested patches generally
+produce larger spatial units, whereas more requested patches generally produce
+smaller units with finer spatial resolution. The effects on within-patch
+variation, connectivity, and assignment coverage are data-dependent. We compare
+three settings on the same data, predictor, and embedding, using fewer
+iterations to keep this comparison quick.
+
+```{r grid-setup, class.source = "fold-show"}
+xy_use <- spatialCoords(spe)[use, , drop = FALSE]
+X_use <- X[use]
+Z_use <- Z[use, , drop = FALSE]
+
+npatches_grid <- c(50L, 100L, 150L)
+
+# Run getPatches() + getPatchDiagnostics() once per npatches setting
+fits <- vector("list", length(npatches_grid))
+diags <- vector("list", length(npatches_grid))
+names(fits) <- names(diags) <- as.character(npatches_grid)
+
+for (i in seq_along(npatches_grid)) {
+  set.seed(123)
+  fits[[i]] <- getPatches(
+    xy = xy_use, X = X_use, Z = Z_use,
+    npatches = npatches_grid[i], n_iters = 5, log_iters = TRUE
+  )
+  diags[[i]] <- getPatchDiagnostics(xy = xy_use, X = X_use, patches = fits[[i]])
+}
+
+# Tag npatches
+add_npatches <- function(df, npatches) {df$npatches <- npatches; df}
+
+# Stack results
+stack_tables <- function(one_result_per_setting) {
+  do.call(rbind, Map(add_npatches, one_result_per_setting, npatches_grid))
+}
+
+patch_data_grid <- stack_tables(lapply(diags, `[[`, "patch_diagnostics"))
+connectivity_curve_grid <- stack_tables(lapply(diags, `[[`, "connectivity_curve"))
+assignment_summary_grid <- stack_tables(lapply(diags, `[[`, "assignment_summary"))
+poly_df_grid <- stack_tables(Map(
+  function(fit, diag) getPatchPolys(xy = xy_use, patch = fit$patch, patch_data = diag$patch_diagnostics),
+  fits, diags
+))
+```
+
+The spatial view shows how patch size decreases as `npatches` increases:
+
+```{r grid-spatial, fig.width=13, fig.height=5, fig.cap="Patch outlines across npatches settings. Epithelial cells are colored by the immune-neighbor predictor; green lines are patch outlines."}
+ggplot() +
+  geom_point(data = data.frame(xy_use, immune_neighbors = X_use), aes(x, y, color = immune_neighbors), size = 0.05) +
+  geom_polygon(data = poly_df_grid, aes(x, y, group = patch), fill = NA, color = "#39FF14", linewidth = 0.5) +
+  facet_wrap(~npatches, nrow = 1) + coord_fixed() +
+  scale_color_viridis(option = "plasma") + theme_minimal() +
+  labs(color = "Immune cells\namong 100-NN", x = NULL, y = NULL)
+```
+
+As `npatches` increases, patches visibly shrink and multiply. Whether the gain
+in spatial resolution is worth the accompanying change in information per
+patch depends on how the diagnostics below respond.
+
+Density plots compare the size/variation trade-off across settings:
+
+```{r grid-distributions, fig.width=10, fig.height=4, fig.cap="Distributions across different numbers of patches. Color and line type denote the requested number of patches; panels show cells per patch, membership stability, and the SD of the immune-neighbor predictor."}
+metrics <- c(n_cells = "Cells per patch", x_sd = "SD of immune-neighbor count", membership_stability = "Membership stability")
+distribution_data <- do.call(rbind, Map(function(col, label) {
+  data.frame(npatches = patch_data_grid$npatches, metric = label, value = patch_data_grid[[col]])
+}, names(metrics), metrics))
+distribution_data$npatches <- factor(distribution_data$npatches, levels = npatches_grid)
+
+ggplot(distribution_data, aes(value, color = npatches, linetype = npatches)) +
+  geom_density(linewidth = 1) +
+  facet_wrap(~metric, scales = "free", ncol = 3) +
+  theme_minimal() +
+  labs(x = NULL, y = "Density", color = "npatches")
+```
+
+The size distributions shift as expected: requesting fewer patches produces
+larger patches. The `x_sd` and stability panels show whether that change also
+alters within-patch predictor contrast or final-iteration membership for this
+dataset. Compare the full distributions rather than relying on a single patch
+or a universal cutoff.
+
+The same trade-offs can also be viewed patch by patch:
+
+```{r grid-diagnostics, fig.width=11, fig.height=5, fig.cap="Patch diagnostics across different numbers of patches. Cells per patch versus within-patch SD of the immune-neighbor predictor; color shows membership stability and shape shows connectivity."}
+patch_data_grid$connectivity <- factor(
+  ifelse(patch_data_grid$strict_component_fraction == 1, "Connected", "Fragmented"),
+  levels = c("Connected", "Fragmented")
+)
+ggplot(patch_data_grid, aes(n_cells, x_sd)) +
+  geom_point(aes(color = membership_stability, shape = connectivity), size = 2) +
+  facet_wrap(~npatches, scales = "free_x") +
+  scale_color_viridis_c(limits = c(0, 1), na.value = "grey70") +
+  scale_shape_manual(values = c(Connected = 16, Fragmented = 4)) +
+  theme_minimal() +
+  labs(x = "Cells per patch", y = "Within-patch SD of immune-neighbor count",
+       color = "Membership stability", shape = "Connectivity")
+```
+
+
+Connectivity curves, faceted the same way, compare local connectivity across settings:
+
+```{r grid-connectivity, fig.width=11, fig.height=4, fig.cap="Connectivity curves across npatches settings. Grey lines are individual patches; the blue line is the median."}
+ggplot(connectivity_curve_grid, aes(k, component_fraction, group = patch)) +
+  geom_line(color = "grey60", alpha = 0.25, linewidth = 0.3) +
+  stat_summary(aes(group = 1), fun = median, geom = "line", color = "#0072B2", linewidth = 1.1) +
+  geom_vline(xintercept = strict_k, linetype = "dashed", color = "grey30") +
+  facet_wrap(~npatches, nrow = 1) +
+  theme_classic() +
+  labs(x = "Number of spatial neighbors (k)", y = "Largest-component fraction")
+```
+
+A curve that rises more slowly or shifts to the right needs a larger `k` to
+reach full connectivity; at any fixed `k`, a lower curve means that a smaller
+fraction of the patch belongs to its largest connected component. The opposite
+pattern, an earlier rise toward 1, indicates stronger local connectivity.
+
+Interpret this plot alongside assignment coverage:
+
+```{r grid-assignment-summary, class.source = "fold-show"}
+assignment_summary_grid[, c(
+  "npatches", "n_nonempty_patches", "fraction_assigned",
+  "fraction_unassigned"
+)]
+```
+
+The k-NN graph is built among all epithelial cells supplied to the diagnostic,
+before edges are restricted to cells with the same patch label. Consequently,
+some of a cell's `k` nearest neighbors may belong to another patch or may be
+unassigned; neither type contributes a same-patch edge. If the fraction or
+spatial distribution of unassigned cells changes with `npatches`, the
+connectivity curves can change partly for that reason. This is why the curves,
+assignment coverage, and spatial maps should be considered together.
+
+In this run, the unassigned fractions are all close to 0.4%, whereas the median
+curve reaches 1 earliest for `npatches = 150`; the observed median difference
+therefore does not indicate worse connectivity at the largest setting.
+
+# Example of filtering
+
+After investigating the diagnostics above, we can use dataset-specific
+thresholds and apply them reproducibly. The values below are illustrative choices
+for this example.
+
+```{r investigative-filtering, class.source = "fold-show"}
+# Dataset-specific thresholds for this example.
+min_cells <- 50
+min_x_sd <- 0.5
+min_stability <- 0.7
+min_strict_connectivity <- 0.9
+
+keep <- with(
+  patch_data,
+  patch[
+    n_cells >= min_cells &
+      is.finite(x_sd) & x_sd >= min_x_sd &
+      !is.na(membership_stability) & membership_stability >= min_stability &
+      strict_component_fraction >= min_strict_connectivity
+  ]
+)
+patches_filtered <- patches
+patches_filtered[!is.element(patches_filtered, keep)] <- NA
+c(patches_retained = length(keep), cells_retained = sum(!is.na(patches_filtered)))
+```
+
+# Summary
+
+`getPatchDiagnostics()` summarizes overall assignment coverage and evaluates
+each patch's size, within-patch variation, connectivity, and membership
+stability. The connectivity curve shows how spatial connectivity changes as
+the neighbor graph is widened.
+
+A practical screening workflow is therefore:
+
+1. check `assignment_summary` for unexpectedly low coverage;
+2. inspect `n_cells` and `x_sd` together, because a patch needs both enough
+   observations and enough predictor variation for a useful within-patch model;
+3. use `strict_component_fraction` to flag candidates, then distinguish a local
+   split from a persistent one with `min_connectivity_k`, the full
+   `connectivity_curve`, and a spatial map;
+4. check `membership_stability`; when it is low, consider
+   whether more iterations or different construction settings are warranted;
+5. compare plausible settings such as `npatches`, then document any thresholds
+   and retain the code that applies them.
+
+These diagnostics assess patch construction; they do not by themselves decide
+which patches are biologically informative. Final inclusion may also depend on
+the expression abundance and variability,
+residual diagnostics, tissue anatomy, and the biological question. The
+`mouse_colon` vignette demonstrates how retained patches feed into
+patch-specific differential expression, residual spatial checks, and
+meta-analysis.
+
+# Session info
+
+```{r session-info}
+sessionInfo()
+```
