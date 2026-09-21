@@ -295,11 +295,7 @@ getPatches.spe <- function(spe, X, npatches,
 #' in a \code{SpatialExperiment} object and returns the raw results alongside
 #' the object they were computed from.
 #'
-#' @param spe A \code{SpatialExperiment} object. Must contain the requested
-#'   expression assay and patch assignments in \code{colData(spe)}.
-#' @param predictor_cols Character vector of column names in
-#'   \code{colData(spe)} to use as predictors in \code{patchDE()}. Must be
-#'   non-empty.
+
 #' @param assay Character string naming the assay in \code{spe} that contains
 #'   the expression matrix. Default \code{"logcounts"}.
 #' @param patch_column Character string naming the column in
@@ -319,8 +315,12 @@ getPatches.spe <- function(spe, X, npatches,
 #'   residual mean squared errors, which are carried through in the \code{de}
 #'   element. Default FALSE.
 #' @param return_residuals Logical; if TRUE, the cells-by-genes residual matrix
-#'   produced by \code{patchDE()} is returned as its own list element.
-#'   Default FALSE.
+#'   produced by \code{patchDE()} is transposed to genes-by-cells and stored
+#'   as assay \code{residual_assay} in the returned \code{spe}. Default FALSE.
+#' @param residual_assay Character string naming the assay under which
+#'   residuals are stored in \code{spe} when \code{return_residuals = TRUE}.
+#'   Matches the default \code{assay_name} expected by
+#'   \code{\link{moranTest.spe}}. Default \code{"residuals"}.
 #' @param verbose Logical; show a progress bar over patches. Default TRUE.
 #'
 #' @return A named list:
@@ -330,13 +330,10 @@ getPatches.spe <- function(spe, X, npatches,
 #'       each holding the \code{pvals}, \code{ests} and \code{ses} matrices
 #'       (genes by patches), plus anything else the backend produced, such as
 #'       residual mean squared errors when \code{resid_mse = TRUE}.}
-#'     \item{\code{residuals}}{The cells-by-genes residual matrix from
-#'       \code{patchDE()}. Present only when \code{return_residuals = TRUE}.
-#'       \code{patchDE()} returns one residual matrix per fit, not one per
-#'       predictor, so this is a single matrix rather than a per-predictor
-#'       list.}
-#'     \item{\code{spe}}{The input \code{SpatialExperiment}, returned
-#'       unchanged.}
+#'     \item{\code{spe}}{The input \code{SpatialExperiment}. When
+#'       \code{return_residuals = TRUE}, this includes a new
+#'       \code{residual_assay} assay (genes by cells) holding the residual
+#'       matrix from \code{patchDE()}; otherwise it is returned unchanged.}
 #'   }
 #'
 #' @details
@@ -349,9 +346,14 @@ getPatches.spe <- function(spe, X, npatches,
 #' and the patch columns of the returned matrices follow the order
 #' \code{patchDE()} produced.
 #'
+#' \code{patchDE()} returns one residual matrix per fit, not one per
+#' predictor, so cells with a missing patch assignment (and therefore no fit)
+#' get \code{NA} residuals in \code{residual_assay}.
+#'
 #' @seealso
 #' \code{\link{patchDE}},
-#' \code{\link{patchMetaAnalysis.spe}}
+#' \code{\link{patchMetaAnalysis.spe}},
+#' \code{\link{moranTest.spe}}
 #'
 #' @export
 
@@ -366,6 +368,7 @@ patchDE.spe <- function(
     tot = NULL,
     resid_mse = FALSE,
     return_residuals = FALSE,
+    residual_assay = "residuals",
     verbose = TRUE
 ) {
 
@@ -435,20 +438,16 @@ patchDE.spe <- function(
 
     # patchDE() wraps its output when residuals are requested
     if (return_residuals) {
-        out <- list(
-            de = de_res$de,
-            residuals = de_res$residuals
-        )
+        SummarizedExperiment::assay(spe, residual_assay) <- t(de_res$residuals)
+        out <- list(de = de_res$de)
     } else {
-        out <- list(
-            de = de_res
-        )
+        out <- list(de = de_res)
     }
 
     out$spe <- spe
 
     out
-    
+
 }#' Meta-analyse patch-level differential expression across an embedding
 #'
 #' Takes the output of \code{patchDE.spe()}, derives patch-level attributes
@@ -647,10 +646,32 @@ patchMetaAnalysis.spe <- function(
 #' @param spe A \code{SpatialExperiment} object.
 #' @param assay_name Character; name of the assay in \code{spe} containing
 #'   the values to test (e.g. Pearson residuals). Default \code{"residuals"}.
+#' @param patch_column Name of the column in `colData(spe)` where patch assignments are
+#'   stored. Default `"patch"`. An existing column of the same name is
+#'   overwritten.
+#' @param k Number of nearest neighbors used to construct the graph. If `k` is
+#'   not smaller than the number of observations, it is reduced to `n - 1` with
+#'   a warning. Default 10.
+#' @param n_permutations Number of random permutations used to calculate the
+#'   empirical p-value. Default 999.
+#' @param alternative Direction of the alternative hypothesis: `"greater"`
+#'   tests for positive spatial autocorrelation, `"less"` for negative spatial
+#'   autocorrelation, and `"two.sided"` for either direction.
+#' @param p_adjust_method Method passed to [stats::p.adjust()] for multiple-test
+#'   correction. Use `"none"` to leave p-values unadjusted. Default `"BH"`.
+#' @param adjustment_scope Scope of the multiple-test correction: `"global"`
+#'   across every gene-patch test, `"patch"` separately within each patch, or
+#'   `"gene"` separately within each gene. Default `"global"`.
+#' @return A data frame with one row per gene and patch. It contains patch and
+#'   gene identifiers, number of cells, observed and expected Moran's I, raw and
+#'   adjusted empirical p-values, graph and permutation settings, and `status`.
+#'   A status of `"ok"` indicates a completed test; non-testable inputs such as
+#'   constant or non-finite residuals return missing statistics with an
+#'   explanatory status rather than stopping the remaining tests.
 #'
 #' @export
 
-moranTest.spe <- function(spe, assay_name = 'residuals' , patch = NULL, k = 10L,
+moranTest.spe <- function(spe, assay_name = 'residuals' , patch_column = "patch", k = 10L,
                       n_permutations = 999L,
                       alternative = c("greater", "less", "two.sided"),
                       p_adjust_method = "BH",
@@ -673,7 +694,7 @@ moranTest.spe <- function(spe, assay_name = 'residuals' , patch = NULL, k = 10L,
 
                   res <- moranTest( residuals = t(assay(spe,assay_name)),
                                           xy = spatialCoords(spe),
-                                          patch = patch,
+                                          patch = colData(spe)[[patch_column]],
                                           k = k,
                                           n_permutations = n_permutations,
                                           alternative = alternative,

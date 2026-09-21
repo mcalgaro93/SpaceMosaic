@@ -42,7 +42,18 @@ Throughout the template, the input is a `SpatialExperiment` object with the foll
 - expression: assay **genes x cells**;
 - $X$: column or columns in colData **cells x predictors**;
 - $Z$: an embedding stored in reducedDims **cells x neighborhood features**; and
-- $W$: an embedding stored in reducedDims **patches x patch features**.
+- $W$: patch-level attributes derived from $Z$ by `patchMetaAnalysis.spe()`
+  (**patches x patch features**), returned alongside the meta-analysis results
+  rather than stored back on `spe`.
+
+The `.spe`-suffixed functions used below (`embedCellNeighborhoods.spe()`,
+`getPatches.spe()`, `patchDE.spe()`, `patchMetaAnalysis.spe()`) are
+`SpatialExperiment` wrappers: they read $X$, $Z$, expression, and patch
+assignments directly from `spe`, and attach their results back onto it (or,
+for `patchDE.spe()`/`patchMetaAnalysis.spe()`, return them alongside `spe`,
+which `patchDE.spe()` also gains a `"residuals"` assay on when
+`return_residuals = TRUE`), so intermediate matrices rarely need to be built
+by hand.
 
 # 1. Data and analysis question
 
@@ -219,18 +230,20 @@ plotCoords(spe,annotate = 'distance_use',in_tissue=NULL)  +
 
 # 4. Within-patch differential expression
 
-`patchDE()` expects cells in rows and genes in columns. Therefore a conventional
-genes-by-cells assay must be transposed. The rows of `df`, `y`, and `patch` must
-refer to the same response cells in the same order.
+`patchDE.spe()` wraps `patchDE()` for a `SpatialExperiment`: it takes the
+assay named by `assay` (genes x cells), transposes it internally, builds the
+predictor data frame from `predictor_cols` in `colData(spe)`, and reads patch
+assignments from `colData(spe)[[patch_column]]`; cells with a missing patch
+assignment are dropped automatically.
 
 For raw counts, `pearson = TRUE` computes Pearson residuals separately within
-each patch and requires total counts per cell. Alternatively, transform or
-normalize expression before calling `patchDE()` and include relevant technical
-covariates in `df`. Do not use both strategies automatically; choose a model
+each patch and requires `tot` to name a column in `colData(spe)` holding
+per-cell total counts. Alternatively, transform or normalize expression
+before calling `patchDE.spe()` and include relevant technical covariates in
+`predictor_cols`. Do not use both strategies at once; choose a model
 appropriate for the assay and question.
 
 ```{r patch-de, eval=FALSE}
-
 de_result <- patchDE.spe(
   spe = spe_use,
   predictor_cols = 'distance',
@@ -239,7 +252,19 @@ de_result <- patchDE.spe(
   tot = 'total',
   return_residuals = TRUE
 )
+```
 
+# 5. Borrowing information across patches ($W$)
+
+`patchMetaAnalysis.spe()` derives patch-level attributes ($W$) by averaging
+the embedding named by `embedding_name` (default `"Z"`, taken from
+`reducedDims(spe)`) within each patch, then borrows information across
+patches with similar $W$ by running `patchMetaAnalysis()` on the per-patch
+fits produced by `patchDE.spe()`. Set `summarize_subgroups = TRUE` to also
+summarize effects within subgroups of patches, optionally annotated with
+`cellmeta_cols` taken from `colData(spe)`.
+
+```{r patch-meta, eval=FALSE}
 meta_result <- patchMetaAnalysis.spe(
   patchDE_result = de_result,
   summarize_subgroups = TRUE,
@@ -257,7 +282,7 @@ posterior p-values, subgroup membership, and biological relevance should also
 be considered; very small p-values alone are not sufficient.
 
 ```{r result-summary, eval=FALSE}
-z_score <- meta_result$de$distance$ests/ meta_result$de$distance$ses
+z_score <- meta_result$meta$distance$ests/ meta_result$meta$distance$ses
 
 gene_summary <- data.frame(
   gene = rownames(z_score),
@@ -277,13 +302,19 @@ heatmap(
 ```
 
 
+`return_residuals = TRUE` stored the within-patch residuals as a
+`"residuals"` assay on `de_result$spe`, which `moranTest.spe()` reads
+directly, so gene selection is done by subsetting `de_result$spe` rather than
+indexing a separate matrix.
+
 ```{r}
 
-moran_test <- moranTest(de_result$residuals[,top_genes], 
-spatialCoords(spe_use),
-k= 20,
- patch = colData(spe_use)$patch,
- n_permutations = 20)
+moran_test <- moranTest.spe(
+  de_result$spe[top_genes, ],
+  k = 20,
+  patch = colData(spe_use)$patch,
+  n_permutations = 20
+)
 
 head(moran_test[order(moran_test$observed, decreasing = TRUE),])
 ```

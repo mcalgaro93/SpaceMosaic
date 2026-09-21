@@ -14,17 +14,11 @@ patchDE.spe(
   tot = NULL,
   resid_mse = FALSE,
   return_residuals = FALSE,
+  residual_assay = "residuals",
   verbose = TRUE
 )
 }
 \arguments{
-\item{spe}{A \code{SpatialExperiment} object. Must contain the requested
-expression assay and patch assignments in \code{colData(spe)}.}
-
-\item{predictor_cols}{Character vector of column names in
-\code{colData(spe)} to use as predictors in \code{patchDE()}. Must be
-non-empty.}
-
 \item{assay}{Character string naming the assay in \code{spe} that contains
 the expression matrix. Default \code{"logcounts"}.}
 
@@ -34,8 +28,7 @@ here are dropped by \code{patchDE()}. Default \code{"patch"}.}
 
 \item{method}{Differential-expression backend. \code{"hasty"} uses ordinary
 least squares and \code{"limma"} uses empirical-Bayes moderated inference.
-Default \code{"hasty"} for backward compatibility. The chosen backend is
-used as a prefix in the assay names of the returned object.}
+Default \code{"hasty"} for backward compatibility.}
 
 \item{pearson}{Logical; if TRUE, expression values are converted to Pearson
 residuals within each patch before the model is fitted. Requires
@@ -47,31 +40,38 @@ mean-variance trend. Default FALSE.}
 \code{pearson = TRUE}; ignored otherwise. Default NULL.}
 
 \item{resid_mse}{Logical; passed to \code{patchDE()} to request per-gene
-residual mean squared errors. Note that these are not currently carried
-through into the returned \code{SingleCellExperiment}. Default FALSE.}
+residual mean squared errors, which are carried through in the \code{de}
+element. Default FALSE.}
 
 \item{return_residuals}{Logical; if TRUE, the cells-by-genes residual matrix
-produced by \code{patchDE()} is stored in the metadata of the returned
-object. Default FALSE.}
+produced by \code{patchDE()} is transposed to genes-by-cells and stored
+as assay \code{residual_assay} in the returned \code{spe}. Default FALSE.}
+
+\item{residual_assay}{Character string naming the assay under which
+residuals are stored in \code{spe} when \code{return_residuals = TRUE}.
+Matches the default \code{assay_name} expected by
+\code{\link{moranTest.spe}}. Default \code{"residuals"}.}
 
 \item{verbose}{Logical; show a progress bar over patches. Default TRUE.}
 }
 \value{
-A \code{SingleCellExperiment} with one row per gene (in the order of
-\code{rownames(spe)}) and one column per patch. For every entry of
-\code{predictor_cols} the object gains three assays, named
-\code{<method>_<predictor>_pvals}, \code{<method>_<predictor>_ests}, and
-\code{<method>_<predictor>_ses}, holding p-values, coefficient estimates,
-and standard errors respectively. When \code{return_residuals = TRUE},
-\code{metadata(x)$residuals[[method]][[predictor]]} holds the residual
-matrix; the same matrix is stored under each predictor, since
-\code{patchDE()} returns one residual matrix per fit rather than one per
-predictor.
+A named list:
+\describe{
+\item{\code{de}}{The differential-expression results exactly as returned
+by \code{patchDE()}: one element per entry of \code{predictor_cols},
+each holding the \code{pvals}, \code{ests} and \code{ses} matrices
+(genes by patches), plus anything else the backend produced, such as
+residual mean squared errors when \code{resid_mse = TRUE}.}
+\item{\code{spe}}{The input \code{SpatialExperiment}. When
+\code{return_residuals = TRUE}, this includes a new
+\code{residual_assay} assay (genes by cells) holding the residual
+matrix from \code{patchDE()}; otherwise it is returned unchanged.}
+}
 }
 \description{
 Runs \code{patchDE()} on the expression data and patch assignments stored
-in a \code{SpatialExperiment} object and packages the results into a
-\code{SingleCellExperiment}.
+in a \code{SpatialExperiment} object and returns the raw results alongside
+the object they were computed from.
 }
 \details{
 The expression matrix is extracted from \code{assay(spe, assay)} and
@@ -79,16 +79,16 @@ transposed from genes-by-cells to cells-by-genes before being passed to
 \code{patchDE()}. Predictor variables are taken from \code{colData(spe)},
 and patch assignments from \code{colData(spe)[[patch_column]]}.
 
-The columns of the result depend on whether patch diagnostics are present.
-If \code{metadata(spe)$SpaceMosaic$patch_diagnostics} exists, it is used as
-the \code{colData} of the returned object and the columns are restricted to
-the patches it lists. Otherwise the result has one column per non-missing
-patch ID, sorted numerically, and a \code{colData} with a single
-\code{patch} column. Differential expression is run on every patch in
-\code{spe} regardless, so the diagnostics table subsets the output rather
-than reducing the work done.
+Differential expression is run on every non-missing patch in \code{spe},
+and the patch columns of the returned matrices follow the order
+\code{patchDE()} produced.
+
+\code{patchDE()} returns one residual matrix per fit, not one per
+predictor, so cells with a missing patch assignment (and therefore no fit)
+get \code{NA} residuals in \code{residual_assay}.
 }
 \seealso{
 \code{\link{patchDE}},
-\code{\link{patchMetaAnalysis.spe}}
+\code{\link{patchMetaAnalysis.spe}},
+\code{\link{moranTest.spe}}
 }
