@@ -123,7 +123,7 @@ spe_use <- getPatches.spe(
   Z = 'Z',
   npatches = 100,       # CHANGE for tissue area and response-cell abundance
   alpha = 0.5,          # weight of the Z-coherence penalty
-  beta = 1,   # weight of within-patch X diversity
+  beta = 3,   # weight of within-patch X diversity
   hunger_weight = 0.5, # balances patch size and X variation
   max_elongation = 4,
   mahal_radius = 3,
@@ -312,7 +312,6 @@ indexing a separate matrix.
 moran_test <- moranTest.spe(
   de_result$spe[top_genes, ],
   k = 20,
-  patch = colData(spe_use)$patch,
   n_permutations = 20
 )
 

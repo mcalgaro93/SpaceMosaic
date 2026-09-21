@@ -60,8 +60,7 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #'
 #' Spatial coordinates are taken from `spatialCoords(spe)`, design variables
 #' from `colData(spe)`, and (optionally) context embeddings from
-#' `reducedDims(spe)`. All results are returned attached to `spe`; nothing is
-#' written to the global environment.
+#' `reducedDims(spe)`. All results are returned attached to `spe`.
 #'
 #' @param spe A `SpatialExperiment` object. Must have `colnames` (cell
 #'   identifiers), non-empty `spatialCoords()`, and the columns named in `X`
@@ -157,19 +156,20 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #'
 #' @seealso [getPatches()], [getPatchDiagnostics()], [getPatchPolys()]
 #'
+#' @importFrom SingleCellExperiment reducedDimNames
+#' @importFrom SpatialExperiment spatialCoords
+#' @importFrom S4Vectors metadata
+#'
 #' @examples
 #' library(SpatialExperiment)
 #' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
-#' spe <- embedCellNeighborhoods.spe(spe, embedding = "PCA", ks = c(5, 50), tissue = 'sample_id')
 #' spe <- getPatches.spe(
 #'   spe = spe,
-#'   X = "distance",
-#'   npatches = 50,
-#'   Z = "Z",
-#'   patch_column = "patch"
+#'   X = "distance_to_fibroblast",
+#'   npatches = 50
 #' )
-#' head(colData(spe)$patch)
-#' metadata(spe)$SpaceMosaic$patch_diagnostics
+#' head(spe$patch)
+#' head(metadata(spe)$SpaceMosaic$patch_diagnostics)
 #'
 #' @export getPatches.spe
 getPatches.spe <- function(spe, X, npatches,
@@ -212,18 +212,26 @@ getPatches.spe <- function(spe, X, npatches,
 
   Z_mat <- NULL
   if (!is.null(Z)) {
-    if (!Z %in% reducedDimNames(spe)) {
-      stop("`Z` = '", Z, "' not found in reducedDimNames(spe). ",
-           "Available: ", paste(reducedDimNames(spe), collapse = ", "))
+    if (!is.character(Z) || length(Z) != 1L || is.na(Z)) {
+        stop("`Z` must be NULL or a single character string naming a reduced dimension.")
     }
-    Z_mat <- SingleCellExperiment::reducedDim(spe, Z)
 
-  }
+    if (!Z %in% reducedDimNames(spe)) {
+        stop(
+        "`Z` = '", Z, "' not found in reducedDimNames(spe). ",
+        "Available: ", paste(reducedDimNames(spe), collapse = ", ")
+        )
+    }
+
+  Z_mat <- SingleCellExperiment::reducedDim(spe, Z)
+}
 
   init_method <- match.arg(init_method)
 
-  patchResult <- getPatches(xy, X_mat, npatches,
-             Z_mat,
+  patchResult <- getPatches(xy = xy, 
+             X = X_mat, 
+             npatches = npatches,
+             Z = Z_mat,
              alpha = alpha,
              beta = beta,
              hunger_weight = hunger_weight,
@@ -295,7 +303,11 @@ getPatches.spe <- function(spe, X, npatches,
 #' in a \code{SpatialExperiment} object and returns the raw results alongside
 #' the object they were computed from.
 #'
-
+#' @param spe A \code{SpatialExperiment} object. Must contain the requested
+#'   expression assay and patch assignments in \code{colData(spe)}.
+#' @param predictor_cols Character vector of column names in
+#'   \code{colData(spe)} to use as predictors in \code{patchDE()}. Must be
+#'   non-empty.
 #' @param assay Character string naming the assay in \code{spe} that contains
 #'   the expression matrix. Default \code{"logcounts"}.
 #' @param patch_column Character string naming the column in
@@ -355,6 +367,22 @@ getPatches.spe <- function(spe, X, npatches,
 #' \code{\link{patchMetaAnalysis.spe}},
 #' \code{\link{moranTest.spe}}
 #'
+#' @examples
+#' 
+#' library(SpatialExperiment)
+#' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
+#' spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance)]
+#' spe_use <- getPatches.spe(
+#'   spe = spe_use,
+#'   X = "distance_to_fibroblast",
+#'   npatches = 50
+#' )
+#' de_result <- patchDE.spe(spe_use,
+#'   predictor_cols = "distance_to_fibroblast"
+#' )
+#' names(de_result)
+#' head(de_result$de$distance_to_fibroblast$pvals)
+#' 
 #' @export
 
 
@@ -497,8 +525,23 @@ patchDE.spe <- function(
 #' \code{\link{patchMetaAnalysis}},
 #' \code{\link{getPatchAttributes}},
 #' \code{\link{summarizeSubgroups}}
+#' 
+#' @examples
+#' library(SpatialExperiment)
+#' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
+#' spe <- embedCellNeighborhoods.spe(spe, embedding = "PCA", ks = c(5, 50), tissue = 'sample_id')
+#' spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance)]
+#' spe_use <- getPatches.spe(
+#'   spe = spe_use,
+#'   X = "distance_to_fibroblast",
+#'   npatches = 50
+#' )
+#' de_result <- patchDE.spe(spe_use,
+#'   predictor_cols = "distance_to_fibroblast"
+#' )
+#' meta_result <- patchMetaAnalysis.spe(de_result, embedding_name = "Z")
+#' head(meta_result$meta$distance_to_fibroblast$pvals)
 #'
-#' @importFrom S4Vectors metadata
 #' @export
 
 patchMetaAnalysis.spe <- function(
@@ -669,6 +712,24 @@ patchMetaAnalysis.spe <- function(
 #'   constant or non-finite residuals return missing statistics with an
 #'   explanatory status rather than stopping the remaining tests.
 #'
+#' @importFrom methods is
+#' @importFrom SummarizedExperiment assayNames assay colData
+#' @importFrom SpatialExperiment spatialCoords
+#'
+#' @examples
+#' library(SpatialExperiment)
+#' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
+#' spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance)]
+#' spe_use <- getPatches.spe(
+#'   spe = spe_use,
+#'   X = "distance_to_fibroblast",
+#'   npatches = 50
+#' )
+#' de_result <- patchDE.spe(spe_use,
+#'   predictor_cols = "distance_to_fibroblast",
+#'   return_residuals = TRUE
+#' )
+#' moran_result <- moranTest.spe(de_result$spe[1:10,])
 #' @export
 
 moranTest.spe <- function(spe, assay_name = 'residuals' , patch_column = "patch", k = 10L,
