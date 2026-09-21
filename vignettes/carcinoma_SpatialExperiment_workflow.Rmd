@@ -51,8 +51,8 @@ Single-cell spatial transcriptomics (6k-plex CosMx SMI) dataset of human basal-c
 
 ```{r load-data, eval=FALSE}
 # Replace this with the loader for your dataset.
-spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
-#spe <- readRDS(file.path("~/SpaceMosaic", "inst", "extdata", "cosmx_carcinoma.rds"))
+#pe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
+spe <- readRDS(file.path("~/Documents/SpaceMosaic", "inst", "extdata", "cosmx_carcinoma.rds"))
 #spe <- readRDS(system.file("SpaceMosaic","inst","extdata", "cosmx_carcinoma.rds"))
 
 ```
@@ -240,24 +240,13 @@ de_result <- patchDE.spe(
   return_residuals = TRUE
 )
 
-de_result <- patchMetaAnalysis.spe(
-  spe = spe_use,
-  patchDE_object = de_result,
-  embedding_name = 'Z',
-  patch_column = "patch",
+meta_result <- patchMetaAnalysis.spe(
+  patchDE_result = de_result,
   summarize_subgroups = TRUE,
   cellmeta_cols = c("celltype", "distance")
 )
 ```
 
-```{r
-
-moran_test <- moranTest(metadata(de_result)$residuals$limma$distance[,1:10], 
-spatialCoords(spe_use),
- patch = colData(spe_use)$patch,
- n_permutations = 20)
-
-```
 
 
 # 6. Result summaries and spatial validation
@@ -268,7 +257,7 @@ posterior p-values, subgroup membership, and biological relevance should also
 be considered; very small p-values alone are not sufficient.
 
 ```{r result-summary, eval=FALSE}
-z_score <- assays(de_result)[["limma_distance_meta_ests"]] / assays(de_result)[["limma_distance_meta_ses"]]
+z_score <- meta_result$de$distance$ests/ meta_result$de$distance$ses
 
 gene_summary <- data.frame(
   gene = rownames(z_score),
@@ -288,6 +277,16 @@ heatmap(
 ```
 
 
+```{r}
+
+moran_test <- moranTest(de_result$residuals[,top_genes], 
+spatialCoords(spe_use),
+k= 20,
+ patch = colData(spe_use)$patch,
+ n_permutations = 20)
+
+head(moran_test[order(moran_test$observed, decreasing = TRUE),])
+```
 
 Finally, project representative effects back onto the tissue. Confirm that
 their direction agrees with the predictor and is not driven by an unmodeled
