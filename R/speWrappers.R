@@ -34,6 +34,10 @@
 embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = NULL,
                                        name = "Z") {
 
+    if (!methods::is(spe, "SpatialExperiment")) {
+      stop("`spe` must be a SpatialExperiment object.")
+    }
+
     if (!embedding %in% reducedDimNames(spe)) {
       stop("`embedding` = '", embedding, "' not found in reducedDimNames(spe). ",
            "Available: ", paste(reducedDimNames(spe), collapse = ", "))
@@ -194,6 +198,10 @@ getPatches.spe <- function(spe, X, npatches,
                             patch_polys = TRUE,
                             patch_column = "patch",
                             verbose = TRUE) {
+
+  if (!methods::is(spe, "SpatialExperiment")) {
+    stop("`spe` must be a SpatialExperiment object.")
+  }
 
   xy <- SpatialExperiment::spatialCoords(spe)
 
@@ -402,6 +410,10 @@ patchDE.spe <- function(
 
     method <- match.arg(method)
 
+    if (!methods::is(spe, "SpatialExperiment")) {
+        stop("`spe` must be a SpatialExperiment object.")
+    }
+
     if (missing(predictor_cols) ||
         is.null(predictor_cols) ||
         length(predictor_cols) == 0) {
@@ -429,6 +441,17 @@ patchDE.spe <- function(
             "'%s' not found in colData(spe).",
             patch_column
         ))
+    }
+
+    if (!assay %in% SummarizedExperiment::assayNames(spe)) {
+        stop(sprintf(
+            "'%s' not found in assay names of `spe`. Available assays: %s",
+            assay, paste(SummarizedExperiment::assayNames(spe), collapse = ", ")
+        ))
+    }
+
+    if (pearson && is.null(tot)) {
+        stop("`tot` must be supplied when `pearson = TRUE`.")
     }
 
     # Expression matrix: genes x cells -> cells x genes
@@ -748,6 +771,11 @@ moranTest.spe <- function(spe, assay_name = 'residuals' , patch_column = "patch"
                   if (!assay_name %in% assayNames(spe)) {
                     stop(sprintf("'%s' not found in assay names of 'spe'. Available assays: %s",
                                 assay_name, paste(assayNames(spe), collapse = ", ")))
+                  }
+
+                  if (!patch_column %in% colnames(colData(spe))) {
+                    stop(sprintf("'%s' not found in colData(spe). Available: %s",
+                                patch_column, paste(colnames(colData(spe)), collapse = ", ")))
                   }
 
                   res <- moranTest( residuals = t(assay(spe,assay_name)),
