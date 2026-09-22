@@ -461,7 +461,7 @@ patchDE.spe <- function(
         spe
     )[, predictor_cols, drop = FALSE]
 
-    if (!is.null(tot)) {
+    if (pearson && !is.null(tot)) {
 
         if (!tot %in%
             colnames(SummarizedExperiment::colData(spe))) {
