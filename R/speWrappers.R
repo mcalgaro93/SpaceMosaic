@@ -379,7 +379,7 @@ getPatches.spe <- function(spe, X, npatches,
 #' 
 #' library(SpatialExperiment)
 #' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
-#' spe_use <- spe[,spe$celltype == "Cancer.cells]
+#' spe_use <- spe[, spe$celltype == "Cancer.cells"]
 #' spe_use <- getPatches.spe(
 #'   spe = spe_use,
 #'   X = "distance_to_fibroblast",
