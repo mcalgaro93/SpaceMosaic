@@ -19,6 +19,13 @@ patchDE.spe(
 )
 }
 \arguments{
+\item{spe}{A \code{SpatialExperiment} object. Must contain the requested
+expression assay and patch assignments in \code{colData(spe)}.}
+
+\item{predictor_cols}{Character vector of column names in
+\code{colData(spe)} to use as predictors in \code{patchDE()}. Must be
+non-empty.}
+
 \item{assay}{Character string naming the assay in \code{spe} that contains
 the expression matrix. Default \code{"logcounts"}.}
 
@@ -86,6 +93,23 @@ and the patch columns of the returned matrices follow the order
 \code{patchDE()} returns one residual matrix per fit, not one per
 predictor, so cells with a missing patch assignment (and therefore no fit)
 get \code{NA} residuals in \code{residual_assay}.
+}
+\examples{
+
+library(SpatialExperiment)
+spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
+spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance)]
+spe_use <- getPatches.spe(
+  spe = spe_use,
+  X = "distance_to_fibroblast",
+  npatches = 50
+)
+de_result <- patchDE.spe(spe_use,
+  predictor_cols = "distance_to_fibroblast"
+)
+names(de_result)
+head(de_result$de$distance_to_fibroblast$pvals)
+
 }
 \seealso{
 \code{\link{patchDE}},

@@ -61,6 +61,23 @@ line up when passed to \code{patchMetaAnalysis()}. The patches represented
 in \code{colData(spe)[[patch_column]]} and those in the differential
 expression results must be the same set; their order need not agree.
 }
+\examples{
+library(SpatialExperiment)
+spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
+spe <- embedCellNeighborhoods.spe(spe, embedding = "PCA", ks = c(5, 50), tissue = 'sample_id')
+spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance)]
+spe_use <- getPatches.spe(
+  spe = spe_use,
+  X = "distance_to_fibroblast",
+  npatches = 50
+)
+de_result <- patchDE.spe(spe_use,
+  predictor_cols = "distance_to_fibroblast"
+)
+meta_result <- patchMetaAnalysis.spe(de_result, embedding_name = "Z")
+head(meta_result$meta$distance_to_fibroblast$pvals)
+
+}
 \seealso{
 \code{\link{patchDE.spe}},
 \code{\link{patchMetaAnalysis}},

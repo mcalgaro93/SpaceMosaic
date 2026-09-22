@@ -162,22 +162,18 @@ diagnostic information. Results are stored directly in the
 \details{
 Spatial coordinates are taken from \code{spatialCoords(spe)}, design variables
 from \code{colData(spe)}, and (optionally) context embeddings from
-\code{reducedDims(spe)}. All results are returned attached to \code{spe}; nothing is
-written to the global environment.
+\code{reducedDims(spe)}. All results are returned attached to \code{spe}.
 }
 \examples{
 library(SpatialExperiment)
 spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
-spe <- embedCellNeighborhoods.spe(spe, embedding = "PCA", ks = c(5, 50), tissue = 'sample_id')
 spe <- getPatches.spe(
   spe = spe,
-  X = "distance",
-  npatches = 50,
-  Z = "Z",
-  patch_column = "patch"
+  X = "distance_to_fibroblast",
+  npatches = 50
 )
-head(colData(spe)$patch)
-metadata(spe)$SpaceMosaic$patch_diagnostics
+head(spe$patch)
+head(metadata(spe)$SpaceMosaic$patch_diagnostics)
 
 }
 \seealso{

@@ -158,7 +158,7 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #'
 #' @importFrom SingleCellExperiment reducedDimNames
 #' @importFrom SpatialExperiment spatialCoords
-#' @importFrom S4Vectors metadata
+#' @importFrom S4Vectors metadata metadata<-
 #'
 #' @examples
 #' library(SpatialExperiment)
@@ -274,7 +274,7 @@ getPatches.spe <- function(spe, X, npatches,
       patch_diagnostics_list <- getPatchDiagnostics(
             xy = spatialCoords(spe),
             X = X_mat,
-            patch = patch_metadata,
+            patches = patch_metadata,
             k = k,
             strict_k = strict_k
         )
@@ -371,7 +371,7 @@ getPatches.spe <- function(spe, X, npatches,
 #' 
 #' library(SpatialExperiment)
 #' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
-#' spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance)]
+#' spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance_to_fibroblast)]
 #' spe_use <- getPatches.spe(
 #'   spe = spe_use,
 #'   X = "distance_to_fibroblast",
@@ -530,7 +530,7 @@ patchDE.spe <- function(
 #' library(SpatialExperiment)
 #' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
 #' spe <- embedCellNeighborhoods.spe(spe, embedding = "PCA", ks = c(5, 50), tissue = 'sample_id')
-#' spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance)]
+#' spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance_to_fibroblast)]
 #' spe_use <- getPatches.spe(
 #'   spe = spe_use,
 #'   X = "distance_to_fibroblast",
@@ -679,12 +679,9 @@ patchMetaAnalysis.spe <- function(
     out
 }
 
-#' @describeIn moranTest Method for \code{SpatialExperiment} objects. Extracts
+#'   moranTest() method for \code{SpatialExperiment} objects. Extracts
 #'   residuals from the specified assay and spatial coordinates from
-#'   \code{spatialCoords(spe)}, then dispatches to \code{moranTest}. See
-#'   \code{moranTest} for details of the permutation test and the meaning of
-#'   \code{k}, \code{n_permutations}, \code{alternative},
-#'   \code{p_adjust_method}, and \code{adjustment_scope}.
+#'   \code{spatialCoords(spe)}, then dispatches to \code{moranTest}.
 #'
 #' @param spe A \code{SpatialExperiment} object.
 #' @param assay_name Character; name of the assay in \code{spe} containing
@@ -719,7 +716,7 @@ patchMetaAnalysis.spe <- function(
 #' @examples
 #' library(SpatialExperiment)
 #' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
-#' spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance)]
+#' spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance_to_fibroblast)]
 #' spe_use <- getPatches.spe(
 #'   spe = spe_use,
 #'   X = "distance_to_fibroblast",

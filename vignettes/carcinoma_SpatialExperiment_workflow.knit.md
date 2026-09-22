@@ -1,7 +1,7 @@
 ---
 title: "Case Study: Human basal-cell carcinoma"
 author: "Pere Moles"
-date: "`r Sys.Date()`"
+date: "2026-09-22"
 output:
   BiocStyle::html_document:
     toc: true
@@ -12,19 +12,7 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(
-  echo = TRUE,
-  warning = FALSE,
-  message = FALSE,
-  fig.width = 8,
-  fig.height = 6
-)
-library(SpaceMosaic)
-library(SpatialExperiment)
-library(ggplot2)
-library(viridis)
-```
+
 
 # Overview
 
@@ -60,16 +48,17 @@ by hand.
 Single-cell spatial transcriptomics (6k-plex CosMx SMI) dataset of human basal-cell carcinoma from https://zenodo.org/records/14330691 was preprocessed before the analysis. The original Seurat object was converted to a `SpatialExperiment` object, and data was filtered for Patient A and FOVs 37 to 41. This consists of a nodular-ulcerated BCC sample.
 
 
-```{r load-data}
-# Replace this with the loader for your dataset.
-spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
-#spe <- readRDS(file.path("~/Documents/SpaceMosaic", "inst", "extdata", "cosmx_carcinoma.rds"))
 
+``` r
+# Replace this with the loader for your dataset.
+#spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
+spe <- readRDS(file.path("~/Documents/SpaceMosaic", "inst", "extdata", "cosmx_carcinoma.rds"))
 ```
 
 We study the exposure of Cancer Cells near Fibroblasts.
 
-```{r define-x-and-subset}
+
+``` r
 # Example: distance to the nearest cell of a selected explanatory population.
 spe_explanatory <- spe[,spe$celltype == "Fibroblast"]
 
@@ -92,7 +81,8 @@ tissue context. Supply `tissue` when the object contains multiple samples,
 slides, or fields of view; this prevents neighborhoods from crossing tissue
 boundaries.
 
-```{r cellular-neighborhoods}
+
+``` r
 spe <- embedCellNeighborhoods.spe(
   spe = spe,
   embedding = 'PCA',
@@ -110,7 +100,8 @@ start near `beta = 1 / K`. Increase `alpha` to enforce stronger neighborhood
 coherence, and inspect the result rather than treating the defaults as
 universal.
 
-```{r identify-patches}
+
+``` r
 spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance)]
 
 set.seed(123)
@@ -147,8 +138,8 @@ stability. These are general checks; RNA content, distance to an explanatory
 population, tissue region, and sample identity can reveal additional
 experiment-specific failure modes.
 
-```{r patch-diagnostics}
 
+``` r
 patch_diagnostics <- metadata(spe_use)$SpaceMosaic$patch_diagnostics
 
 # CHANGE to the X column that should be inspected when X is multivariable.
@@ -207,7 +198,8 @@ Map the retained patches together with $X$ and the surrounding cells. Polygon
 rows can carry any patch-level diagnostic or annotation supplied through
 `patch_data`.
 
-```{r patch-map}
+
+``` r
 library(ggspavis)
 
 spe$distance_use <- ifelse(
@@ -242,7 +234,8 @@ before calling `patchDE.spe()` and include relevant technical covariates in
 `predictor_cols`. Do not use both strategies at once; choose a model
 appropriate for the assay and question.
 
-```{r patch-de}
+
+``` r
 de_result <- patchDE.spe(
   spe = spe_use,
   predictor_cols = 'distance',
@@ -263,7 +256,8 @@ fits produced by `patchDE.spe()`. Set `summarize_subgroups = TRUE` to also
 summarize effects within subgroups of patches, optionally annotated with
 `cellmeta_cols` taken from `colData(spe)`.
 
-```{r patch-meta}
+
+``` r
 meta_result <- patchMetaAnalysis.spe(
   patchDE_result = de_result,
   summarize_subgroups = TRUE,
@@ -280,7 +274,8 @@ fraction of patches with an absolute posterior Z-score above 2. Effect sizes,
 posterior p-values, subgroup membership, and biological relevance should also
 be considered; very small p-values alone are not sufficient.
 
-```{r result-summary}
+
+``` r
 z_score <- meta_result$meta$distance$ests/ meta_result$meta$distance$ses
 
 gene_summary <- data.frame(
@@ -306,34 +301,6 @@ heatmap(
 directly, so gene selection is done by subsetting `de_result$spe` rather than
 indexing a separate matrix.
 
-```{r}
 
-moran_test <- moranTest.spe(
-  de_result$spe[top_genes, ],
-  k = 20,
-  n_permutations = 20
-)
 
-head(moran_test[order(moran_test$observed, decreasing = TRUE),])
-```
 
-Finally, project representative effects back onto the tissue. Confirm that
-their direction agrees with the predictor and is not driven by an unmodeled
-sample, anatomical compartment, low-quality region, or segmentation artifact.
-
-```{r spatial-validation}
-poly_df <- metadata(spe_use)$SpaceMosaic$patch_polys
-gene <- top_genes[1]
-poly_gene <- poly_df
-poly_gene$z_score <- z_score[gene, ][as.character(poly_gene$patch)]
-
-ggplot(poly_gene, aes(x, y, group = patch, fill = z_score)) +
-  geom_polygon(color = "grey30", linewidth = 0.2) +
-  scale_fill_gradient2(
-    low = "blue", mid = "white", high = "red", midpoint = 0
-  ) +
-  coord_fixed() +
-  theme_minimal() +
-  labs(title = gene, fill = "Posterior Z")
-
-```
