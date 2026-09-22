@@ -148,7 +148,7 @@ patch_diagnostics <- metadata(spe_use)$SpaceMosaic$patch_diagnostics
 
 # CHANGE to the X column that should be inspected when X is multivariable.
 x_sd_column <- if (length(X) == 1L) "x_sd" else paste0("x_sd_", X[1])
-patch_diagnostics$selected_x_sd <- patch_diagnostics[['x_sd_column']]
+patch_diagnostics$selected_x_sd <- patch_diagnostics[[x_sd_column]]
 patch_diagnostics$connectivity <- factor(
   ifelse(
     patch_diagnostics$strict_component_fraction == 1,
