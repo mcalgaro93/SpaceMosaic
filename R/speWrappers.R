@@ -379,7 +379,7 @@ getPatches.spe <- function(spe, X, npatches,
 #' 
 #' library(SpatialExperiment)
 #' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
-#' spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance_to_fibroblast)]
+#' spe_use <- spe[,spe$celltype == "Cancer.cells]
 #' spe_use <- getPatches.spe(
 #'   spe = spe_use,
 #'   X = "distance_to_fibroblast",
@@ -553,7 +553,7 @@ patchDE.spe <- function(
 #' library(SpatialExperiment)
 #' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
 #' spe <- embedCellNeighborhoods.spe(spe, embedding = "PCA", ks = c(5, 50), tissue = 'sample_id')
-#' spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance_to_fibroblast)]
+#' spe_use <- spe[,spe$celltype == "Cancer.cells"]
 #' spe_use <- getPatches.spe(
 #'   spe = spe_use,
 #'   X = "distance_to_fibroblast",
@@ -739,7 +739,7 @@ patchMetaAnalysis.spe <- function(
 #' @examples
 #' library(SpatialExperiment)
 #' spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
-#' spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance_to_fibroblast)]
+#' spe_use <- spe[,spe$celltype == "Cancer.cells"]
 #' spe_use <- getPatches.spe(
 #'   spe = spe_use,
 #'   X = "distance_to_fibroblast",

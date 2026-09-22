@@ -49,22 +49,21 @@ Throughout the template, the input is a `SpatialExperiment` object with the foll
 The `.spe`-suffixed functions used below (`embedCellNeighborhoods.spe()`,
 `getPatches.spe()`, `patchDE.spe()`, `patchMetaAnalysis.spe()`) are
 `SpatialExperiment` wrappers: they read $X$, $Z$, expression, and patch
-assignments directly from `spe`, and attach their results back onto it (or,
-for `patchDE.spe()`/`patchMetaAnalysis.spe()`, return them alongside `spe`,
-which `patchDE.spe()` also gains a `"residuals"` assay on when
-`return_residuals = TRUE`), so intermediate matrices rarely need to be built
-by hand.
+assignments directly from `spe`. `embedCellNeighborhoods.spe()` and
+`getPatches.spe()` attach their results back onto `spe` and return it;
+`patchDE.spe()` returns its differential-expression results alongside `spe`
+(which also gains a `"residuals"` assay when `return_residuals = TRUE`); and
+`patchMetaAnalysis.spe()` returns the meta-analysis results (`meta` and `W`,
+plus `subgroups_summary` when requested) without `spe`, so intermediate
+matrices rarely need to be built by hand.
 
 # 1. Data and analysis question
 
-Single-cell spatial transcriptomics (6k-plex CosMx SMI) dataset of human basal-cell carcinoma from https://zenodo.org/records/14330691 was preprocessed before the analysis. The original Seurat object was converted to a `SpatialExperiment` object, and data was filtered for Patient A and FOVs 37 to 41. This consists of a nodular-ulcerated BCC sample.
-
+Single-cell spatial transcriptomics (6k-plex CosMx SMI) dataset of human basal-cell carcinoma from https://zenodo.org/records/14330691 was preprocessed before the analysis.
+The original Seurat object was converted to a `SpatialExperiment` object, and data was filtered for Patient A and FOVs 39 to 41. This consists of a nodular-ulcerated BCC sample.
 
 ```{r load-data}
-# Replace this with the loader for your dataset.
 spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
-#spe <- readRDS(file.path("~/Documents/SpaceMosaic", "inst", "extdata", "cosmx_carcinoma.rds"))
-
 ```
 
 We study the exposure of Cancer Cells near Fibroblasts.
@@ -79,7 +78,6 @@ distance_to_explanatory <- FNN::get.knnx(
   k = 1
 )$nn.dist[, 1]
 
-# A log transform often reduces the leverage of long-tailed distances.
 spe$distance <- log1p(distance_to_explanatory)
 ```
 
@@ -97,21 +95,19 @@ spe <- embedCellNeighborhoods.spe(
   spe = spe,
   embedding = 'PCA',
   ks = c(5, 50),
-  tissue = 'sample_id' # CHANGE; omit only for a single contiguous tissue
+  tissue = 'pat_fov'
 )
+
+head(reducedDim(spe, "Z")[, 1:5], 3)
 ```
 
 # 3. Patch identification and quality control
 
 `getPatches()` favors spatially compact, contiguous regions that retain
-within-patch variation in $X$ while remaining coherent in $Z$. For a
-single-column $X$, `beta = 1` is a useful starting point. With $K$ predictors,
-start near `beta = 1 / K`. Increase `alpha` to enforce stronger neighborhood
-coherence, and inspect the result rather than treating the defaults as
-universal.
+within-patch variation in $X$ while remaining coherent in $Z$.
 
 ```{r identify-patches}
-spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance)]
+spe_use <- spe[,spe$celltype == "Cancer.cells"]
 
 set.seed(123)
 
@@ -127,15 +123,14 @@ spe_use <- getPatches.spe(
   max_elongation = 4,
   mahal_radius = 3,
   n_candidates = 20,
-  n_iters = 15,
+  n_iters = 5,
   log_iters = TRUE
 )
 
-# Optional visual check of membership across iterations.
 plotPatchIterations(
   xy = spatialCoords(spe_use),
   result = metadata(spe_use)$SpaceMosaic$patch_iterations,
-  iters = c(1, 5, 10, 15),
+  iters = 1:5,
   ask = FALSE
 )
 ```
@@ -153,7 +148,7 @@ patch_diagnostics <- metadata(spe_use)$SpaceMosaic$patch_diagnostics
 
 # CHANGE to the X column that should be inspected when X is multivariable.
 x_sd_column <- if (length(X) == 1L) "x_sd" else paste0("x_sd_", X[1])
-patch_diagnostics$selected_x_sd <- patch_diagnostics[[x_sd_column]]
+patch_diagnostics$selected_x_sd <- patch_diagnostics[['x_sd_column']]
 patch_diagnostics$connectivity <- factor(
   ifelse(
     patch_diagnostics$strict_component_fraction == 1,
@@ -203,9 +198,9 @@ connectivity; crosses mark fragmentation at `strict_k`. Replace the
 example thresholds after inspecting the dataset and the scale of `X`, then set
 cells in excluded patches to `NA` as shown above.
 
-Map the retained patches together with $X$ and the surrounding cells. Polygon
-rows can carry any patch-level diagnostic or annotation supplied through
-`patch_data`.
+Overlay the retained patch boundaries on the per-cell map of $X$ to check
+visually that patches trace coherent regions of the exposure variable rather
+than cutting across it.
 
 ```{r patch-map}
 library(ggspavis)
@@ -239,8 +234,7 @@ For raw counts, `pearson = TRUE` computes Pearson residuals separately within
 each patch and requires `tot` to name a column in `colData(spe)` holding
 per-cell total counts. Alternatively, transform or normalize expression
 before calling `patchDE.spe()` and include relevant technical covariates in
-`predictor_cols`. Do not use both strategies at once; choose a model
-appropriate for the assay and question.
+`predictor_cols`.
 
 ```{r patch-de}
 de_result <- patchDE.spe(
