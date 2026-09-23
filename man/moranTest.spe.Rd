@@ -24,8 +24,7 @@ moranTest.spe(
 the values to test (e.g. Pearson residuals). Default \code{"residuals"}.}
 
 \item{patch_column}{Name of the column in \code{colData(spe)} where patch assignments are
-stored. Default \code{"patch"}. An existing column of the same name is
-overwritten.}
+stored. Default \code{"patch"}.}
 
 \item{k}{Number of nearest neighbors used to construct the graph. If \code{k} is
 not smaller than the number of observations, it is reduced to \code{n - 1} with
