@@ -73,9 +73,11 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #'   column names in `colData(spe)`. Each column is scaled to unit SD by
 #'   `getPatches()`.
 #' @param npatches Number of patches to create.
-#' @param Z Optional per-cell context embeddings (cells x features). A single
-#'   character string naming an entry in `reducedDimNames(spe)`. If supplied,
-#'   patches will prefer Z-coherent regions. `NULL` (default) disables.
+#' @param Z Character string or `NULL`. Name of an entry in
+#'   `reducedDimNames(spe)` holding per-cell context embeddings
+#'   (cells x features). If supplied, patches will prefer Z-coherent regions.
+#'   `NULL` disables this behaviour. The default, `"auto"`, uses the reduced
+#'   dimension named `"Z"` if it exists in `spe`, and `NULL` otherwise.
 #' @param alpha Weight of the Z penalty. Typical range 0.2--1.0; default 0.5.
 #'   Higher values force patches to respect microenvironment boundaries at the
 #'   cost of spatial compactness. Set to 0 to ignore Z entirely.
@@ -177,7 +179,7 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #'
 #' @export getPatches.spe
 getPatches.spe <- function(spe, X, npatches,
-                            Z = NULL,
+                            Z = 'auto',
                             alpha = 0.5,
                             beta = 1,
                             hunger_weight = 0.5,
@@ -217,6 +219,9 @@ getPatches.spe <- function(spe, X, npatches,
 
   X_mat <- as.matrix(SummarizedExperiment::colData(spe)[, X, drop = FALSE])
 
+  if (identical(Z, "auto")) {
+      Z <- if ("Z" %in% reducedDimNames(spe)) "Z" else NULL
+  }
 
   Z_mat <- NULL
   if (!is.null(Z)) {
