@@ -93,28 +93,30 @@ patchMetaAnalysis <- function(DEobj, W, k = 15,
   ## apply meta-analysis per variable
   out <- list()
   for (varname in names(DEobj)) {
-    ests <- DEobj[[varname]]$ests   # genes x patches
-    ses <- DEobj[[varname]]$ses
+    if (varname != 'resid_mse'){
+      ests <- DEobj[[varname]]$ests   # genes x patches
+      ses <- DEobj[[varname]]$ses
 
-    ## align patch order
-    shared <- intersect(colnames(ests), patch_names)
-    ests <- ests[, shared, drop = FALSE]
-    ses <- ses[, shared, drop = FALSE]
-    nn_aligned <- nn[shared, , drop = FALSE]
+      ## align patch order
+      shared <- intersect(colnames(ests), patch_names)
+      ests <- ests[, shared, drop = FALSE]
+      ses <- ses[, shared, drop = FALSE]
+      nn_aligned <- nn[shared, , drop = FALSE]
 
-    post <- .bayesianUpdate(ests, ses, nn_aligned, shared)
+      post <- .bayesianUpdate(ests, ses, nn_aligned, shared)
 
-    subgroups <- .findSubgroups(post$ests, post$pvals, nn_aligned,
-                                min_effect = min_effect,
-                                max_pval = max_pval,
-                                min_patches = min_patches)
+      subgroups <- .findSubgroups(post$ests, post$pvals, nn_aligned,
+                                  min_effect = min_effect,
+                                  max_pval = max_pval,
+                                  min_patches = min_patches)
 
-    out[[varname]] <- list(
-      ests = post$ests,
-      ses = post$ses,
-      pvals = post$pvals,
-      subgroups = subgroups
-    )
+      out[[varname]] <- list(
+        ests = post$ests,
+        ses = post$ses,
+        pvals = post$pvals,
+        subgroups = subgroups
+      )
+    }
   }
   out
 }
