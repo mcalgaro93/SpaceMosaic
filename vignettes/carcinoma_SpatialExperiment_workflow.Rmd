@@ -95,7 +95,7 @@ spe <- embedCellNeighborhoods.spe(
   spe = spe,
   embedding = 'PCA',
   ks = c(5, 50),
-  tissue = 'pat_fov'
+  tissue = 'sample_id'
 )
 
 head(reducedDim(spe, "Z")[, 1:5], 3)
