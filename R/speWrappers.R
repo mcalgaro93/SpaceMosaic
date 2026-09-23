@@ -507,7 +507,9 @@ patchDE.spe <- function(
 
     out
 
-}#' Meta-analyse patch-level differential expression across an embedding
+}
+
+#' Meta-analyse patch-level differential expression across an embedding
 #'
 #' Takes the output of \code{patchDE.spe()}, derives patch-level attributes
 #' from a reduced-dimension embedding, and runs \code{patchMetaAnalysis()} to
