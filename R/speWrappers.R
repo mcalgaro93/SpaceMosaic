@@ -630,23 +630,7 @@ patchMetaAnalysis.spe <- function(
         }
     }
 
-    # Patch IDs, taken from the DE results rather than re-derived
-    de_patches <- colnames(de_res[[1]][["pvals"]])
-
     patch <- SummarizedExperiment::colData(spe)[[patch_column]]
-
-    spe_patches <- as.character(
-        sort(unique(as.numeric(
-            patch[!is.na(patch)]
-        )))
-    )
-
-    if (!setequal(spe_patches, de_patches)) {
-        stop(
-            "Patch IDs in `spe` do not match the patch columns of ",
-            "`patchDE_result$de`."
-        )
-    }
 
     # Extract embedding
     Z <- SingleCellExperiment::reducedDim(
@@ -659,12 +643,6 @@ patchMetaAnalysis.spe <- function(
         Z,
         patch
     )
-
-    W <- W[
-        de_patches,
-        ,
-        drop = FALSE
-    ]
 
     # Run meta-analysis
     de_res_meta <- patchMetaAnalysis(
