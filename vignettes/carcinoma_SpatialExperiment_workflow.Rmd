@@ -118,7 +118,7 @@ spe_use <- getPatches.spe(
   Z = 'Z',
   npatches = 100,       # CHANGE for tissue area and response-cell abundance
   alpha = 0.5,          # weight of the Z-coherence penalty
-  beta = 3,   # weight of within-patch X diversity
+  beta = 1,   # weight of within-patch X diversity
   hunger_weight = 0.5, # balances patch size and X variation
   max_elongation = 4,
   mahal_radius = 3,
@@ -191,6 +191,10 @@ keep <- with(
 
 idx <- colData(spe_use)$patch %in% keep
 colData(spe_use)$patch[!idx] <- NA
+
+polys <- metadata(spe_use)$SpaceMosaic$patch_polys
+idx_polys <- polys$patch %in% keep
+metadata(spe_use)$SpaceMosaic$patch_polys <- polys[idx_polys, , drop = FALSE]
 ```
 
 The plot combines patch size, predictor variation, final stability, and
@@ -206,12 +210,12 @@ than cutting across it.
 library(ggspavis)
 
 spe$distance_use <- ifelse(
-  spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance),
+  spe$celltype == "Cancer.cells",
   spe$distance,
   NA
 )
 
-plotCoords(spe,annotate = 'distance_use',in_tissue=NULL)  +
+plotCoords(spe,annotate = 'distance_use',in_tissue=NULL, y_reverse = FALSE)  +
   geom_polygon(
     data = metadata(spe_use)$SpaceMosaic$patch_polys,
     aes(x, y, group = patch),
@@ -243,7 +247,8 @@ de_result <- patchDE.spe(
   method = "limma",
   pearson = FALSE,
   tot = 'total',
-  return_residuals = TRUE
+  return_residuals = TRUE,
+  resid_mse = FALSE
 )
 ```
 
