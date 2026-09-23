@@ -91,7 +91,7 @@ test_that("multivariable X produces one standard deviation per variable", {
   patch_diagnostics <- diagnostics$patch_diagnostics
 
   expect_true(all(c(
-    "x_sd_exposure", "x_sd_depth", "x_n_exposure", "x_n_depth"
+    "x_sd_exposure", "x_sd_depth"
   ) %in% names(patch_diagnostics)))
   expect_equal(patch_diagnostics$x_sd_exposure, c(1, 2))
   expect_equal(patch_diagnostics$x_sd_depth, c(0, 1))
@@ -169,39 +169,32 @@ test_that("single-cell patches are connected without graph edges", {
 })
 
 
-test_that("unavailable X SD retains finite-value counts", {
+test_that("infinite X values are rejected", {
   xy <- cbind(x = 1:3, y = 0)
   X <- c(1, Inf, 3)
   patch <- c("A", "B", "B")
 
-  diagnostics <- getPatchDiagnostics(xy, X, patches = patch, k = 1)
-  patch_diagnostics <- diagnostics$patch_diagnostics
-
-  expect_true(is.na(patch_diagnostics$x_sd[patch_diagnostics$patch == "A"]))
-  expect_equal(
-    patch_diagnostics$strict_component_fraction[
-      patch_diagnostics$patch == "A"
-    ],
-    1
+  expect_error(
+    getPatchDiagnostics(xy, X, patches = patch, k = 1),
+    "X must contain only finite values",
+    fixed = TRUE
   )
-  expect_equal(patch_diagnostics$x_n, c(1L, 1L))
-  expect_false("diagnostic_status" %in% names(patch_diagnostics))
 })
 
 
-test_that("ordinary missing X values are counted and excluded from SD", {
-  xy <- cbind(x = 1:4, y = 0)
-  X <- c(1, NA, 3, 5)
+test_that("missing X values are rejected", {
+  xy <- cbind(x = 1:3, y = 0)
 
-  diagnostics <- getPatchDiagnostics(
-    xy,
-    X,
-    patches = rep("A", 4),
-    k = 1
-  )$patch_diagnostics
-
-  expect_equal(diagnostics$x_n, 3)
-  expect_equal(diagnostics$x_sd, 2)
+  expect_error(
+    getPatchDiagnostics(
+      xy,
+      c(1, NA, 3),
+      patches = c("A", "A", "B"),
+      k = 1
+    ),
+    "X must contain only finite values",
+    fixed = TRUE
+  )
 })
 
 
