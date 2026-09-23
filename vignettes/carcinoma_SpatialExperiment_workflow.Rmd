@@ -247,8 +247,7 @@ de_result <- patchDE.spe(
   method = "limma",
   pearson = FALSE,
   tot = 'total',
-  return_residuals = TRUE,
-  resid_mse = FALSE
+  return_residuals = TRUE
 )
 ```
 

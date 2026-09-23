@@ -61,7 +61,7 @@ residuals from the specified assay and spatial coordinates from
 \examples{
 library(SpatialExperiment)
 spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
-spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance_to_fibroblast)]
+spe_use <- spe[,spe$celltype == "Cancer.cells"]
 spe_use <- getPatches.spe(
   spe = spe_use,
   X = "distance_to_fibroblast",

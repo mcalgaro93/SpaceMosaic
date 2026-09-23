@@ -65,7 +65,7 @@ expression results must be the same set; their order need not agree.
 library(SpatialExperiment)
 spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
 spe <- embedCellNeighborhoods.spe(spe, embedding = "PCA", ks = c(5, 50), tissue = 'sample_id')
-spe_use <- spe[,spe$celltype == "Cancer.cells" & stats::complete.cases(spe$distance_to_fibroblast)]
+spe_use <- spe[,spe$celltype == "Cancer.cells"]
 spe_use <- getPatches.spe(
   spe = spe_use,
   X = "distance_to_fibroblast",
