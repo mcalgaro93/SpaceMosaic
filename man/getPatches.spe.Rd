@@ -8,7 +8,7 @@ getPatches.spe(
   spe,
   X,
   npatches,
-  Z = "auto",
+  Z = NULL,
   alpha = 0.5,
   beta = 1,
   hunger_weight = 0.5,
@@ -46,8 +46,7 @@ column names in \code{colData(spe)}. Each column is scaled to unit SD by
 \item{Z}{Character string or \code{NULL}. Name of an entry in
 \code{reducedDimNames(spe)} holding per-cell context embeddings
 (cells x features). If supplied, patches will prefer Z-coherent regions.
-\code{NULL} disables this behaviour. The default, \code{"auto"}, uses the reduced
-dimension named \code{"Z"} if it exists in \code{spe}, and \code{NULL} otherwise.}
+Default \code{NULL} disables this behaviour.}
 
 \item{alpha}{Weight of the Z penalty. Typical range 0.2--1.0; default 0.5.
 Higher values force patches to respect microenvironment boundaries at the
