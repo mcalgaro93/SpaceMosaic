@@ -206,6 +206,9 @@ getPatches.spe <- function(spe, X, npatches,
   }
 
   xy <- SpatialExperiment::spatialCoords(spe)
+  if (is.null(rownames(xy))) {
+    rownames(xy) <- colnames(spe)
+  }
 
   if (missing(X) || is.null(X) || length(X) == 0) {
     stop("`X` must be a non-empty character vector of colData names.")
