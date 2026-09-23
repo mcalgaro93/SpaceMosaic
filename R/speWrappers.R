@@ -638,7 +638,7 @@ patchMetaAnalysis.spe <- function(
         embedding_name
     )
 
-    # Calculate patch-level embedding attributes, in DE patch order
+    # Calculate patch-level embedding attributes
     W <- getPatchAttributes(
         Z,
         patch
