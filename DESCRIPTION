@@ -35,7 +35,12 @@ Imports:
     Matrix,
     spatstat.geom,
     stats,
-    utils
+    utils,
+    methods,
+    S4Vectors,
+    SingleCellExperiment,
+    SpatialExperiment,
+    SummarizedExperiment
 Suggests:
     BiocStyle,
     circlize,
@@ -47,14 +52,15 @@ Suggests:
     MerfishData,
     patchwork,
     rmarkdown,
-    S4Vectors,
     shiny,
-    SpatialExperiment,
-    SummarizedExperiment,
     testthat (>= 3.0.0),
     tidyr,
     uwot,
-    viridis
+    viridis,
+    ggspavis,
+    dplyr,
+    tibble,
+    BiocGenerics
 VignetteBuilder: knitr
 Config/roxygen2/version: 8.0.0
 Config/testthat/edition: 3
