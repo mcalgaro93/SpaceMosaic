@@ -698,8 +698,7 @@ patchMetaAnalysis.spe <- function(
 #' @param assay_name Character; name of the assay in \code{spe} containing
 #'   the values to test (e.g. Pearson residuals). Default \code{"residuals"}.
 #' @param patch_column Name of the column in `colData(spe)` where patch assignments are
-#'   stored. Default `"patch"`. An existing column of the same name is
-#'   overwritten.
+#'   stored. Default `"patch"`.
 #' @param k Number of nearest neighbors used to construct the graph. If `k` is
 #'   not smaller than the number of observations, it is reduced to `n - 1` with
 #'   a warning. Default 10.
