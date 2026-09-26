@@ -8,13 +8,16 @@ patchDE(
   y,
   df,
   patch,
-  method = c("hasty", "limma"),
+  method = c("hasty", "limma", "spaMM"),
   pearson = FALSE,
   tot = NULL,
   resid_mse = FALSE,
   return_residuals = FALSE,
   verbose = TRUE,
-  BPPARAM = BiocParallel::SerialParam()
+  BPPARAM = BiocParallel::SerialParam(),
+  xy = NULL,
+  spatial_control = list(),
+  return_diagnostics = FALSE
 )
 }
 \arguments{
@@ -25,7 +28,8 @@ patchDE(
 \item{patch}{Vector of patch IDs}
 
 \item{method}{Differential-expression backend. \code{"hasty"} uses ordinary
-least squares and \code{"limma"} uses empirical-Bayes moderated inference.
+least squares, \code{"limma"} uses empirical-Bayes moderated inference, and
+\code{"spaMM"} fits spatial negative binomial models to raw counts.
 Default \code{"hasty"} for backward compatibility.}
 
 \item{pearson}{Logical; if TRUE, transform y to Pearson residuals before DE}
@@ -41,6 +45,14 @@ aligned with the rows and columns of \code{y}. Default FALSE.}
 
 \item{BPPARAM}{A \link[BiocParallel:BiocParallelParam]{BiocParallel::BiocParallelParam} object controlling
 patch-level parallelization. By default patches are processed serially.}
+
+\item{xy}{Two-column coordinate matrix, required for method = "spaMM".}
+
+\item{spatial_control}{Named list with optional \code{nu} (default 0.5) and
+\code{control} (fitme control list), passed to \code{\link[=spaMMDE]{spaMMDE()}}.}
+
+\item{return_diagnostics}{Logical; return per-gene, per-patch diagnostics
+for method = "spaMM". Default FALSE.}
 }
 \value{
 A list keyed by model variable. Each element contains \code{pvals},
@@ -57,7 +69,24 @@ patchDE: run DE over all patches
 \details{
 When \code{method = "limma"}, \code{\link[=limmaDE]{limmaDE()}} is called with \code{trend = FALSE}
 for Pearson residuals and \code{trend = TRUE} otherwise. Robust empirical-Bayes
-estimation is used in both cases.
+estimation is used in both cases. For \code{spaMM}, \code{tot} must contain positive
+library totals computed before gene filtering; \code{pearson}, \code{resid_mse} and
+\code{return_residuals} are not supported. Character predictors are converted to
+factors before splitting to preserve contrasts across patches.
+When \code{return_diagnostics = TRUE}, returns \code{list(de, diagnostics)}, mirroring
+the \code{list(de, residuals)} shape returned by \code{return_residuals = TRUE}; the
+diagnostics include patch IDs and list-column \code{dropped_predictors}. Pass
+the \code{de} component to \code{\link[=patchMetaAnalysis]{patchMetaAnalysis()}}.
+
+\code{spaMM} fits one negative binomial Matern model per gene and per patch, so
+its cost grows linearly in the number of genes and steeply in patch size.
+Restrict \code{y} to the genes of interest before calling: this backend is not
+meant to be run over a full transcriptome.
+
+The returned list carries \code{method} and \code{effect_scale} attributes for every
+backend. \code{effect_scale} is \code{"log"} for \code{spaMM}, whose coefficients are log
+fold changes, and \code{"input"} for \code{hasty} and \code{limma}, whose coefficients are
+on the scale of the supplied \code{y}. \code{\link[=patchMetaAnalysis]{patchMetaAnalysis()}} propagates both.
 }
 \examples{
 y <- cbind(gene_a = c(2, 4, 5, 8, 9, 13))

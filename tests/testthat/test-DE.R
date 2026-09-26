@@ -315,3 +315,15 @@ test_that("patchDE validates its DE method", {
     fixed = TRUE
   )
 })
+
+test_that("patchDE labels its result the same way for every backend", {
+  y <- cbind(gene_a = c(1, 3, 4, 8, 9, 12), gene_b = c(10, 8, 7, 3, 9, 7))
+  df <- data.frame(treatment = c(0, 1, 2, 0, 1, 2))
+  patch <- rep(c("one", "two"), each = 3)
+
+  for (method in c("hasty", "limma")) {
+    result <- patchDE(y, df, patch, method = method, verbose = FALSE)
+    expect_identical(attr(result, "method"), method)
+    expect_identical(attr(result, "effect_scale"), "input")
+  }
+})

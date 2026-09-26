@@ -206,7 +206,8 @@ pearsonResiduals <- function(y, tot) {
 #' @param df Data frame to be used as DE predictors
 #' @param patch Vector of patch IDs
 #' @param method Differential-expression backend. `"hasty"` uses ordinary
-#'   least squares and `"limma"` uses empirical-Bayes moderated inference.
+#'   least squares, `"limma"` uses empirical-Bayes moderated inference, and
+#'   `"spaMM"` fits spatial negative binomial models to raw counts.
 #'   Default `"hasty"` for backward compatibility.
 #' @param pearson Logical; if TRUE, transform y to Pearson residuals before DE
 #' @param tot Numeric vector of total counts per cell (required if pearson = TRUE)
@@ -216,9 +217,31 @@ pearsonResiduals <- function(y, tot) {
 #' @param verbose Show progress. Default TRUE.
 #' @param BPPARAM A [BiocParallel::BiocParallelParam] object controlling
 #'   patch-level parallelization. By default patches are processed serially.
+#' @param xy Two-column coordinate matrix, required for method = "spaMM".
+#' @param spatial_control Named list with optional `nu` (default 0.5) and
+#'   `control` (fitme control list), passed to [spaMMDE()].
+#' @param return_diagnostics Logical; return per-gene, per-patch diagnostics
+#'   for method = "spaMM". Default FALSE.
 #' @details When `method = "limma"`, [limmaDE()] is called with `trend = FALSE`
 #'   for Pearson residuals and `trend = TRUE` otherwise. Robust empirical-Bayes
-#'   estimation is used in both cases.
+#'   estimation is used in both cases. For `spaMM`, `tot` must contain positive
+#'   library totals computed before gene filtering; `pearson`, `resid_mse` and
+#'   `return_residuals` are not supported. Character predictors are converted to
+#'   factors before splitting to preserve contrasts across patches.
+#'   When `return_diagnostics = TRUE`, returns `list(de, diagnostics)`, mirroring
+#'   the `list(de, residuals)` shape returned by `return_residuals = TRUE`; the
+#'   diagnostics include patch IDs and list-column `dropped_predictors`. Pass
+#'   the `de` component to [patchMetaAnalysis()].
+#'
+#'   `spaMM` fits one negative binomial Matern model per gene and per patch, so
+#'   its cost grows linearly in the number of genes and steeply in patch size.
+#'   Restrict `y` to the genes of interest before calling: this backend is not
+#'   meant to be run over a full transcriptome.
+#'
+#'   The returned list carries `method` and `effect_scale` attributes for every
+#'   backend. `effect_scale` is `"log"` for `spaMM`, whose coefficients are log
+#'   fold changes, and `"input"` for `hasty` and `limma`, whose coefficients are
+#'   on the scale of the supplied `y`. [patchMetaAnalysis()] propagates both.
 #'
 #' @return A list keyed by model variable. Each element contains `pvals`,
 #'   `ests`, and `ses` matrices with genes in rows and patches in columns.
@@ -241,11 +264,13 @@ pearsonResiduals <- function(y, tot) {
 #' fit$residuals
 #'
 #' @export
-patchDE <- function(y, df, patch, method = c("hasty", "limma"),
+patchDE <- function(y, df, patch, method = c("hasty", "limma", "spaMM"),
                     pearson = FALSE, tot = NULL,
                     resid_mse = FALSE, return_residuals = FALSE,
                     verbose = TRUE,
-                    BPPARAM = BiocParallel::SerialParam()) {
+                    BPPARAM = BiocParallel::SerialParam(),
+                    xy = NULL, spatial_control = list(),
+                    return_diagnostics = FALSE) {
   method <- match.arg(method)
   if (length(patch) != nrow(y) || nrow(df) != nrow(y)) {
     stop("nrow(y), nrow(df), and length(patch) must be equal.")
@@ -258,6 +283,37 @@ patchDE <- function(y, df, patch, method = c("hasty", "limma"),
     if (is.null(tot)) {
       stop("tot must be provided when pearson = TRUE.")
     }
+  }
+
+  if (!is.logical(return_diagnostics) || length(return_diagnostics) != 1L ||
+      is.na(return_diagnostics)) stop("return_diagnostics must be TRUE or FALSE.")
+  if (return_diagnostics && method != "spaMM") {
+    stop("return_diagnostics is currently supported only for method = 'spaMM'.")
+  }
+  if (method == "spaMM") {
+    if (!identical(pearson, FALSE) || !identical(resid_mse, FALSE) || return_residuals) {
+      stop("spaMM requires raw counts: pearson, resid_mse and return_residuals must be FALSE.")
+    }
+    if (!is.matrix(xy) || !is.numeric(xy) || ncol(xy) != 2L ||
+        nrow(xy) != nrow(y) || any(!is.finite(xy))) {
+      stop("xy must have two finite numeric columns and one row per cell.")
+    }
+    if (!is.numeric(tot) || !is.null(dim(tot)) || length(tot) != nrow(y) ||
+        any(!is.finite(tot)) || any(tot <= 0)) {
+      stop("tot must contain one positive finite total per cell for spaMM.")
+    }
+    if (!is.list(spatial_control) ||
+        (length(spatial_control) && (is.null(names(spatial_control)) ||
+         anyNA(names(spatial_control)) || anyDuplicated(names(spatial_control)) ||
+         any(!names(spatial_control) %in% c("nu", "control"))))) {
+      stop("spatial_control must be a named list containing only nu and/or control.")
+    }
+    if (!is.data.frame(df)) stop("df must be a data frame for spaMM.")
+    for (j in seq_along(df)) {
+      if (is.character(df[[j]])) df[[j]] <- factor(df[[j]])
+    }
+  } else if (!is.null(xy) || length(spatial_control)) {
+    stop("xy and spatial_control are supported only for method = 'spaMM'.")
   }
 
   # get DE results per patch:
@@ -280,7 +336,7 @@ patchDE <- function(y, df, patch, method = c("hasty", "limma"),
   )
   names(cell_indices) <- patch_names
 
-  de_function <- switch(method, hasty = hastyDE, limma = limmaDE)
+  de_function <- switch(method, hasty = hastyDE, limma = limmaDE, spaMM = spaMMDE)
   analyze_patch <- function(cell_index) {
     ysub <- y[cell_index, , drop = FALSE]
     if (pearson) {
@@ -294,6 +350,12 @@ patchDE <- function(y, df, patch, method = c("hasty", "limma"),
     if (method == "limma") {
       de_args$trend <- !pearson
       de_args$robust <- TRUE
+    }
+    if (method == "spaMM") {
+      de_args$return_residuals <- NULL
+      de_args$xy <- xy[cell_index, , drop = FALSE]
+      de_args$tot <- tot[cell_index]
+      de_args <- c(de_args, spatial_control)
     }
     do.call(de_function, de_args)
   }
@@ -353,6 +415,18 @@ patchDE <- function(y, df, patch, method = c("hasty", "limma"),
       lapply(results, function(tmp) tmp$sigma2)
     )
     colnames(out[["resid_mse"]]) <- names(results)
+  }
+  attr(out, "method") <- method
+  attr(out, "effect_scale") <- if (method == "spaMM") "log" else "input"
+  if (return_diagnostics) {
+    diagnostics <- do.call(rbind, lapply(names(results), function(id) {
+      tab <- results[[id]]$diagnostics
+      tab$patch <- id
+      tab$dropped_predictors <- rep(list(results[[id]]$dropped_predictors), nrow(tab))
+      tab
+    }))
+    rownames(diagnostics) <- NULL
+    return(list(de = out, diagnostics = diagnostics))
   }
   if (return_residuals) {
     return(list(de = out, residuals = residual_matrix))
