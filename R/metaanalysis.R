@@ -47,6 +47,12 @@ getPatchAttributes <- function(Z, patch) {
 #' For each patch, finds k nearest neighbors in W-space, computes an
 #' inverse-variance-weighted prior from those neighbors' estimates,
 #' then performs a Bayesian normal-normal update with the patch's own estimate.
+#' Non-finite estimates or non-positive/non-finite SEs in neighbors are excluded.
+#' Patches without a valid local fit remain NA rather than being imputed: their
+#' posterior estimate, SE and p-value are all NA. Earlier versions reported a
+#' p-value of 1 in that situation, which was indistinguishable from an observed
+#' non-significant result. The `method` and `effect_scale` attributes of `DEobj`
+#' are carried over to the result.
 #'
 #' @param DEobj Results of patchDE. A list keyed by variable name, each with
 #'   $ests, $ses, $pvals matrices (genes x patches).
@@ -116,6 +122,8 @@ patchMetaAnalysis <- function(DEobj, W, k = 15,
       subgroups = subgroups
     )
   }
+  attr(out, "effect_scale") <- attr(DEobj, "effect_scale")
+  attr(out, "method") <- attr(DEobj, "method")
   out
 }
 
@@ -143,7 +151,6 @@ patchMetaAnalysis <- function(DEobj, W, k = 15,
 .bayesianUpdate <- function(ests, ses, nn, patch_names) {
   ngenes <- nrow(ests)
   np <- ncol(ests)
-  k <- ncol(nn)
 
   post_ests <- matrix(NA_real_, nrow = ngenes, ncol = np)
   post_ses <- matrix(NA_real_, nrow = ngenes, ncol = np)
@@ -157,34 +164,32 @@ patchMetaAnalysis <- function(DEobj, W, k = 15,
     ## inverse-variance-weighted prior from neighbors
     nbr_ests <- ests[, nbr_idx, drop = FALSE]  # genes x k
     nbr_ses <- ses[, nbr_idx, drop = FALSE]
-    nbr_prec <- 1 / (nbr_ses^2)
-    ## handle infinite/NA precision
+    valid_neighbors <- is.finite(nbr_ests) & is.finite(nbr_ses) & nbr_ses > 0
+    nbr_prec <- matrix(0, nrow(nbr_ses), ncol(nbr_ses))
+    nbr_prec[valid_neighbors] <- 1 / nbr_ses[valid_neighbors]^2
     nbr_prec[!is.finite(nbr_prec)] <- 0
-
+    nbr_ests[!valid_neighbors] <- 0
     prior_prec <- rowSums(nbr_prec)
-    prior_mean <- ifelse(prior_prec > 0,
-                         rowSums(nbr_ests * nbr_prec) / prior_prec,
-                         0)
-    prior_se <- ifelse(prior_prec > 0, 1 / sqrt(prior_prec), Inf)
+    prior_weighted <- rowSums(nbr_ests * nbr_prec)
 
-    ## patch's own data
+    # Missing local fits stay missing; neighbors do not impute failed fits.
     patch_est <- ests[, j]
     patch_se <- ses[, j]
-    patch_prec <- 1 / (patch_se^2)
-    patch_prec[!is.finite(patch_prec)] <- 0
-
-    ## Bayesian update: normal-normal conjugate
+    valid <- is.finite(patch_est) & is.finite(patch_se) & patch_se > 0
+    patch_prec <- rep(0, ngenes)
+    patch_prec[valid] <- 1 / patch_se[valid]^2
+    valid <- valid & is.finite(patch_prec) & patch_prec > 0
     post_prec <- prior_prec + patch_prec
-    post_ests[, j] <- ifelse(post_prec > 0,
-                             (prior_mean * prior_prec + patch_est * patch_prec) / post_prec,
-                             patch_est)
-    post_ses[, j] <- ifelse(post_prec > 0, 1 / sqrt(post_prec), patch_se)
+    valid <- valid & is.finite(post_prec) & post_prec > 0
+    post_ests[valid, j] <- (prior_weighted[valid] +
+                           patch_est[valid] * patch_prec[valid]) / post_prec[valid]
+    post_ses[valid, j] <- 1 / sqrt(post_prec[valid])
   }
 
   ## two-sided p-values from posterior
   z <- post_ests / post_ses
   post_pvals <- 2 * stats::pnorm(-abs(z))
-  post_pvals[!is.finite(z)] <- 1
+  post_pvals[is.na(z)] <- NA_real_
 
   list(ests = post_ests, ses = post_ses, pvals = post_pvals)
 }

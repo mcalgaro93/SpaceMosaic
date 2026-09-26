@@ -42,4 +42,10 @@ for significant negative regions, and 0 elsewhere.
 For each patch, finds k nearest neighbors in W-space, computes an
 inverse-variance-weighted prior from those neighbors' estimates,
 then performs a Bayesian normal-normal update with the patch's own estimate.
+Non-finite estimates or non-positive/non-finite SEs in neighbors are excluded.
+Patches without a valid local fit remain NA rather than being imputed: their
+posterior estimate, SE and p-value are all NA. Earlier versions reported a
+p-value of 1 in that situation, which was indistinguishable from an observed
+non-significant result. The \code{method} and \code{effect_scale} attributes of \code{DEobj}
+are carried over to the result.
 }

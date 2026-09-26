@@ -1,0 +1,20 @@
+test_that("invalid neighbors do not contaminate valid meta-analysis results", {
+    est <- matrix(c(2, NA, 4, 8), 1, dimnames = list("gene", letters[1:4]))
+    se <- matrix(c(1, 1, 2, 0), 1, dimnames = dimnames(est))
+    nn <- matrix(c(2, 3, 4, 1, 3, 4, 1, 2, 4, 1, 2, 3), 4, byrow = TRUE)
+    result <- .bayesianUpdate(est, se, nn, letters[1:4])
+    expect_equal(unname(result$ests[1, c(1, 3)]), rep((2 + 4 / 4) / 1.25, 2))
+    expect_equal(unname(result$ses[1, c(1, 3)]), rep(1 / sqrt(1.25), 2))
+    expect_true(all(is.na(result$ests[1, c(2, 4)])))
+    expect_true(all(is.na(result$pvals[1, c(2, 4)])))
+})
+
+test_that("a valid local fit survives when all neighbors are invalid", {
+    est <- matrix(c(2, NA, Inf), 1, dimnames = list("gene", letters[1:3]))
+    se <- matrix(c(1, NA, -1), 1, dimnames = dimnames(est))
+    nn <- matrix(c(2, 3, 1, 3, 1, 2), 3, byrow = TRUE)
+    result <- .bayesianUpdate(est, se, nn, letters[1:3])
+    expect_equal(result$ests[1, 1], 2)
+    expect_equal(result$ses[1, 1], 1)
+    expect_equal(result$pvals[1, 1], 2 * pnorm(-2))
+})
