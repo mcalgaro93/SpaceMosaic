@@ -112,3 +112,43 @@ summary  <- summarizeSubgroups(meta, patches, cellmeta)
 - **FNN** — k-nearest neighbors in patch attribute space
 - **igraph** — connected component analysis for contiguity enforcement and subgroup detection
 - **Matrix** — sparse matrix operations throughout
+
+## Spatial differential expression within patches
+
+The optional `spaMM` backend fits raw counts with a negative binomial model,
+a library-size offset, and a Matern spatial random effect. The smoothness is
+fixed within each fit at the requested `nu` value, which defaults to `0.5`.
+Install `spaMM` from CRAN before using this backend.
+
+```r
+fit <- patchDE(
+    y = counts, df = predictors, patch = patches,
+    method = "spaMM", xy = xy, tot = totalcounts,
+    spatial_control = list(nu = 0.5),
+    return_diagnostics = TRUE,
+    BPPARAM = BiocParallel::SnowParam(workers = 2)
+)
+fit$diagnostics
+meta <- patchMetaAnalysis(fit$de, W)
+```
+
+Rows of `counts`, `predictors`, `xy`, `patches`, and `totalcounts` must refer to
+cells in the same order. Library totals must be computed before gene filtering.
+Each patch must have at least two cells and two distinct spatial locations.
+Cells with missing patch assignments are excluded. Character predictors are
+converted to factors before splitting to retain consistent contrasts.
+
+One model is fitted per gene and per patch, and every fit re-estimates the
+spatial scale, the spatial variance and the overdispersion. Cost grows linearly
+in the number of genes and steeply in patch size, so **restrict `counts` to the
+genes of interest before calling**: this backend is not meant to run over a full
+transcriptome.
+
+Coefficients and SEs are on the natural-log scale; Wald p-values are unadjusted.
+A failed fit returns missing inference and a diagnostic message. A fit that only
+produced a spaMM warning keeps its estimates and is flagged `fit_warning` in the
+diagnostics, so filter on `status` to decide what to keep. Meta-analysis excludes
+invalid neighbors and leaves invalid local fits missing. Small-patch statistical
+calibration remains to be validated. Pearson pre-transformation, residual MSE,
+and residual output are not supported by this backend. See `spaMMDE()` for the
+single-patch interface.
