@@ -57,7 +57,7 @@ assignments directly from `spe`. `embedCellNeighborhoods.spe()` and
 plus `subgroups_summary` when requested) without `spe`, so intermediate
 matrices rarely need to be built by hand.
 
-# 1. Data and analysis question
+# Data and analysis question
 
 Single-cell spatial transcriptomics (6k-plex CosMx SMI) dataset of human basal-cell carcinoma from https://zenodo.org/records/14330691 was preprocessed before the analysis.
 The original Seurat object was converted to a `SpatialExperiment` object, and data was filtered for Patient A and FOVs 39 to 41. This consists of a nodular-ulcerated BCC sample.
@@ -70,10 +70,9 @@ We study the exposure of Cancer Cells near Fibroblasts.
 
 ```{r define-x-and-subset}
 # Example: distance to the nearest cell of a selected explanatory population.
-spe_explanatory <- spe[,spe$celltype == "Fibroblast"]
 
 distance_to_explanatory <- FNN::get.knnx(
-  data = spatialCoords(spe_explanatory),
+  data = spatialCoords(spe[,spe$celltype == "Fibroblast"]),
   query = spatialCoords(spe),
   k = 1
 )$nn.dist[, 1]
@@ -81,7 +80,7 @@ distance_to_explanatory <- FNN::get.knnx(
 spe$distance <- log1p(distance_to_explanatory)
 ```
 
-# 2. Cellular-neighborhood embedding ($Z$)
+# Cellular-neighborhood embedding ($Z$)
 
 `embedCellNeighborhoods()` averages a cell-level embedding over spatial
 neighbor networks at multiple scales. Compute $Z$ on all cells before taking
@@ -101,7 +100,7 @@ spe <- embedCellNeighborhoods.spe(
 head(reducedDim(spe, "Z")[, 1:5], 3)
 ```
 
-# 3. Patch identification and quality control
+# Patch identification and quality control
 
 `getPatches()` favors spatially compact, contiguous regions that retain
 within-patch variation in $X$ while remaining coherent in $Z$.
@@ -226,7 +225,7 @@ plotCoords(spe,annotate = 'distance_use',in_tissue=NULL, y_reverse = FALSE)  +
   theme_minimal()
 ```
 
-# 4. Within-patch differential expression
+# Within-patch differential expression
 
 `patchDE.spe()` wraps `patchDE()` for a `SpatialExperiment`: it takes the
 assay named by `assay` (genes x cells), transposes it internally, builds the
@@ -251,7 +250,7 @@ de_result <- patchDE.spe(
 )
 ```
 
-# 5. Borrowing information across patches ($W$)
+# Borrowing information across patches ($W$)
 
 `patchMetaAnalysis.spe()` derives patch-level attributes ($W$) by averaging
 the embedding named by `embedding_name` (default `"Z"`, taken from
@@ -271,7 +270,7 @@ meta_result <- patchMetaAnalysis.spe(
 
 
 
-# 6. Result summaries and spatial validation
+# Result summaries and spatial validation
 
 Rank genes using a criterion chosen in advance. The example below uses the
 fraction of patches with an absolute posterior Z-score above 2. Effect sizes,
