@@ -7,7 +7,7 @@ output:
     toc: true
     toc_float: true
 vignette: >
-  %\VignetteIndexEntry{SpaceMosaic analysis template}
+  %\VignetteIndexEntry{Human basal-cell carcinoma study with SpatialExperiment}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
