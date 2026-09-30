@@ -46,8 +46,15 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
       stop("`tissue` = '", tissue, "' not found in colData(spe). ",
            "Available: ", paste(colnames(colData(spe)), collapse = ", "))
     }
+  
+    tissue_ids <- if (is.null(tissue)) {
+      NULL
+    } else {
+      colData(spe)[[tissue]]
+    }
+  
     embedding_mat <- SingleCellExperiment::reducedDim(spe, embedding)
-    reducedDim(spe, name) <- embedCellNeighborhoods(embedding_mat, spatialCoords(spe), ks, tissue = colData(spe)[[tissue]])
+    reducedDim(spe, name) <- embedCellNeighborhoods(embedding_mat, spatialCoords(spe), ks, tissue = tissue_ids)
     spe
 }
 
