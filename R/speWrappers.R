@@ -39,7 +39,7 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
     }
 
     if (!embedding %in% reducedDimNames(spe)) {
-      stop("`embedding` = '", SingleCellExperiment::embedding, "' not found in reducedDimNames(spe). ",
+      stop("`embedding` = '", embedding, "' not found in reducedDimNames(spe). ",
            "Available: ", paste(SingleCellExperiment::reducedDimNames(spe), collapse = ", "))
     }
     if (!is.null(tissue) && !tissue %in% colnames(SummarizedExperiment::colData(spe))) {
