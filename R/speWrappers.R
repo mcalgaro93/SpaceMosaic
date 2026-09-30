@@ -39,23 +39,23 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
     }
 
     if (!embedding %in% reducedDimNames(spe)) {
-      stop("`embedding` = '", embedding, "' not found in reducedDimNames(spe). ",
-           "Available: ", paste(reducedDimNames(spe), collapse = ", "))
+      stop("`embedding` = '", SingleCellExperiment::embedding, "' not found in reducedDimNames(spe). ",
+           "Available: ", paste(SingleCellExperiment::reducedDimNames(spe), collapse = ", "))
     }
-    if (!is.null(tissue) && !tissue %in% colnames(colData(spe))) {
+    if (!is.null(tissue) && !tissue %in% colnames(SummarizedExperiment::colData(spe))) {
       stop("`tissue` = '", tissue, "' not found in colData(spe). ",
-           "Available: ", paste(colnames(colData(spe)), collapse = ", "))
+           "Available: ", paste(colnames(SummarizedExperiment::colData(spe)), collapse = ", "))
     }
   
     tissue_ids <- if (is.null(tissue)) {
       NULL
     } else {
-      colData(spe)[[tissue]]
+      SummarizedExperiment::colData(spe)[[tissue]]
     }
   
     embedding_mat <- SingleCellExperiment::reducedDim(spe, embedding)
-    reducedDim(spe, name) <- embedCellNeighborhoods(embedding_mat, spatialCoords(spe), ks, tissue = tissue_ids)
-    spe
+    SingleCellExperiment::reducedDim(spe, name) <- embedCellNeighborhoods(embedding_mat, spatialCoords(spe), ks, tissue = tissue_ids)
+    return(spe)
 }
 
 
@@ -234,10 +234,10 @@ getPatches.spe <- function(spe, X, npatches,
         stop("`Z` must be NULL or a single character string naming a reduced dimension.")
     }
 
-    if (!Z %in% reducedDimNames(spe)) {
+    if (!Z %in% SingleCellExperiment::reducedDimNames(spe)) {
         stop(
         "`Z` = '", Z, "' not found in reducedDimNames(spe). ",
-        "Available: ", paste(reducedDimNames(spe), collapse = ", ")
+        "Available: ", paste(SingleCellExperiment::reducedDimNames(spe), collapse = ", ")
         )
     }
 
@@ -310,7 +310,7 @@ getPatches.spe <- function(spe, X, npatches,
       )
       metadata(spe)$SpaceMosaic$patch_polys <- patch_polys
     }
-    spe
+    return(spe)
 }
 
 
@@ -506,9 +506,7 @@ patchDE.spe <- function(
     }
 
     out$spe <- spe
-
-    out
-
+    return(out)
 }
 
 #' Meta-analyse patch-level differential expression across an embedding
@@ -688,8 +686,7 @@ patchMetaAnalysis.spe <- function(
             )[, cellmeta_cols, drop = FALSE]
         )
     }
-
-    out
+    return(out)
 }
 
 #'   moranTest() method for \code{SpatialExperiment} objects. Extracts
@@ -775,5 +772,5 @@ moranTest.spe <- function(spe, assay_name = 'residuals' , patch_column = "patch"
                                           alternative = alternative,
                                           p_adjust_method = p_adjust_method,
                                           adjustment_scope = adjustment_scope)
-                  res
+                  return(res)
                       }
