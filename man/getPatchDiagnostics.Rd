@@ -9,7 +9,8 @@ getPatchDiagnostics(xy, X, patches, k = 10L, strict_k = NULL)
 \arguments{
 \item{xy}{Numeric matrix with cells in rows and x/y coordinates in columns.}
 
-\item{X}{Numeric vector or matrix with cells in rows.}
+\item{X}{Numeric vector or matrix with cells in rows. Must contain only
+finite values.}
 
 \item{patches}{Final patch vector or the list returned by
 \code{getPatches(log_iters = TRUE)}. \code{NA} denotes an unassigned cell. A vector
@@ -25,10 +26,10 @@ greater than \code{k}. \code{NULL} uses \code{min(5, k)}.}
 \value{
 A list with three data frames:
 \describe{
-\item{patch_diagnostics}{One row per patch. A single \code{X} gives \code{x_sd}
-and \code{x_n}; multiple columns give \verb{x_sd_<name>} and \verb{x_n_<name>}.
-Other columns report patch size, strict connectivity, the first k with
-full connectivity, and membership stability.}
+\item{patch_diagnostics}{One row per patch. A single \code{X} gives \code{x_sd};
+multiple columns give \verb{x_sd_<name>}. Other columns report patch size,
+strict connectivity, the first k with full connectivity, and
+membership stability.}
 \item{assignment_summary}{Cell assignment counts and effective k values.}
 \item{connectivity_curve}{\code{patch}, \code{k}, and \code{component_fraction}, where
 the fraction is the largest connected component divided by patch size.}
@@ -45,13 +46,11 @@ The metrics describe different aspects of patch quality.
 
 \describe{
 \item{\code{n_cells}}{Number of cells assigned to the patch.}
-\item{\code{x_sd} and \code{x_n}}{\code{x_sd} measures variation in a design variable
-within the patch. Values near zero indicate little within-patch contrast
-for estimating its effect. Larger values indicate more contrast, but the
-magnitude depends on the scale of \code{X}. \code{x_n}
-is the number of finite values used.
-The SD is \code{NA} with fewer than two finite values or if the patch contains
-\code{NaN} or infinite values.}
+\item{\code{x_sd}}{Measures variation in a design variable within the patch.
+Values near zero indicate little within-patch contrast for estimating
+its effect. Larger values indicate more contrast, but the magnitude
+depends on the scale of \code{X}. It is \code{NA} for patches with fewer than
+two cells.}
 \item{\code{strict_component_fraction}}{Fraction of patch cells in the largest
 connected component at \code{strict_k}. One indicates full connectivity;
 smaller values indicate greater fragmentation.}
