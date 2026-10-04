@@ -162,14 +162,14 @@ patch_data$connectivity <- factor(
 )
 
 ggplot(patch_data, aes(x = n_cells, y = x_sd)) +
-  geom_point(aes(color = membership_stability, shape = connectivity), size = 2) +
-  scale_color_viridis_c(limits = c(0, 1), na.value = "grey70") +
-  scale_shape_manual(values = c(Connected = 16, Fragmented = 4)) +
+  geom_point(aes(fill = membership_stability, shape = connectivity), size = 3) +
+  scale_fill_viridis_c(limits = c(0, 1), na.value = "grey70") +
+  scale_shape_manual(values = c(Connected = 21, Fragmented = 24)) +
   theme_minimal() +
   labs(
     x = "Cells per patch",
     y = "Within-patch SD of immune-neighbor count",
-    color = "Membership stability",
+    fill = "Membership stability",
     shape = "Connectivity"
   )
 ```
@@ -434,10 +434,10 @@ patch_data_grid$connectivity <- factor(
   levels = c("Connected", "Fragmented")
 )
 ggplot(patch_data_grid, aes(n_cells, x_sd)) +
-  geom_point(aes(color = membership_stability, shape = connectivity), size = 2) +
-  facet_wrap(~npatches, scales = "free_x") +
-  scale_color_viridis_c(limits = c(0, 1), na.value = "grey70") +
-  scale_shape_manual(values = c(Connected = 16, Fragmented = 4)) +
+  geom_point(aes(fill = membership_stability, shape = connectivity), size = 3) +
+  facet_wrap(~ npatches, scales = "free_x") +
+  scale_fill_viridis_c(limits = c(0, 1), na.value = "grey70") +
+  scale_shape_manual(values = c(Connected = 21, Fragmented = 24)) +
   theme_minimal() +
   labs(x = "Cells per patch", y = "Within-patch SD of immune-neighbor count",
        color = "Membership stability", shape = "Connectivity")
