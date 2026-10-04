@@ -163,17 +163,17 @@ min_x_sd <- 0.1
 min_stability <- 0.9
 
 ggplot(patch_diagnostics, aes(n_cells, selected_x_sd)) +
-  geom_point(aes(color = membership_stability, shape = connectivity), size = 2) +
+  geom_point(aes(fill = membership_stability, shape = connectivity), size = 3) +
   geom_vline(xintercept = min_cells, linetype = "dashed", color = "red") +
   geom_hline(yintercept = min_x_sd, linetype = "dashed", color = "red") +
-  scale_color_viridis_c(limits = c(0, 1), na.value = "grey70") +
-  scale_shape_manual(values = c(Connected = 16, Fragmented = 4)) +
+  scale_fill_viridis_c(limits = c(0, 1), na.value = "grey70") +
+  scale_shape_manual(values = c(Connected = 21, Fragmented = 24)) +
   theme_minimal() +
   labs(
     title = "Core patch diagnostics",
     x = "Cells per patch",
     y = "Within-patch standard deviation of X",
-    color = "Membership stability",
+    fill = "Membership stability",
     shape = "Connectivity"
   )
 
@@ -206,15 +206,14 @@ visually that patches trace coherent regions of the exposure variable rather
 than cutting across it.
 
 ```{r patch-map}
-library(ggspavis)
-
 spe$distance_use <- ifelse(
   spe$celltype == "Cancer.cells",
   spe$distance,
   NA
 )
 
-plotCoords(spe,annotate = 'distance_use',in_tissue=NULL, y_reverse = FALSE)  +
+ggplot(as.data.frame(spatialCoords(spe)), aes(XY_1, XY_2)) +
+  geom_point(aes(color = spe$distance_use), size = 0.5) +
   geom_polygon(
     data = metadata(spe_use)$SpaceMosaic$patch_polys,
     aes(x, y, group = patch),
@@ -222,7 +221,13 @@ plotCoords(spe,annotate = 'distance_use',in_tissue=NULL, y_reverse = FALSE)  +
   ) +
   scale_color_viridis_c() +
   coord_fixed() +
-  theme_minimal()
+  theme_minimal() + 
+  labs(
+    title = "Distance to nearest Fibroblast",
+    x = "x",
+    y = "y",
+    color = "log1p(distance)"
+  )
 ```
 
 # Within-patch differential expression

@@ -57,7 +57,6 @@ Suggests:
     tidyr,
     uwot,
     viridis,
-    ggspavis,
     dplyr,
     tibble,
     BiocGenerics
