@@ -9,7 +9,7 @@ moranTest(
   xy,
   patch = NULL,
   k = 10L,
-  n_permutations = 999L,
+  n_permutations = 0L,
   alternative = c("greater", "less", "two.sided"),
   p_adjust_method = "BH",
   adjustment_scope = c("global", "patch", "gene")
@@ -30,15 +30,18 @@ treats all observations as a single patch named \code{"all"}.}
 not smaller than the number of observations, it is reduced to \code{n - 1} with
 a warning. Default 10.}
 
-\item{n_permutations}{Number of random permutations used to calculate the
-empirical p-value. Default 999.}
+\item{n_permutations}{Non-negative integer giving the number of random
+permutations used to calculate the empirical p-value. Use 0 for a
+descriptive calculation without p-values. Default 0.}
 
 \item{alternative}{Direction of the alternative hypothesis: \code{"greater"}
 tests for positive spatial autocorrelation, \code{"less"} for negative spatial
-autocorrelation, and \code{"two.sided"} for either direction.}
+autocorrelation, and \code{"two.sided"} for either direction. Used only when
+\code{n_permutations > 0}.}
 
 \item{p_adjust_method}{Method passed to \code{\link[stats:p.adjust]{stats::p.adjust()}} for multiple-test
-correction. Use \code{"none"} to leave p-values unadjusted. Default \code{"BH"}.}
+correction. Use \code{"none"} to leave p-values unadjusted. This has no effect
+when \code{n_permutations = 0}. Default \code{"BH"}.}
 
 \item{adjustment_scope}{Scope of the multiple-test correction: \code{"global"}
 across every gene-patch test, \code{"patch"} separately within each patch, or
@@ -48,15 +51,17 @@ across every gene-patch test, \code{"patch"} separately within each patch, or
 A data frame with one row per gene and patch. It contains patch and
 gene identifiers, number of cells, observed and expected Moran's I, raw and
 adjusted empirical p-values, graph and permutation settings, and \code{status}.
-A status of \code{"ok"} indicates a completed test; non-testable inputs such as
+Raw and adjusted p-values are \code{NA} when \code{n_permutations = 0}. A status of
+\code{"ok"} indicates a completed calculation; non-testable inputs such as
 constant or non-finite residuals return missing statistics with an
-explanatory status rather than stopping the remaining tests.
+explanatory status rather than stopping the remaining calculations.
 }
 \description{
-Build a symmetric binary k-nearest-neighbor graph within each patch and test
-global Moran's I by randomly permuting the supplied residuals. A vector
-performs one test; a cells by genes matrix performs one test per gene and
-patch. Residuals may come from \code{\link[=patchDE]{patchDE()}} with
+Build a symmetric binary k-nearest-neighbor graph within each patch and
+calculate global Moran's I for the supplied residuals. Optionally, compare
+the observed statistic with random permutations to obtain an empirical
+p-value. A vector performs one calculation; a cells by genes matrix performs
+one calculation per gene and patch. Residuals may come from \code{\link[=patchDE]{patchDE()}} with
 \code{return_residuals = TRUE}, from \code{\link[=hastyDE]{hastyDE()}}, or from any other fitted model.
 }
 \details{
@@ -67,15 +72,33 @@ neighboring residuals tend to be dissimilar. A value near its expectation
 under random spatial arrangement provides little evidence of residual
 spatial autocorrelation.
 
-The observed statistic is compared with statistics obtained by randomly
-permuting the residuals while keeping the spatial graph fixed. The empirical
-p-value is calculated as \code{(b + 1) / (n_permutations + 1)}, where \code{b} is the
+Under random spatial arrangement, the finite-sample expectation is
+\code{-1 / (n - 1)}, where \code{n} is the number of observations in the patch. This
+expectation is calculated analytically and does not require permutations.
+For descriptive screening of positive autocorrelation in patches with at
+least 50 observations, values between the expectation and 0.1 often indicate
+little residual structure, values from 0.1 to 0.3 indicate weak structure,
+and values above 0.3 warrant inspection of residual maps and
+model-sensitivity analyses. Values substantially below the expectation may
+indicate negative spatial structure and also warrant inspection. These
+ranges are diagnostic guides, not inferential thresholds: interpretation
+also depends on patch geometry and the spatial weights graph.
+
+By default, \code{n_permutations = 0} calculates Moran's I descriptively and
+returns missing raw and adjusted p-values. With a positive number of
+permutations, the observed statistic is compared with statistics obtained
+by randomly permuting the residuals while keeping the spatial graph fixed.
+The empirical p-value is \code{(b + 1) / (n_permutations + 1)}, where \code{b} is the
 number of permuted statistics at least as extreme as the observed one. Thus,
 the smallest attainable p-value is \code{1 / (n_permutations + 1)}.
 }
 \examples{
 xy <- cbind(x = 1:5, y = rep(0, 5))
 residuals <- c(-2, -1, 0, 1, 2)
+# Descriptive Moran's I (the default)
+moranTest(residuals, xy, k = 2)
+
+# Request permutation-based inference explicitly
 set.seed(1)
 moranTest(residuals, xy, k = 2, n_permutations = 19)
 

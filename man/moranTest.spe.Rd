@@ -11,7 +11,7 @@ moranTest.spe(
   assay_name = "residuals",
   patch_column = "patch",
   k = 10L,
-  n_permutations = 999L,
+  n_permutations = 0L,
   alternative = c("greater", "less", "two.sided"),
   p_adjust_method = "BH",
   adjustment_scope = c("global", "patch", "gene")
@@ -30,15 +30,18 @@ stored. Default \code{"patch"}.}
 not smaller than the number of observations, it is reduced to \code{n - 1} with
 a warning. Default 10.}
 
-\item{n_permutations}{Number of random permutations used to calculate the
-empirical p-value. Default 999.}
+\item{n_permutations}{Non-negative integer giving the number of random
+permutations used to calculate the empirical p-value. Use 0 for a
+descriptive calculation without p-values. Default 0.}
 
 \item{alternative}{Direction of the alternative hypothesis: \code{"greater"}
 tests for positive spatial autocorrelation, \code{"less"} for negative spatial
-autocorrelation, and \code{"two.sided"} for either direction.}
+autocorrelation, and \code{"two.sided"} for either direction. Used only when
+\code{n_permutations > 0}.}
 
 \item{p_adjust_method}{Method passed to \code{\link[stats:p.adjust]{stats::p.adjust()}} for multiple-test
-correction. Use \code{"none"} to leave p-values unadjusted. Default \code{"BH"}.}
+correction. Use \code{"none"} to leave p-values unadjusted. This has no effect
+when \code{n_permutations = 0}. Default \code{"BH"}.}
 
 \item{adjustment_scope}{Scope of the multiple-test correction: \code{"global"}
 across every gene-patch test, \code{"patch"} separately within each patch, or
@@ -48,9 +51,10 @@ across every gene-patch test, \code{"patch"} separately within each patch, or
 A data frame with one row per gene and patch. It contains patch and
 gene identifiers, number of cells, observed and expected Moran's I, raw and
 adjusted empirical p-values, graph and permutation settings, and \code{status}.
-A status of \code{"ok"} indicates a completed test; non-testable inputs such as
+Raw and adjusted p-values are \code{NA} when \code{n_permutations = 0}. A status of
+\code{"ok"} indicates a completed calculation; non-testable inputs such as
 constant or non-finite residuals return missing statistics with an
-explanatory status rather than stopping the remaining tests.
+explanatory status rather than stopping the remaining calculations.
 }
 \description{
 moranTest() method for \code{SpatialExperiment} objects. Extracts

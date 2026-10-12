@@ -733,6 +733,8 @@ diagnostic_fit2 <- patchDE(
 
 The diagnostic regression uses exactly the same response transformation and design as the original Scenario 2 analysis. Only the genes and patches are filtered. `patchDE()` returns a residual matrix aligned with the filtered cells, which can be passed directly to `moranTest()`. The result is a data frame of Moran's I statistics (observed) for each gene-patch combination.
 
+The default call to `moranTest()` calculates observed and expected Moran's I without permutations, which is appropriate for fast descriptive screening. Here we request 999 permutations explicitly because this example also reports empirical p-values and applies a multiple-testing correction across all gene-patch combinations included in the diagnostic set.
+
 ```{r scenario2-moran-test}
 set.seed(123)
 moran2 <- moranTest(

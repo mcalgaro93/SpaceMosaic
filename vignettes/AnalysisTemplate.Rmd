@@ -302,6 +302,14 @@ interest, request the residuals, and pass one residual vector to `moranTest()`.
 Filtering is explicit so that `y`, `df`, `patch`, and the spatial coordinates
 remain aligned.
 
+By default, `moranTest()` returns the observed Moran's I and its finite-sample
+expectation, $-1/(n-1)$, without running permutations. This fast descriptive
+mode can be applied broadly to identify gene-patch combinations that warrant
+inspection. Values above 0.3 generally merit examination of the residual map
+and a model-sensitivity analysis, but this is a descriptive guide rather than
+an inferential threshold. Set `n_permutations` to a positive integer only when
+an empirical p-value is needed.
+
 When `pearson = TRUE`, `total_counts` must remain the library totals calculated
 from the original count matrix. Do not recompute them after selecting genes.
 The residual matrix returned by `patchDE()` has the same rows and columns as
@@ -324,6 +332,16 @@ diagnostic_fit <- patchDE(
 
 selected_xy <- xy[use, , drop = FALSE][selected_cells, , drop = FALSE]
 
+# Fast descriptive calculation
+moran_description <- moranTest(
+  residuals = diagnostic_fit$residuals,
+  xy = selected_xy,
+  patch = patch[selected_cells],
+  k = 10
+)
+moran_description
+
+# Optional permutation-based inference
 set.seed(123)
 moran_result <- moranTest(
   residuals = diagnostic_fit$residuals,
@@ -340,6 +358,11 @@ Here, a small `p_value` with `alternative = "greater"` indicates that similar
 residuals remain spatially clustered within the selected patch. This suggests
 that the fitted model has not captured all spatial structure; it does not by
 itself identify the missing biological or technical covariate.
+
+When descriptive Moran's I values are used to select combinations for
+permutation testing, the follow-up p-values should be treated as exploratory.
+For formal false-discovery control, the correction must refer to the complete
+family of gene-patch combinations considered during screening.
 
 # 6. Patch attributes ($W$) and local meta-analysis
 

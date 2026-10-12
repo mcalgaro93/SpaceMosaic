@@ -1,9 +1,10 @@
 #' Test residual spatial autocorrelation with Moran's I
 #'
-#' Build a symmetric binary k-nearest-neighbor graph within each patch and test
-#' global Moran's I by randomly permuting the supplied residuals. A vector
-#' performs one test; a cells by genes matrix performs one test per gene and
-#' patch. Residuals may come from [patchDE()] with
+#' Build a symmetric binary k-nearest-neighbor graph within each patch and
+#' calculate global Moran's I for the supplied residuals. Optionally, compare
+#' the observed statistic with random permutations to obtain an empirical
+#' p-value. A vector performs one calculation; a cells by genes matrix performs
+#' one calculation per gene and patch. Residuals may come from [patchDE()] with
 #' `return_residuals = TRUE`, from [hastyDE()], or from any other fitted model.
 #'
 #' Moran's I measures whether observations connected in the spatial graph tend
@@ -13,9 +14,22 @@
 #' under random spatial arrangement provides little evidence of residual
 #' spatial autocorrelation.
 #'
-#' The observed statistic is compared with statistics obtained by randomly
-#' permuting the residuals while keeping the spatial graph fixed. The empirical
-#' p-value is calculated as `(b + 1) / (n_permutations + 1)`, where `b` is the
+#' Under random spatial arrangement, the finite-sample expectation is
+#' `-1 / (n - 1)`, where `n` is the number of cells in the patch. 
+#' For descriptive screening of positive autocorrelation in patches with at
+#' least 50 observations, values between the expectation and 0.1 often indicate
+#' little residual structure, values from 0.1 to 0.3 indicate weak structure,
+#' and values above 0.3 warrant inspection of residual maps and
+#' model-sensitivity analyses. Values substantially below the expectation may
+#' indicate negative spatial structure and also warrant inspection. These
+#' ranges are diagnostic guides, not inferential thresholds: interpretation
+#' also depends on patch geometry and the spatial weights graph.
+#'
+#' By default, `n_permutations = 0` calculates Moran's I descriptively and
+#' returns missing raw and adjusted p-values. With a positive number of
+#' permutations, the observed statistic is compared with statistics obtained
+#' by randomly permuting the residuals while keeping the spatial graph fixed.
+#' The empirical p-value is `(b + 1) / (n_permutations + 1)`, where `b` is the
 #' number of permuted statistics at least as extreme as the observed one. Thus,
 #' the smallest attainable p-value is `1 / (n_permutations + 1)`.
 #'
@@ -29,13 +43,16 @@
 #' @param k Number of nearest neighbors used to construct the graph. If `k` is
 #'   not smaller than the number of observations, it is reduced to `n - 1` with
 #'   a warning. Default 10.
-#' @param n_permutations Number of random permutations used to calculate the
-#'   empirical p-value. Default 999.
+#' @param n_permutations Non-negative integer giving the number of random
+#'   permutations used to calculate the empirical p-value. Use 0 for a
+#'   descriptive calculation without p-values. Default 0.
 #' @param alternative Direction of the alternative hypothesis: `"greater"`
 #'   tests for positive spatial autocorrelation, `"less"` for negative spatial
-#'   autocorrelation, and `"two.sided"` for either direction.
+#'   autocorrelation, and `"two.sided"` for either direction. Used only when
+#'   `n_permutations > 0`.
 #' @param p_adjust_method Method passed to [stats::p.adjust()] for multiple-test
-#'   correction. Use `"none"` to leave p-values unadjusted. Default `"BH"`.
+#'   correction. Use `"none"` to leave p-values unadjusted. This has no effect
+#'   when `n_permutations = 0`. Default `"BH"`.
 #' @param adjustment_scope Scope of the multiple-test correction: `"global"`
 #'   across every gene-patch test, `"patch"` separately within each patch, or
 #'   `"gene"` separately within each gene. Default `"global"`.
@@ -43,19 +60,24 @@
 #' @return A data frame with one row per gene and patch. It contains patch and
 #'   gene identifiers, number of cells, observed and expected Moran's I, raw and
 #'   adjusted empirical p-values, graph and permutation settings, and `status`.
-#'   A status of `"ok"` indicates a completed test; non-testable inputs such as
+#'   Raw and adjusted p-values are `NA` when `n_permutations = 0`. A status of
+#'   `"ok"` indicates a completed calculation; non-testable inputs such as
 #'   constant or non-finite residuals return missing statistics with an
-#'   explanatory status rather than stopping the remaining tests.
+#'   explanatory status rather than stopping the remaining calculations.
 #'
 #' @examples
 #' xy <- cbind(x = 1:5, y = rep(0, 5))
 #' residuals <- c(-2, -1, 0, 1, 2)
+#' # Descriptive Moran's I (the default)
+#' moranTest(residuals, xy, k = 2)
+#'
+#' # Request permutation-based inference explicitly
 #' set.seed(1)
 #' moranTest(residuals, xy, k = 2, n_permutations = 19)
 #'
 #' @export
 moranTest <- function(residuals, xy, patch = NULL, k = 10L,
-                      n_permutations = 999L,
+                      n_permutations = 0L,
                       alternative = c("greater", "less", "two.sided"),
                       p_adjust_method = "BH",
                       adjustment_scope = c("global", "patch", "gene")) {
@@ -88,9 +110,9 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
     stop("k must be a positive integer.")
   }
   if (length(n_permutations) != 1L || !is.numeric(n_permutations) ||
-      !is.finite(n_permutations) || n_permutations < 1 ||
+      !is.finite(n_permutations) || n_permutations < 0 ||
       n_permutations != floor(n_permutations)) {
-    stop("n_permutations must be a positive integer.")
+    stop("n_permutations must be a non-negative integer.")
   }
   k <- as.integer(k)
   n_permutations <- as.integer(n_permutations)
@@ -327,7 +349,9 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
 #' permutations are prepared only once.
 #'
 #' @inheritParams .moranI
-#' @param n_permutations Number of random permutations. Default 999.
+#' @param n_permutations Non-negative integer giving the number of random
+#'   permutations. A value of 0 skips permutation testing and returns a missing
+#'   p-value. Default 999.
 #' @param alternative Direction of the alternative hypothesis: `"greater"`,
 #'   `"less"`, or `"two.sided"`.
 #' @param s0 Optional pre-computed sum of weights. Used by batch calculations
@@ -342,9 +366,9 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
                                                   "two.sided"),
                                   s0 = NULL) {
   if (length(n_permutations) != 1L || !is.numeric(n_permutations) ||
-      !is.finite(n_permutations) || n_permutations < 1 ||
+      !is.finite(n_permutations) || n_permutations < 0 ||
       n_permutations != floor(n_permutations)) {
-    stop("n_permutations must be a positive integer.")
+    stop("n_permutations must be a non-negative integer.")
   }
   alternative <- match.arg(alternative)
   n_permutations <- as.integer(n_permutations)
@@ -354,25 +378,29 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
   scale <- moran_data$scale
   observed <- .moranIFromCentered(z, W, scale)
 
-  # Permutation preserves the mean and sum of squared centered values, so only
-  # the spatial cross-product needs to be recalculated on each iteration.
-  simulated <- vapply(
-    seq_len(n_permutations),
-    function(i) .moranIFromCentered(sample(z), W, scale),
-    numeric(1)
-  )
-
   expected <- -1 / (length(x) - 1)
-  extreme <- switch(
-    alternative,
-    greater = simulated >= observed,
-    less = simulated <= observed,
-    two.sided = abs(simulated - expected) >= abs(observed - expected)
-  )
+  p_value <- NA_real_
 
-  # Adding one to numerator and denominator prevents a zero Monte Carlo
-  # p-value and includes the observed arrangement in the reference set.
-  p_value <- (sum(extreme) + 1) / (n_permutations + 1)
+  if (n_permutations > 0L) {
+    # Permutation preserves the mean and sum of squared centered values, so only
+    # the spatial cross-product needs to be recalculated on each iteration.
+    simulated <- vapply(
+      seq_len(n_permutations),
+      function(i) .moranIFromCentered(sample(z), W, scale),
+      numeric(1)
+    )
+
+    extreme <- switch(
+      alternative,
+      greater = simulated >= observed,
+      less = simulated <= observed,
+      two.sided = abs(simulated - expected) >= abs(observed - expected)
+    )
+
+    # Adding one to numerator and denominator prevents a zero Monte Carlo
+    # p-value and includes the observed arrangement in the reference set.
+    p_value <- (sum(extreme) + 1) / (n_permutations + 1)
+  }
 
   list(
     observed = observed,

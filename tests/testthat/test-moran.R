@@ -22,6 +22,23 @@ test_that("moranTest builds the graph and reports its settings", {
   expect_identical(result$n_permutations, 19L)
 })
 
+test_that("moranTest calculates descriptive Moran statistics by default", {
+  xy <- cbind(x = 0:4, y = rep(0, 5))
+  residuals <- c(-2, -1, 0, 1, 2)
+  W <- SpaceMosaic:::.buildContiguityGraph(xy, k = 2)
+
+  result <- moranTest(residuals, xy, k = 2)
+  explicit <- moranTest(residuals, xy, k = 2, n_permutations = 0)
+
+  expect_identical(result, explicit)
+  expect_equal(result$observed, SpaceMosaic:::.moranI(residuals, W))
+  expect_equal(result$expected, -1 / (length(residuals) - 1))
+  expect_true(is.na(result$p_value))
+  expect_true(is.na(result$p_adjusted))
+  expect_identical(result$n_permutations, 0L)
+  expect_identical(result$status, "ok")
+})
+
 test_that("moranTest reports an adjusted k", {
   xy <- matrix(c(0, 0, 1, 0, 0, 1), ncol = 2, byrow = TRUE)
 
@@ -285,7 +302,25 @@ test_that(".moranPermutationTest supports directional alternatives", {
   expect_true(two_sided$p_value <= 1)
 })
 
-test_that(".moranPermutationTest validates the number of permutations", {
+test_that(".moranPermutationTest supports zero permutations", {
+  W <- matrix(
+    c(0, 1, 0,
+      1, 0, 1,
+      0, 1, 0),
+    nrow = 3,
+    byrow = TRUE
+  )
+  x <- c(1, 2, 3)
+
+  result <- SpaceMosaic:::.moranPermutationTest(x, W, 0)
+
+  expect_equal(result$observed, SpaceMosaic:::.moranI(x, W))
+  expect_equal(result$expected, -1 / (length(x) - 1))
+  expect_true(is.na(result$p_value))
+  expect_identical(result$n_permutations, 0L)
+})
+
+test_that("Moran functions validate the number of permutations", {
   W <- matrix(
     c(0, 1, 0,
       1, 0, 1,
@@ -295,13 +330,23 @@ test_that(".moranPermutationTest validates the number of permutations", {
   )
 
   expect_error(
-    SpaceMosaic:::.moranPermutationTest(c(1, 2, 3), W, 0),
-    "positive integer",
+    SpaceMosaic:::.moranPermutationTest(c(1, 2, 3), W, -1),
+    "non-negative integer",
     fixed = TRUE
   )
   expect_error(
     SpaceMosaic:::.moranPermutationTest(c(1, 2, 3), W, 1.5),
-    "positive integer",
+    "non-negative integer",
+    fixed = TRUE
+  )
+  expect_error(
+    moranTest(c(1, 2, 3), cbind(1:3, 0), n_permutations = Inf),
+    "non-negative integer",
+    fixed = TRUE
+  )
+  expect_error(
+    moranTest(c(1, 2, 3), cbind(1:3, 0), n_permutations = NA_real_),
+    "non-negative integer",
     fixed = TRUE
   )
 })

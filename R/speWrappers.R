@@ -701,22 +701,26 @@ patchMetaAnalysis.spe <- function(
 #' @param k Number of nearest neighbors used to construct the graph. If `k` is
 #'   not smaller than the number of observations, it is reduced to `n - 1` with
 #'   a warning. Default 10.
-#' @param n_permutations Number of random permutations used to calculate the
-#'   empirical p-value. Default 999.
+#' @param n_permutations Non-negative integer giving the number of random
+#'   permutations used to calculate the empirical p-value. Use 0 for a
+#'   descriptive calculation without p-values. Default 0.
 #' @param alternative Direction of the alternative hypothesis: `"greater"`
 #'   tests for positive spatial autocorrelation, `"less"` for negative spatial
-#'   autocorrelation, and `"two.sided"` for either direction.
+#'   autocorrelation, and `"two.sided"` for either direction. Used only when
+#'   `n_permutations > 0`.
 #' @param p_adjust_method Method passed to [stats::p.adjust()] for multiple-test
-#'   correction. Use `"none"` to leave p-values unadjusted. Default `"BH"`.
+#'   correction. Use `"none"` to leave p-values unadjusted. This has no effect
+#'   when `n_permutations = 0`. Default `"BH"`.
 #' @param adjustment_scope Scope of the multiple-test correction: `"global"`
 #'   across every gene-patch test, `"patch"` separately within each patch, or
 #'   `"gene"` separately within each gene. Default `"global"`.
 #' @return A data frame with one row per gene and patch. It contains patch and
 #'   gene identifiers, number of cells, observed and expected Moran's I, raw and
 #'   adjusted empirical p-values, graph and permutation settings, and `status`.
-#'   A status of `"ok"` indicates a completed test; non-testable inputs such as
+#'   Raw and adjusted p-values are `NA` when `n_permutations = 0`. A status of
+#'   `"ok"` indicates a completed calculation; non-testable inputs such as
 #'   constant or non-finite residuals return missing statistics with an
-#'   explanatory status rather than stopping the remaining tests.
+#'   explanatory status rather than stopping the remaining calculations.
 #'
 #' @importFrom methods is
 #' @importFrom SummarizedExperiment assayNames assay colData
@@ -739,7 +743,7 @@ patchMetaAnalysis.spe <- function(
 #' @export
 
 moranTest.spe <- function(spe, assay_name = 'residuals' , patch_column = "patch", k = 10L,
-                      n_permutations = 999L,
+                      n_permutations = 0L,
                       alternative = c("greater", "less", "two.sided"),
                       p_adjust_method = "BH",
                       adjustment_scope = c("global", "patch", "gene")){

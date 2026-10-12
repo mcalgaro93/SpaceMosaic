@@ -31,7 +31,7 @@ flowchart TD
     R -.-> MI[moranTest]
     D -.-> MI
     XY -.-> MI
-    MI --> MD[Moran's I + permutation p-values]
+    MI --> MD[Moran's I]
     
     B --> G[getPatchAttributes]
     D --> G
@@ -58,7 +58,7 @@ flowchart TD
 | 2 | `getPatches()` | Iteratively partition cells into contiguous elliptical patches that maximize within-patch variance of X while preserving Z-homogeneity |
 | 2a | `getPatchDiagnostics()` | Report patch size, within-patch variation in X, robust multi-k spatial connectivity, final membership stability, and assignment coverage |
 | 3 | `patchDE()` | Run fast OLS-based DE simultaneously for all genes within each patch |
-| 3a (optional) | `moranTest()` | Test selected genes for residual spatial autocorrelation within patches using permutation-based Moran's I |
+| 3a (optional) | `moranTest()` | Screen residual spatial autocorrelation within patches using Moran's I, optionally with permutation-based inference |
 | 4 | `getPatchAttributes()` | Summarize Z across cells in each patch to get a patch-level characteristics matrix W |
 | 5 | `patchMetaAnalysis()` | For each patch, find K nearest neighbors in W-space, compute a Bayesian posterior update, and detect spatial subgroups of significant patches |
 | 6 | `summarizeSubgroups()` | For each gene × subgroup, report effect sizes and enrichment of user-provided metadata variables |

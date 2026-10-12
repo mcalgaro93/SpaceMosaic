@@ -155,6 +155,33 @@ test_that("moranTest.spe matches moranTest on the matrix workflow", {
   expect_equal(result, expected)
 })
 
+test_that("moranTest.spe uses descriptive Moran calculations by default", {
+  patch <- rep(c("1", "2"), length.out = ncol(spe))
+  spe_patch <- spe
+  SummarizedExperiment::colData(spe_patch)$patch <- patch
+
+  de_result <- patchDE.spe(
+    spe_patch,
+    predictor_cols = "distance_to_fibroblast",
+    method = "limma",
+    return_residuals = TRUE,
+    verbose = FALSE
+  )
+
+  result <- moranTest.spe(de_result$spe, k = 5)
+  expected <- moranTest(
+    residuals = t(SummarizedExperiment::assay(de_result$spe, "residuals")),
+    xy = SpatialExperiment::spatialCoords(de_result$spe),
+    patch = SummarizedExperiment::colData(de_result$spe)$patch,
+    k = 5
+  )
+
+  expect_equal(result, expected)
+  expect_true(all(result$n_permutations == 0L))
+  expect_true(all(is.na(result$p_value)))
+  expect_true(all(is.na(result$p_adjusted)))
+})
+
 test_that("getPatches.spe on a further cell-subsetted SpatialExperiment matches the matrix workflow", {
   # Subsets spe by a boolean mask (as in the getPatches.spe/patchDE.spe
   # examples), rather than relying on the fixed sample already used to build
