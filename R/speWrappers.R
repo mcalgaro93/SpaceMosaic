@@ -714,6 +714,8 @@ patchMetaAnalysis.spe <- function(
 #' @param adjustment_scope Scope of the multiple-test correction: `"global"`
 #'   across every gene-patch test, `"patch"` separately within each patch, or
 #'   `"gene"` separately within each gene. Default `"global"`.
+#' @param verbose Logical; show the number of gene-patch combinations, the
+#'   permutation workload, and a progress bar over patches. Default TRUE.
 #' @return A data frame with one row per gene and patch. It contains patch and
 #'   gene identifiers, number of cells, observed and expected Moran's I, raw and
 #'   adjusted empirical p-values, graph and permutation settings, and `status`.
@@ -746,7 +748,8 @@ moranTest.spe <- function(spe, assay_name = 'residuals' , patch_column = "patch"
                       n_permutations = 0L,
                       alternative = c("greater", "less", "two.sided"),
                       p_adjust_method = "BH",
-                      adjustment_scope = c("global", "patch", "gene")){
+                      adjustment_scope = c("global", "patch", "gene"),
+                      verbose = TRUE){
 
 
 
@@ -775,6 +778,7 @@ moranTest.spe <- function(spe, assay_name = 'residuals' , patch_column = "patch"
                                           n_permutations = n_permutations,
                                           alternative = alternative,
                                           p_adjust_method = p_adjust_method,
-                                          adjustment_scope = adjustment_scope)
+                                          adjustment_scope = adjustment_scope,
+                                          verbose = verbose)
                   return(res)
                       }

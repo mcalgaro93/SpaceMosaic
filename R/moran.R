@@ -56,6 +56,8 @@
 #' @param adjustment_scope Scope of the multiple-test correction: `"global"`
 #'   across every gene-patch test, `"patch"` separately within each patch, or
 #'   `"gene"` separately within each gene. Default `"global"`.
+#' @param verbose Logical; show the number of gene-patch combinations, the
+#'   permutation workload, and a progress bar over patches. Default TRUE.
 #'
 #' @return A data frame with one row per gene and patch. It contains patch and
 #'   gene identifiers, number of cells, observed and expected Moran's I, raw and
@@ -80,7 +82,8 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
                       n_permutations = 0L,
                       alternative = c("greater", "less", "two.sided"),
                       p_adjust_method = "BH",
-                      adjustment_scope = c("global", "patch", "gene")) {
+                      adjustment_scope = c("global", "patch", "gene"),
+                      verbose = TRUE) {
   if (is.numeric(residuals) && is.null(dim(residuals))) {
     residuals <- matrix(residuals, ncol = 1L)
     colnames(residuals) <- "residual"
@@ -114,6 +117,9 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
       n_permutations != floor(n_permutations)) {
     stop("n_permutations must be a non-negative integer.")
   }
+  if (!is.logical(verbose) || length(verbose) != 1L || is.na(verbose)) {
+    stop("verbose must be TRUE or FALSE.")
+  }
   k <- as.integer(k)
   n_permutations <- as.integer(n_permutations)
 
@@ -137,10 +143,47 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
   results <- vector("list", length(patch_names) * ncol(residuals))
   result_index <- 0L
 
+  if (verbose) {
+    n_patches <- length(patch_names)
+    n_genes <- ncol(residuals)
+    n_combinations <- n_patches * n_genes
+    patch_label <- if (n_patches == 1L) "patch" else "patches"
+    gene_label <- if (n_genes == 1L) "gene" else "genes"
+    combination_label <- if (n_combinations == 1L) {
+      "gene-patch combination"
+    } else {
+      "gene-patch combinations"
+    }
+    cli::cli_alert_info(sprintf(
+      "moranTest: %d %s x %d %s = %d %s.",
+      n_patches, patch_label, n_genes, gene_label,
+      n_combinations, combination_label
+    ))
+    if (n_permutations == 0L) {
+      cli::cli_alert_info("Mode: descriptive (no permutations).")
+    } else {
+      max_permuted <- as.double(n_combinations) * n_permutations
+      cli::cli_alert_info(sprintf(
+        "Mode: %d permutations per combination (up to %s permuted statistics).",
+        n_permutations,
+        format(max_permuted, big.mark = ",", scientific = FALSE, trim = TRUE)
+      ))
+    }
+    cli::cli_progress_bar("Moran diagnostics", total = n_patches)
+  }
+
   for (patch_name in patch_names) {
     cell_index <- which(!is.na(patch) & as.character(patch) == patch_name)
     n_cells <- length(cell_index)
     patch_residuals <- residuals[cell_index, , drop = FALSE]
+
+    if (verbose) {
+      cli::cli_progress_update(
+        inc = 0,
+        status = sprintf("patch %s (%d cells)", patch_name, n_cells),
+        force = TRUE
+      )
+    }
 
     # A graph cannot support global Moran's I with fewer than three nodes.
     if (n_cells >= 3L) {
@@ -191,7 +234,11 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
         stringsAsFactors = FALSE
       )
     }
+
+    if (verbose) cli::cli_progress_update()
   }
+
+  if (verbose) cli::cli_progress_done()
 
   out <- do.call(rbind, results)
   rownames(out) <- NULL

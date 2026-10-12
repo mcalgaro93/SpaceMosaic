@@ -14,7 +14,8 @@ moranTest.spe(
   n_permutations = 0L,
   alternative = c("greater", "less", "two.sided"),
   p_adjust_method = "BH",
-  adjustment_scope = c("global", "patch", "gene")
+  adjustment_scope = c("global", "patch", "gene"),
+  verbose = TRUE
 )
 }
 \arguments{
@@ -46,6 +47,9 @@ when \code{n_permutations = 0}. Default \code{"BH"}.}
 \item{adjustment_scope}{Scope of the multiple-test correction: \code{"global"}
 across every gene-patch test, \code{"patch"} separately within each patch, or
 \code{"gene"} separately within each gene. Default \code{"global"}.}
+
+\item{verbose}{Logical; show the number of gene-patch combinations, the
+permutation workload, and a progress bar over patches. Default TRUE.}
 }
 \value{
 A data frame with one row per gene and patch. It contains patch and

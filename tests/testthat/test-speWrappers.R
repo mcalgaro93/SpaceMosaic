@@ -141,7 +141,9 @@ test_that("moranTest.spe matches moranTest on the matrix workflow", {
   )
 
   set.seed(99)
-  result <- moranTest.spe(de_result$spe, k = 5, n_permutations = 19)
+  result <- moranTest.spe(
+    de_result$spe, k = 5, n_permutations = 19, verbose = FALSE
+  )
 
   expected_residuals <- t(SummarizedExperiment::assay(de_result$spe, "residuals"))
   set.seed(99)
@@ -150,7 +152,8 @@ test_that("moranTest.spe matches moranTest on the matrix workflow", {
     xy = SpatialExperiment::spatialCoords(de_result$spe),
     patch = SummarizedExperiment::colData(de_result$spe)$patch,
     k = 5,
-    n_permutations = 19
+    n_permutations = 19,
+    verbose = FALSE
   )
   expect_equal(result, expected)
 })
@@ -168,12 +171,15 @@ test_that("moranTest.spe uses descriptive Moran calculations by default", {
     verbose = FALSE
   )
 
-  result <- moranTest.spe(de_result$spe, k = 5)
+  result <- expect_silent(
+    moranTest.spe(de_result$spe, k = 5, verbose = FALSE)
+  )
   expected <- moranTest(
     residuals = t(SummarizedExperiment::assay(de_result$spe, "residuals")),
     xy = SpatialExperiment::spatialCoords(de_result$spe),
     patch = SummarizedExperiment::colData(de_result$spe)$patch,
-    k = 5
+    k = 5,
+    verbose = FALSE
   )
 
   expect_equal(result, expected)
@@ -229,7 +235,9 @@ test_that("moranTest.spe on a gene-subsetted SpatialExperiment matches the matri
   spe_gene_sub <- de_result$spe[1:10, ]
 
   set.seed(99)
-  result <- moranTest.spe(spe_gene_sub, k = 5, n_permutations = 19)
+  result <- moranTest.spe(
+    spe_gene_sub, k = 5, n_permutations = 19, verbose = FALSE
+  )
 
   expected_residuals <- t(SummarizedExperiment::assay(spe_gene_sub, "residuals"))
   set.seed(99)
@@ -238,7 +246,8 @@ test_that("moranTest.spe on a gene-subsetted SpatialExperiment matches the matri
     xy = SpatialExperiment::spatialCoords(spe_gene_sub),
     patch = SummarizedExperiment::colData(spe_gene_sub)$patch,
     k = 5,
-    n_permutations = 19
+    n_permutations = 19,
+    verbose = FALSE
   )
   expect_equal(result, expected)
 })

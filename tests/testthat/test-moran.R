@@ -12,7 +12,8 @@ test_that("moranTest builds the graph and reports its settings", {
 
   set.seed(11)
   result <- moranTest(
-    residuals, xy, k = 2, n_permutations = 19, alternative = "greater"
+    residuals, xy, k = 2, n_permutations = 19, alternative = "greater",
+    verbose = FALSE
   )
   W <- SpaceMosaic:::.buildContiguityGraph(xy, k = 2)
 
@@ -27,8 +28,10 @@ test_that("moranTest calculates descriptive Moran statistics by default", {
   residuals <- c(-2, -1, 0, 1, 2)
   W <- SpaceMosaic:::.buildContiguityGraph(xy, k = 2)
 
-  result <- moranTest(residuals, xy, k = 2)
-  explicit <- moranTest(residuals, xy, k = 2, n_permutations = 0)
+  result <- moranTest(residuals, xy, k = 2, verbose = FALSE)
+  explicit <- moranTest(
+    residuals, xy, k = 2, n_permutations = 0, verbose = FALSE
+  )
 
   expect_identical(result, explicit)
   expect_equal(result$observed, SpaceMosaic:::.moranI(residuals, W))
@@ -39,12 +42,46 @@ test_that("moranTest calculates descriptive Moran statistics by default", {
   expect_identical(result$status, "ok")
 })
 
+test_that("moranTest reports its workload and can run silently", {
+  xy <- cbind(x = 0:4, y = rep(0, 5))
+  residuals <- c(-2, -1, 0, 1, 2)
+  old_options <- options(cli.progress_show_after = Inf)
+  on.exit(options(old_options), add = TRUE)
+
+  messages <- capture_messages(
+    verbose_result <- moranTest(residuals, xy, k = 2, verbose = TRUE)
+  )
+  expect_true(any(grepl(
+    "1 patch x 1 gene = 1 gene-patch combination",
+    messages,
+    fixed = TRUE
+  )))
+  silent_result <- expect_silent(
+    moranTest(residuals, xy, k = 2, verbose = FALSE)
+  )
+
+  expect_identical(verbose_result, silent_result)
+})
+
+test_that("moranTest validates verbose", {
+  xy <- cbind(x = 0:4, y = rep(0, 5))
+  residuals <- c(-2, -1, 0, 1, 2)
+
+  expect_error(
+    moranTest(residuals, xy, k = 2, verbose = NA),
+    "verbose must be TRUE or FALSE",
+    fixed = TRUE
+  )
+})
+
 test_that("moranTest reports an adjusted k", {
   xy <- matrix(c(0, 0, 1, 0, 0, 1), ncol = 2, byrow = TRUE)
 
   set.seed(3)
   expect_warning(
-    result <- moranTest(c(-1, 0, 1), xy, k = 10, n_permutations = 9),
+    result <- moranTest(
+      c(-1, 0, 1), xy, k = 10, n_permutations = 9, verbose = FALSE
+    ),
     "using k = 2",
     fixed = TRUE
   )
@@ -78,11 +115,13 @@ test_that("patchDE residuals feed reproducibly into moranTest", {
 
   set.seed(99)
   first <- moranTest(
-    fit$residuals, xy, patch = patch, k = 2, n_permutations = 19
+    fit$residuals, xy, patch = patch, k = 2, n_permutations = 19,
+    verbose = FALSE
   )
   set.seed(99)
   second <- moranTest(
-    fit$residuals, xy, patch = patch, k = 2, n_permutations = 19
+    fit$residuals, xy, patch = patch, k = 2, n_permutations = 19,
+    verbose = FALSE
   )
 
   expect_identical(first, second)
@@ -108,7 +147,8 @@ test_that("moranTest handles multiple genes and patches", {
     residuals, xy, patch = patch,
     k = 2, n_permutations = 19,
     p_adjust_method = "BH",
-    adjustment_scope = "global"
+    adjustment_scope = "global",
+    verbose = FALSE
   )
 
   expect_s3_class(result, "data.frame")
@@ -128,7 +168,9 @@ test_that("moranTest reports non-testable genes without stopping a batch", {
   )
 
   set.seed(8)
-  result <- moranTest(residuals, xy, k = 2, n_permutations = 9)
+  result <- moranTest(
+    residuals, xy, k = 2, n_permutations = 9, verbose = FALSE
+  )
 
   expect_equal(
     result$status,

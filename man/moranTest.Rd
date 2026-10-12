@@ -12,7 +12,8 @@ moranTest(
   n_permutations = 0L,
   alternative = c("greater", "less", "two.sided"),
   p_adjust_method = "BH",
-  adjustment_scope = c("global", "patch", "gene")
+  adjustment_scope = c("global", "patch", "gene"),
+  verbose = TRUE
 )
 }
 \arguments{
@@ -46,6 +47,9 @@ when \code{n_permutations = 0}. Default \code{"BH"}.}
 \item{adjustment_scope}{Scope of the multiple-test correction: \code{"global"}
 across every gene-patch test, \code{"patch"} separately within each patch, or
 \code{"gene"} separately within each gene. Default \code{"global"}.}
+
+\item{verbose}{Logical; show the number of gene-patch combinations, the
+permutation workload, and a progress bar over patches. Default TRUE.}
 }
 \value{
 A data frame with one row per gene and patch. It contains patch and
@@ -73,8 +77,7 @@ under random spatial arrangement provides little evidence of residual
 spatial autocorrelation.
 
 Under random spatial arrangement, the finite-sample expectation is
-\code{-1 / (n - 1)}, where \code{n} is the number of observations in the patch. This
-expectation is calculated analytically and does not require permutations.
+\code{-1 / (n - 1)}, where \code{n} is the number of cells in the patch.
 For descriptive screening of positive autocorrelation in patches with at
 least 50 observations, values between the expectation and 0.1 often indicate
 little residual structure, values from 0.1 to 0.3 indicate weak structure,
