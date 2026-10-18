@@ -1,4 +1,4 @@
-#' Test residual spatial autocorrelation with Moran's I
+#' Calculate global Moran's I for regression residuals
 #'
 #' Build a symmetric binary k-nearest-neighbor graph within each patch and
 #' calculate global Moran's I for the supplied residuals. Optionally, compare
@@ -71,14 +71,14 @@
 #' xy <- cbind(x = 1:5, y = rep(0, 5))
 #' residuals <- c(-2, -1, 0, 1, 2)
 #' # Descriptive Moran's I (the default)
-#' moranTest(residuals, xy, k = 2)
+#' getMoranGlobal(residuals, xy, k = 2)
 #'
 #' # Request permutation-based inference explicitly
 #' set.seed(1)
-#' moranTest(residuals, xy, k = 2, n_permutations = 19)
+#' getMoranGlobal(residuals, xy, k = 2, n_permutations = 19)
 #'
 #' @export
-moranTest <- function(residuals, xy, patch = NULL, k = 10L,
+getMoranGlobal <- function(residuals, xy, patch = NULL, k = 10L,
                       n_permutations = 0L,
                       alternative = c("greater", "less", "two.sided"),
                       p_adjust_method = "BH",
@@ -155,7 +155,7 @@ moranTest <- function(residuals, xy, patch = NULL, k = 10L,
       "gene-patch combinations"
     }
     cli::cli_alert_info(sprintf(
-      "moranTest: %d %s x %d %s = %d %s.",
+      "getMoranGlobal: %d %s x %d %s = %d %s.",
       n_patches, patch_label, n_genes, gene_label,
       n_combinations, combination_label
     ))

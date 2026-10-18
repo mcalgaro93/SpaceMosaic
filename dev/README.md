@@ -18,7 +18,7 @@ This folder is for ad hoc method development and tuning experiments.
   identifies parameter rules associated with those results. Independent
   configurations run in parallel on macOS/Linux; set `SPACEMOSAIC_WORKERS` to
   control the number of worker processes.
-- moran_toy_example.R: minimal reproducible `patchDE()` to `moranTest()`
+- moran_toy_example.R: minimal reproducible `patchDE()` to `getMoranGlobal()`
   workflow with a spatially structured gene and a noise control. It prints the
   gene-by-patch results, writes `dev/runs/moran_toy_example.pdf`, and performs
   lightweight smoke checks. Set `SPACEMOSAIC_MORAN_PLOT` to use a different

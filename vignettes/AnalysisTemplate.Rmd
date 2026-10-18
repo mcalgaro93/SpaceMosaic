@@ -298,11 +298,11 @@ de_result <- patchDE(
 
 Moran's I can be used as a diagnostic for spatial structure that remains after
 the within-patch regression. Refit `patchDE()` only on the genes and patches of
-interest, request the residuals, and pass one residual vector to `moranTest()`.
+interest, request the residuals, and pass one residual vector to `getMoranGlobal()`.
 Filtering is explicit so that `y`, `df`, `patch`, and the spatial coordinates
 remain aligned.
 
-By default, `moranTest()` returns the observed Moran's I and its finite-sample
+By default, `getMoranGlobal()` returns the observed Moran's I and its finite-sample
 expectation, $-1/(n-1)$, without running permutations. This fast descriptive
 mode can be applied broadly to identify gene-patch combinations that warrant
 inspection. Values above 0.3 generally merit examination of the residual map
@@ -333,7 +333,7 @@ diagnostic_fit <- patchDE(
 selected_xy <- xy[use, , drop = FALSE][selected_cells, , drop = FALSE]
 
 # Fast descriptive calculation
-moran_description <- moranTest(
+moran_description <- getMoranGlobal(
   residuals = diagnostic_fit$residuals,
   xy = selected_xy,
   patch = patch[selected_cells],
@@ -343,7 +343,7 @@ moran_description
 
 # Optional permutation-based inference
 set.seed(123)
-moran_result <- moranTest(
+moran_result <- getMoranGlobal(
   residuals = diagnostic_fit$residuals,
   xy = selected_xy,
   patch = patch[selected_cells],

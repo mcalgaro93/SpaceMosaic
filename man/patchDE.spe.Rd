@@ -57,7 +57,7 @@ as assay \code{residual_assay} in the returned \code{spe}. Default FALSE.}
 \item{residual_assay}{Character string naming the assay under which
 residuals are stored in \code{spe} when \code{return_residuals = TRUE}.
 Matches the default \code{assay_name} expected by
-\code{\link{moranTest.spe}}. Default \code{"residuals"}.}
+\code{\link{getMoranGlobal.spe}}. Default \code{"residuals"}.}
 
 \item{verbose}{Logical; show a progress bar over patches. Default TRUE.}
 }
@@ -114,5 +114,5 @@ head(de_result$de$distance_to_fibroblast$pvals)
 \seealso{
 \code{\link{patchDE}},
 \code{\link{patchMetaAnalysis.spe}},
-\code{\link{moranTest.spe}}
+\code{\link{getMoranGlobal.spe}}
 }

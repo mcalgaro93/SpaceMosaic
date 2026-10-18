@@ -1,4 +1,4 @@
-test_that("moranTest builds the graph and reports its settings", {
+test_that("getMoranGlobal builds the graph and reports its settings", {
   xy <- matrix(
     c(0, 0,
       1, 0,
@@ -11,7 +11,7 @@ test_that("moranTest builds the graph and reports its settings", {
   residuals <- c(-2, -1, 0, 1, 2)
 
   set.seed(11)
-  result <- moranTest(
+  result <- getMoranGlobal(
     residuals, xy, k = 2, n_permutations = 19, alternative = "greater",
     verbose = FALSE
   )
@@ -23,13 +23,13 @@ test_that("moranTest builds the graph and reports its settings", {
   expect_identical(result$n_permutations, 19L)
 })
 
-test_that("moranTest calculates descriptive Moran statistics by default", {
+test_that("getMoranGlobal calculates descriptive Moran statistics by default", {
   xy <- cbind(x = 0:4, y = rep(0, 5))
   residuals <- c(-2, -1, 0, 1, 2)
   W <- SpaceMosaic:::.buildContiguityGraph(xy, k = 2)
 
-  result <- moranTest(residuals, xy, k = 2, verbose = FALSE)
-  explicit <- moranTest(
+  result <- getMoranGlobal(residuals, xy, k = 2, verbose = FALSE)
+  explicit <- getMoranGlobal(
     residuals, xy, k = 2, n_permutations = 0, verbose = FALSE
   )
 
@@ -42,14 +42,14 @@ test_that("moranTest calculates descriptive Moran statistics by default", {
   expect_identical(result$status, "ok")
 })
 
-test_that("moranTest reports its workload and can run silently", {
+test_that("getMoranGlobal reports its workload and can run silently", {
   xy <- cbind(x = 0:4, y = rep(0, 5))
   residuals <- c(-2, -1, 0, 1, 2)
   old_options <- options(cli.progress_show_after = Inf)
   on.exit(options(old_options), add = TRUE)
 
   messages <- capture_messages(
-    verbose_result <- moranTest(residuals, xy, k = 2, verbose = TRUE)
+    verbose_result <- getMoranGlobal(residuals, xy, k = 2, verbose = TRUE)
   )
   expect_true(any(grepl(
     "1 patch x 1 gene = 1 gene-patch combination",
@@ -57,29 +57,29 @@ test_that("moranTest reports its workload and can run silently", {
     fixed = TRUE
   )))
   silent_result <- expect_silent(
-    moranTest(residuals, xy, k = 2, verbose = FALSE)
+    getMoranGlobal(residuals, xy, k = 2, verbose = FALSE)
   )
 
   expect_identical(verbose_result, silent_result)
 })
 
-test_that("moranTest validates verbose", {
+test_that("getMoranGlobal validates verbose", {
   xy <- cbind(x = 0:4, y = rep(0, 5))
   residuals <- c(-2, -1, 0, 1, 2)
 
   expect_error(
-    moranTest(residuals, xy, k = 2, verbose = NA),
+    getMoranGlobal(residuals, xy, k = 2, verbose = NA),
     "verbose must be TRUE or FALSE",
     fixed = TRUE
   )
 })
 
-test_that("moranTest reports an adjusted k", {
+test_that("getMoranGlobal reports an adjusted k", {
   xy <- matrix(c(0, 0, 1, 0, 0, 1), ncol = 2, byrow = TRUE)
 
   set.seed(3)
   expect_warning(
-    result <- moranTest(
+    result <- getMoranGlobal(
       c(-1, 0, 1), xy, k = 10, n_permutations = 9, verbose = FALSE
     ),
     "using k = 2",
@@ -90,17 +90,17 @@ test_that("moranTest reports an adjusted k", {
   expect_identical(result$effective_k, 2L)
 })
 
-test_that("moranTest requires residuals and coordinates to be aligned", {
+test_that("getMoranGlobal requires residuals and coordinates to be aligned", {
   xy <- matrix(c(0, 0, 1, 0, 0, 1), ncol = 2, byrow = TRUE)
 
   expect_error(
-    moranTest(c(-1, 1), xy, k = 1, n_permutations = 9),
+    getMoranGlobal(c(-1, 1), xy, k = 1, n_permutations = 9),
     "nrow(residuals) must equal nrow(xy)",
     fixed = TRUE
   )
 })
 
-test_that("patchDE residuals feed reproducibly into moranTest", {
+test_that("patchDE residuals feed reproducibly into getMoranGlobal", {
   xy <- cbind(x = 0:5, y = rep(0, 6))
   df <- data.frame(treatment = rep(c(0, 1), 3))
   spatial_component <- c(-2, -1, -0.5, 0.5, 1, 2)
@@ -114,12 +114,12 @@ test_that("patchDE residuals feed reproducibly into moranTest", {
   )
 
   set.seed(99)
-  first <- moranTest(
+  first <- getMoranGlobal(
     fit$residuals, xy, patch = patch, k = 2, n_permutations = 19,
     verbose = FALSE
   )
   set.seed(99)
-  second <- moranTest(
+  second <- getMoranGlobal(
     fit$residuals, xy, patch = patch, k = 2, n_permutations = 19,
     verbose = FALSE
   )
@@ -134,7 +134,7 @@ test_that("patchDE residuals feed reproducibly into moranTest", {
   )
 })
 
-test_that("moranTest handles multiple genes and patches", {
+test_that("getMoranGlobal handles multiple genes and patches", {
   xy <- cbind(x = rep(0:3, 2), y = rep(c(0, 10), each = 4))
   patch <- rep(c("one", "two"), each = 4)
   residuals <- cbind(
@@ -143,7 +143,7 @@ test_that("moranTest handles multiple genes and patches", {
   )
 
   set.seed(5)
-  result <- moranTest(
+  result <- getMoranGlobal(
     residuals, xy, patch = patch,
     k = 2, n_permutations = 19,
     p_adjust_method = "BH",
@@ -159,7 +159,7 @@ test_that("moranTest handles multiple genes and patches", {
   expect_equal(result$p_adjusted, stats::p.adjust(result$p_value, "BH"))
 })
 
-test_that("moranTest reports non-testable genes without stopping a batch", {
+test_that("getMoranGlobal reports non-testable genes without stopping a batch", {
   xy <- cbind(x = 0:3, y = rep(0, 4))
   residuals <- cbind(
     informative = c(-2, -1, 1, 2),
@@ -168,7 +168,7 @@ test_that("moranTest reports non-testable genes without stopping a batch", {
   )
 
   set.seed(8)
-  result <- moranTest(
+  result <- getMoranGlobal(
     residuals, xy, k = 2, n_permutations = 9, verbose = FALSE
   )
 
@@ -180,7 +180,7 @@ test_that("moranTest reports non-testable genes without stopping a batch", {
   expect_true(all(is.na(result$p_value[result$gene != "informative"])))
 })
 
-test_that("moranTest can adjust p-values within patches", {
+test_that("getMoranGlobal can adjust p-values within patches", {
   p <- c(0.01, 0.04, 0.02, 0.5)
   patch <- c("one", "one", "two", "two")
   gene <- rep(c("a", "b"), 2)
@@ -382,12 +382,12 @@ test_that("Moran functions validate the number of permutations", {
     fixed = TRUE
   )
   expect_error(
-    moranTest(c(1, 2, 3), cbind(1:3, 0), n_permutations = Inf),
+    getMoranGlobal(c(1, 2, 3), cbind(1:3, 0), n_permutations = Inf),
     "non-negative integer",
     fixed = TRUE
   )
   expect_error(
-    moranTest(c(1, 2, 3), cbind(1:3, 0), n_permutations = NA_real_),
+    getMoranGlobal(c(1, 2, 3), cbind(1:3, 0), n_permutations = NA_real_),
     "non-negative integer",
     fixed = TRUE
   )

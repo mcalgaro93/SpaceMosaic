@@ -350,7 +350,7 @@ getPatches.spe <- function(spe, X, npatches,
 #' @param residual_assay Character string naming the assay under which
 #'   residuals are stored in \code{spe} when \code{return_residuals = TRUE}.
 #'   Matches the default \code{assay_name} expected by
-#'   \code{\link{moranTest.spe}}. Default \code{"residuals"}.
+#'   \code{\link{getMoranGlobal.spe}}. Default \code{"residuals"}.
 #' @param verbose Logical; show a progress bar over patches. Default TRUE.
 #'
 #' @return A named list:
@@ -383,7 +383,7 @@ getPatches.spe <- function(spe, X, npatches,
 #' @seealso
 #' \code{\link{patchDE}},
 #' \code{\link{patchMetaAnalysis.spe}},
-#' \code{\link{moranTest.spe}}
+#' \code{\link{getMoranGlobal.spe}}
 #'
 #' @examples
 #' 
@@ -689,9 +689,11 @@ patchMetaAnalysis.spe <- function(
     return(out)
 }
 
-#'   moranTest() method for \code{SpatialExperiment} objects. Extracts
+#' Calculate global Moran's I for a SpatialExperiment
+#'
+#' Extracts
 #'   residuals from the specified assay and spatial coordinates from
-#'   \code{spatialCoords(spe)}, then dispatches to \code{moranTest}.
+#'   \code{spatialCoords(spe)}, then dispatches to \code{getMoranGlobal}.
 #'
 #' @param spe A \code{SpatialExperiment} object.
 #' @param assay_name Character; name of the assay in \code{spe} containing
@@ -741,10 +743,10 @@ patchMetaAnalysis.spe <- function(
 #'   predictor_cols = "distance_to_fibroblast",
 #'   return_residuals = TRUE
 #' )
-#' moran_result <- moranTest.spe(de_result$spe[1:10,])
+#' moran_result <- getMoranGlobal.spe(de_result$spe[1:10,])
 #' @export
 
-moranTest.spe <- function(spe, assay_name = 'residuals' , patch_column = "patch", k = 10L,
+getMoranGlobal.spe <- function(spe, assay_name = 'residuals' , patch_column = "patch", k = 10L,
                       n_permutations = 0L,
                       alternative = c("greater", "less", "two.sided"),
                       p_adjust_method = "BH",
@@ -771,7 +773,7 @@ moranTest.spe <- function(spe, assay_name = 'residuals' , patch_column = "patch"
                                 patch_column, paste(colnames(colData(spe)), collapse = ", ")))
                   }
 
-                  res <- moranTest( residuals = t(assay(spe,assay_name)),
+                  res <- getMoranGlobal( residuals = t(assay(spe,assay_name)),
                                           xy = spatialCoords(spe),
                                           patch = colData(spe)[[patch_column]],
                                           k = k,

@@ -53,7 +53,7 @@ current_kernel <- function(residuals, W) {
   }, numeric(1))
 }
 
-# Single-patch equivalent of moranTest(), including graph building and output.
+# Single-patch equivalent of getMoranGlobal(), including graph building and output.
 # Multiple patches repeat this work independently; timings are per patch.
 block_test <- function(residuals, xy, block_size) {
   n <- nrow(residuals)
@@ -101,7 +101,7 @@ check_y <- matrix(rnorm(100 * 8), nrow = 100,
 check_y[, 2] <- 0
 check_y[1, 3] <- NA_real_
 check_y[2, 4] <- Inf
-reference <- moranTest(check_y, check_xy, verbose = FALSE)
+reference <- getMoranGlobal(check_y, check_xy, verbose = FALSE)
 for (size in c(1L, 3L, 64L)) {
   candidate <- block_test(check_y, check_xy, size)
   stopifnot(identical(reference$status, candidate$status),
@@ -127,7 +127,7 @@ for (case in seq_len(nrow(grid))) {
     spatial
   residuals <- qr.resid(qr(design), y)
   colnames(residuals) <- paste0("gene_", seq_len(g))
-  reference <- moranTest(residuals, xy, k = k, verbose = FALSE)
+  reference <- getMoranGlobal(residuals, xy, k = k, verbose = FALSE)
   for (size in block_sizes) {
     candidate <- block_test(residuals, xy, size)
     error <- max(abs(reference$observed - candidate$observed))
@@ -139,7 +139,7 @@ for (case in seq_len(nrow(grid))) {
     funs <- list(current = if (scope == "kernel") {
       function() current_kernel(residuals, W)
     } else {
-      function() moranTest(residuals, xy, k = k, verbose = FALSE)
+      function() getMoranGlobal(residuals, xy, k = k, verbose = FALSE)
     })
     for (size in block_sizes) {
       funs[[paste0("block_", size)]] <- local({

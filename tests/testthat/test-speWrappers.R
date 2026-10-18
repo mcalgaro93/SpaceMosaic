@@ -127,7 +127,7 @@ test_that("patchMetaAnalysis.spe matches getPatchAttributes/patchMetaAnalysis on
   expect_equal(result$W, W)
 })
 
-test_that("moranTest.spe matches moranTest on the matrix workflow", {
+test_that("getMoranGlobal.spe matches getMoranGlobal on the matrix workflow", {
   patch <- rep(c("1", "2"), length.out = ncol(spe))
   spe_patch <- spe
   SummarizedExperiment::colData(spe_patch)$patch <- patch
@@ -141,13 +141,13 @@ test_that("moranTest.spe matches moranTest on the matrix workflow", {
   )
 
   set.seed(99)
-  result <- moranTest.spe(
+  result <- getMoranGlobal.spe(
     de_result$spe, k = 5, n_permutations = 19, verbose = FALSE
   )
 
   expected_residuals <- t(SummarizedExperiment::assay(de_result$spe, "residuals"))
   set.seed(99)
-  expected <- moranTest(
+  expected <- getMoranGlobal(
     residuals = expected_residuals,
     xy = SpatialExperiment::spatialCoords(de_result$spe),
     patch = SummarizedExperiment::colData(de_result$spe)$patch,
@@ -158,7 +158,7 @@ test_that("moranTest.spe matches moranTest on the matrix workflow", {
   expect_equal(result, expected)
 })
 
-test_that("moranTest.spe uses descriptive Moran calculations by default", {
+test_that("getMoranGlobal.spe uses descriptive Moran calculations by default", {
   patch <- rep(c("1", "2"), length.out = ncol(spe))
   spe_patch <- spe
   SummarizedExperiment::colData(spe_patch)$patch <- patch
@@ -172,9 +172,9 @@ test_that("moranTest.spe uses descriptive Moran calculations by default", {
   )
 
   result <- expect_silent(
-    moranTest.spe(de_result$spe, k = 5, verbose = FALSE)
+    getMoranGlobal.spe(de_result$spe, k = 5, verbose = FALSE)
   )
-  expected <- moranTest(
+  expected <- getMoranGlobal(
     residuals = t(SummarizedExperiment::assay(de_result$spe, "residuals")),
     xy = SpatialExperiment::spatialCoords(de_result$spe),
     patch = SummarizedExperiment::colData(de_result$spe)$patch,
@@ -217,10 +217,10 @@ test_that("getPatches.spe on a further cell-subsetted SpatialExperiment matches 
   )
 })
 
-test_that("moranTest.spe on a gene-subsetted SpatialExperiment matches the matrix workflow", {
-  # Mirrors the row-subsetting shown in moranTest.spe's own @examples
+test_that("getMoranGlobal.spe on a gene-subsetted SpatialExperiment matches the matrix workflow", {
+  # Mirrors the row-subsetting shown in getMoranGlobal.spe's own @examples
   # (`de_result$spe[1:10, ]`), checking that subsetting genes after patchDE.spe
-  # correctly subsets the residuals assay passed on to moranTest.spe.
+  # correctly subsets the residuals assay passed on to getMoranGlobal.spe.
   patch <- rep(c("1", "2"), length.out = ncol(spe))
   spe_patch <- spe
   SummarizedExperiment::colData(spe_patch)$patch <- patch
@@ -235,13 +235,13 @@ test_that("moranTest.spe on a gene-subsetted SpatialExperiment matches the matri
   spe_gene_sub <- de_result$spe[1:10, ]
 
   set.seed(99)
-  result <- moranTest.spe(
+  result <- getMoranGlobal.spe(
     spe_gene_sub, k = 5, n_permutations = 19, verbose = FALSE
   )
 
   expected_residuals <- t(SummarizedExperiment::assay(spe_gene_sub, "residuals"))
   set.seed(99)
-  expected <- moranTest(
+  expected <- getMoranGlobal(
     residuals = expected_residuals,
     xy = SpatialExperiment::spatialCoords(spe_gene_sub),
     patch = SummarizedExperiment::colData(spe_gene_sub)$patch,

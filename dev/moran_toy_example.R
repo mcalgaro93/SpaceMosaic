@@ -58,7 +58,7 @@ fit <- patchDE(
 )
 
 set.seed(42)
-moran_result <- moranTest(
+moran_result <- getMoranGlobal(
   residuals = fit$residuals,
   xy = xy,
   patch = patch,

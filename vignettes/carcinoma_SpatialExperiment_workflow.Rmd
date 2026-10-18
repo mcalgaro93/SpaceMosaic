@@ -304,13 +304,13 @@ heatmap(
 
 
 `return_residuals = TRUE` stored the within-patch residuals as a
-`"residuals"` assay on `de_result$spe`, which `moranTest.spe()` reads
+`"residuals"` assay on `de_result$spe`, which `getMoranGlobal.spe()` reads
 directly, so gene selection is done by subsetting `de_result$spe` rather than
 indexing a separate matrix.
 
 ```{r}
 
-moran_test <- moranTest.spe(
+moran_test <- getMoranGlobal.spe(
   de_result$spe[top_genes, ],
   k = 20,
   n_permutations = 20
