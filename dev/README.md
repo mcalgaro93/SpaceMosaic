@@ -23,6 +23,11 @@ This folder is for ad hoc method development and tuning experiments.
   gene-by-patch results, writes `dev/runs/moran_toy_example.pdf`, and performs
   lightweight smoke checks. Set `SPACEMOSAIC_MORAN_PLOT` to use a different
   plot path; formal regression coverage remains in `tests/testthat/`.
+- benchmark_moran_blocks.R: simulated comparison of the current descriptive
+  Moran path and a prototype processing 64, 256 or 1024 genes together. Runs
+  statistic-only and single-patch end-to-end timings, checks numerical
+  equivalence and invalid-input statuses, and saves timings, cumulative R
+  allocation measurements and a plot under `dev/runs/moran_blocks_benchmark/`.
 - limmaDE_toy_report.Rmd: concise report explaining the research
   question, rationale, simulation and real within-patch comparison of
   `hastyDE()` and `limmaDE()`. The rendered HTML is written to
