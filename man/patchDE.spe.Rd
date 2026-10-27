@@ -46,9 +46,7 @@ mean-variance trend. Default FALSE.}
 \code{colData(spe)} that holds per-cell total counts. Required when
 \code{pearson = TRUE}; ignored otherwise. Default NULL.}
 
-\item{resid_mse}{Logical; passed to \code{patchDE()} to request per-gene
-residual mean squared errors, which are carried through in the \code{de}
-element. Default FALSE.}
+\item{resid_mse}{Logical; if TRUE, include per-gene residual MSE in output}
 
 \item{return_residuals}{Logical; if TRUE, the per-patch model residuals
 are assembled into a genes-by-cells matrix and stored
@@ -59,7 +57,7 @@ residuals are stored in \code{spe} when \code{return_residuals = TRUE}.
 Matches the default \code{assay_name} expected by
 \code{\link{moranTest.spe}}. Default \code{"residuals"}.}
 
-\item{verbose}{Logical; show a progress bar over patches. Default TRUE.}
+\item{verbose}{Show progress. Default TRUE.}
 }
 \value{
 A named list:
