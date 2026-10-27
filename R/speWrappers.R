@@ -344,8 +344,8 @@ getPatches.spe <- function(spe, X, npatches,
 #' @param resid_mse Logical; passed to \code{patchDE()} to request per-gene
 #'   residual mean squared errors, which are carried through in the \code{de}
 #'   element. Default FALSE.
-#' @param return_residuals Logical; if TRUE, the cells-by-genes residual matrix
-#'   produced by \code{patchDE()} is transposed to genes-by-cells and stored
+#' @param return_residuals Logical; if TRUE, the per-patch model residuals
+#'   are assembled into a genes-by-cells matrix and stored
 #'   as assay \code{residual_assay} in the returned \code{spe}. Default FALSE.
 #' @param residual_assay Character string naming the assay under which
 #'   residuals are stored in \code{spe} when \code{return_residuals = TRUE}.
@@ -367,10 +367,13 @@ getPatches.spe <- function(spe, X, npatches,
 #'   }
 #'
 #' @details
-#' The expression matrix is extracted from \code{assay(spe, assay)} and
-#' transposed from genes-by-cells to cells-by-genes before being passed to
-#' \code{patchDE()}. Predictor variables are taken from \code{colData(spe)},
-#' and patch assignments from \code{colData(spe)[[patch_column]]}.
+#' This is equivalent to calling \code{patchDE()} on the transposed
+#' expression matrix, but the full assay is never transposed: the
+#' genes-by-cells matrix from \code{assay(spe, assay)} is subset to one patch
+#' at a time, and only that slice is transposed before being passed to
+#' \code{\link{hastyDE}} or \code{\link{limmaDE}}. Predictor variables are
+#' taken from \code{colData(spe)}, and patch assignments from
+#' \code{colData(spe)[[patch_column]]}.
 #'
 #' Differential expression is run on every non-missing patch in \code{spe},
 #' and the patch columns of the returned matrices follow the order
@@ -464,8 +467,9 @@ patchDE.spe <- function(
         stop("`tot` must be supplied when `pearson = TRUE`.")
     }
 
-    # Expression matrix: genes x cells -> cells x genes
-    y <- t(SummarizedExperiment::assay(spe, assay))
+    # Expression matrix stays genes x cells; only one patch at a time is
+    # transposed to the cells x genes layout the DE backends expect.
+    y <- SummarizedExperiment::assay(spe, assay)
 
     df <- SummarizedExperiment::colData(
         spe
@@ -484,25 +488,49 @@ patchDE.spe <- function(
         tot <- SummarizedExperiment::colData(spe)[[tot]]
     }
 
-    # Run patchDE
-    de_res <- patchDE(
-        y,
-        df,
-        SummarizedExperiment::colData(spe)[[patch_column]],
-        method = method,
-        pearson = pearson,
-        tot = tot,
-        resid_mse = resid_mse,
-        return_residuals = return_residuals,
-        verbose = verbose
-    )
+    patch <- SummarizedExperiment::colData(spe)[[patch_column]]
+    patches <- unique(patch[!is.na(patch)])
+    if (length(patches) == 0L) {
+        stop("patch must contain at least one non-missing patch ID.")
+    }
 
-    # patchDE() wraps its output when residuals are requested
     if (return_residuals) {
-        SummarizedExperiment::assay(spe, residual_assay) <- t(de_res$residuals)
-        out <- list(de = de_res$de)
-    } else {
-        out <- list(de = de_res)
+        # Filled directly in the genes x cells layout of the assay
+        residual_matrix <- matrix(
+            NA_real_,
+            nrow = nrow(y),
+            ncol = ncol(y),
+            dimnames = dimnames(y)
+        )
+    }
+
+    results <- list()
+    if (verbose) {
+        cli::cli_progress_bar("patchDE", total = length(patches))
+    }
+    for (patchid in patches) {
+        cell_index <- which(!is.na(patch) & patch == patchid)
+        patch_name <- as.character(patchid)
+        results[[patch_name]] <- .fitPatch(
+            t(y[, cell_index, drop = FALSE]),
+            df[cell_index, , drop = FALSE],
+            method = method,
+            pearson = pearson,
+            tot = tot[cell_index],
+            return_residuals = return_residuals
+        )
+        if (return_residuals) {
+            residual_matrix[, cell_index] <-
+                t(results[[patch_name]]$residuals)
+            results[[patch_name]]$residuals <- NULL
+        }
+        if (verbose) cli::cli_progress_update()
+    }
+    if (verbose) cli::cli_progress_done()
+
+    out <- list(de = .formatPatchResults(results, resid_mse))
+    if (return_residuals) {
+        SummarizedExperiment::assay(spe, residual_assay) <- residual_matrix
     }
 
     out$spe <- spe

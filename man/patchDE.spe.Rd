@@ -50,8 +50,8 @@ mean-variance trend. Default FALSE.}
 residual mean squared errors, which are carried through in the \code{de}
 element. Default FALSE.}
 
-\item{return_residuals}{Logical; if TRUE, the cells-by-genes residual matrix
-produced by \code{patchDE()} is transposed to genes-by-cells and stored
+\item{return_residuals}{Logical; if TRUE, the per-patch model residuals
+are assembled into a genes-by-cells matrix and stored
 as assay \code{residual_assay} in the returned \code{spe}. Default FALSE.}
 
 \item{residual_assay}{Character string naming the assay under which
@@ -81,10 +81,13 @@ in a \code{SpatialExperiment} object and returns the raw results alongside
 the object they were computed from.
 }
 \details{
-The expression matrix is extracted from \code{assay(spe, assay)} and
-transposed from genes-by-cells to cells-by-genes before being passed to
-\code{patchDE()}. Predictor variables are taken from \code{colData(spe)},
-and patch assignments from \code{colData(spe)[[patch_column]]}.
+This is equivalent to calling \code{patchDE()} on the transposed
+expression matrix, but the full assay is never transposed: the
+genes-by-cells matrix from \code{assay(spe, assay)} is subset to one patch
+at a time, and only that slice is transposed before being passed to
+\code{\link{hastyDE}} or \code{\link{limmaDE}}. Predictor variables are
+taken from \code{colData(spe)}, and patch assignments from
+\code{colData(spe)[[patch_column]]}.
 
 Differential expression is run on every non-missing patch in \code{spe},
 and the patch columns of the returned matrices follow the order
