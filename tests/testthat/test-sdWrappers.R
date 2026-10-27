@@ -98,8 +98,9 @@ test_that("creating a new SpatialData object leaves earlier ones untouched", {
   )
 
   # Also when both are added to the same SpatialData object.
-  sd_two <- spe_to_spatialdata(
-    spe_sub, sd = sd_a, shape_name = "shape2", table_name = "table2"
+  sd_two <- spatialdataR::combine(
+    sd_a,
+    spe_to_spatialdata(spe_sub, shape_name = "shape2", table_name = "table2")
   )
   expect_equal(
     unname(SpaceMosaic:::.sdCoords(sd_two, sd_table(sd_two, "table"))),
@@ -372,8 +373,9 @@ test_that("moranTest.sd on a gene-subsetted table matches moranTest.spe", {
 
 test_that("the `table` argument selects which table is used and modified", {
   spe_sub <- spe[, spe$celltype == "Cancer.cells"]
-  sd_two <- spe_to_spatialdata(
-    spe_sub, sd = sd, shape_name = "shape2", table_name = "table2"
+  sd_two <- spatialdataR::combine(
+    sd,
+    spe_to_spatialdata(spe_sub, shape_name = "shape2", table_name = "table2")
   )
   expect_identical(spatialdataR::tableNames(sd_two), c("table", "table2"))
 

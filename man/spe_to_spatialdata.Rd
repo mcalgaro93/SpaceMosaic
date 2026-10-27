@@ -6,7 +6,6 @@
 \usage{
 spe_to_spatialdata(
   spe,
-  sd = NULL,
   shape_name = "shape1",
   table_name = "table",
   add_cell_id = TRUE
@@ -14,9 +13,6 @@ spe_to_spatialdata(
 }
 \arguments{
 \item{spe}{A SpatialExperiment object.}
-
-\item{sd}{Optional, a SpatialData object where to add the SpatialExperiment
-object content. Default \code{NULL} creates a new one.}
 
 \item{shape_name}{Name of the shapes element that holds the cell
 coordinates. Default \code{"shape1"}.}

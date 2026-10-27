@@ -7,8 +7,6 @@
 #' first one is added as an image element.
 #'
 #' @param spe A SpatialExperiment object.
-#' @param sd Optional, a SpatialData object where to add the SpatialExperiment
-#'   object content. Default \code{NULL} creates a new one.
 #' @param shape_name Name of the shapes element that holds the cell
 #'   coordinates. Default \code{"shape1"}.
 #' @param table_name Name of the table element that holds the
@@ -25,7 +23,7 @@
 #' sd <- spe_to_spatialdata(spe)
 #' sd
 #' @export
-spe_to_spatialdata <- function(spe, sd = NULL,
+spe_to_spatialdata <- function(spe,
                                shape_name  = "shape1",
                                table_name  = "table",
                                add_cell_id = TRUE) {
@@ -62,12 +60,8 @@ spe_to_spatialdata <- function(spe, sd = NULL,
   sd_shapes <- .sdShape(coords_sf)
 
   # ---- Build SpatialData and attach the table ----
-  if (is.null(sd)) {
-    shapes_list <- stats::setNames(list(sd_shapes), shape_name)
-    sd <- spatialdataR::SpatialData(shapes = shapes_list)
-  } else {
-    sd <- spatialdataR::`shape<-`(sd, shape_name, value = sd_shapes)
-  }
+  shapes_list <- stats::setNames(list(sd_shapes), shape_name)
+  sd <- spatialdataR::SpatialData(shapes = shapes_list)
   sd <- spatialdataR::setTable(sd, shape_name, sce, name = table_name)
   # setTable() copies the shapes' instance IDs onto the table by position;
   # reset them so table column i is matched to the geometry of cell i.

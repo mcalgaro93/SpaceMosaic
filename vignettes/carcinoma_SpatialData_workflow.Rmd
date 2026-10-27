@@ -142,8 +142,9 @@ Patches are built on the response cells only. Replacing `table` with a subset
 of its cells would make `spatialdataR` drop the geometries of the remaining
 cells from `shape1`, so we instead add the cancer cells as a separate
 shapes/table pair, `cancer_shape` and `cancer_cells`, carrying over $X$ and
-$Z$ computed above. The shapes element and the table must have different
-names.
+$Z$ computed above. We convert them to a new `SpatialData` object and merge it
+into `sd` with `combine()` from `spatialdataR`. The shapes element and the
+table must have different names.
 
 ```{r define-subset}
 sce <- table(sd)
@@ -153,12 +154,12 @@ spe_use <- spe[, use]
 spe_use$distance <- sce$distance[use]
 reducedDim(spe_use, "Z") <- reducedDim(sce, "Z")[use, ]
 
-sd <- spe_to_spatialdata(
+sd_use <- spe_to_spatialdata(
   spe_use,
-  sd = sd,
   shape_name = "cancer_shape",
   table_name = "cancer_cells"
 )
+sd <- combine(sd, sd_use)
 sd
 ```
 
