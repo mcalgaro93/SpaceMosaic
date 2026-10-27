@@ -3,7 +3,7 @@
 # Check that `sd` is a SpatialData object and that the packages needed to
 # work with it are available.
 .checkSd <- function(sd) {
-    for (pkg in c("spatialdataR", "sf")) {
+    for (pkg in c("spatialdataR", "sf", "duckspatial")) {
         if (!requireNamespace(pkg, quietly = TRUE)) {
             stop("Package '", pkg, "' is required for SpatialData objects. ",
                  "Please install it.")
@@ -104,6 +104,40 @@
     spatialdataR::`table<-`(sd, i = table, value = sce)
 }
 
+# Wrap an sf object as a SpatialDataShape. spatialdataR::SpatialDataShape()
+# writes every data.frame/sf it receives to the same DuckDB table
+# ("sdShape"), overwriting the geometries of all previously created shapes.
+# Writing `x` to a uniquely named table ourselves and passing the resulting
+# duckspatial_df avoids this.
+.sdShape <- function(x) {
+    conn <- suppressMessages(duckspatial::ddbs_create_conn())
+    table_id <- basename(tempfile("sdShape_"))
+    suppressWarnings(suppressMessages(
+        duckspatial::ddbs_write_table(
+            conn = conn, data = x, name = table_id,
+            overwrite = FALSE, temp_view = FALSE)
+    ))
+    x_duck <- duckspatial::as_duckspatial_df(
+        x = table_id, conn = conn, crs = NA_character_,
+        geom_col = attr(x, "sf_column"))
+    spatialdataR::SpatialDataShape(x_duck)
+}
+
+# Convert the vertex data frame returned by getPatchPolys() (columns `x`, `y`,
+# `patch` and optional per-patch annotations) to an sf object with one
+# polygon per patch and the annotations as attributes.
+.patchPolysToSf <- function(polys) {
+    ids <- unique(polys$patch)
+    geoms <- lapply(ids, function(id) {
+        v <- as.matrix(polys[polys$patch == id, c("x", "y")])
+        sf::st_polygon(list(rbind(v, v[1, ])))
+    })
+    attrs <- polys[!duplicated(polys$patch),
+                   setdiff(names(polys), c("x", "y")), drop = FALSE]
+    rownames(attrs) <- NULL
+    sf::st_sf(attrs, geometry = sf::st_sfc(geoms))
+}
+
 
 #' Embed cellular neighborhoods in a SpatialData object
 #'
@@ -184,12 +218,12 @@ embedCellNeighborhoods.sd <- function(sd, embedding, ks = c(5, 50), tissue = NUL
 #' `getPatches()` identifies spatial patches, `getPatchDiagnostics()` computes
 #' patch-level information from the resulting patch assignments, and
 #' `getPatchPolys()` constructs patch polygons using the patch assignments and
-#' diagnostic information. Results are stored in `tables(sd)[[table]]`.
+#' diagnostic information. Patch assignments and diagnostics are stored in
+#' `tables(sd)[[table]]`, and patch polygons as a new shapes element of `sd`.
 #'
 #' Spatial coordinates are taken from the shapes element annotated by the
 #' table (see [embedCellNeighborhoods.sd()] for details), design variables from `colData(tables(sd)[[table]])`, and (optionally) context
-#' embeddings from `reducedDims(tables(sd)[[table]])`. All results are returned attached
-#' to `tables(sd)[[table]]`.
+#' embeddings from `reducedDims(tables(sd)[[table]])`.
 #'
 #' @param sd A `SpatialData` object. `tables(sd)[[table]]` must be a
 #'   `SingleCellExperiment` with `colnames` (cell identifiers) and the columns
@@ -213,15 +247,17 @@ embedCellNeighborhoods.sd <- function(sd, embedding, ks = c(5, 50), tissue = NUL
 #'   (`patch_diagnostics`, `assignment_summary`, `connectivity_curve`) into
 #'   `metadata(tables(sd)[[table]])$SpaceMosaic`.
 #' @param patch_polys Logical; if `TRUE` (default), compute patch polygons with
-#'   `getPatchPolys()` and store the result in
-#'   `metadata(tables(sd)[[table]])$SpaceMosaic$patch_polys`. When
-#'   `patch_diagnostics = FALSE`, polygons are built without diagnostic
-#'   information (`patch_data = NULL`).
+#'   `getPatchPolys()` and store them as the shapes element `patch_shape` of
+#'   `sd`. When `patch_diagnostics = FALSE`, polygons are built without
+#'   diagnostic information (`patch_data = NULL`).
+#' @param patch_shape Name of the shapes element of `sd` where patch polygons
+#'   are stored when `patch_polys = TRUE`. Default `"patch_polys"`. An existing
+#'   shapes element of the same name is overwritten.
 #' @param patch_column Column name in `colData(tables(sd)[[table]])` where patch
 #'   assignments are stored. Default `"patch"`. An existing column of the same
 #'   name is overwritten.
 #'
-#' @return The input `sd`, with results attached to `tables(sd)[[table]]`:
+#' @return The input `sd`, with results attached:
 #'   \itemize{
 #'     \item `colData(tables(sd)[[table]])[[patch_column]]`: named vector/factor of final
 #'       patch assignments, ordered to match `colnames(tables(sd)[[table]])`. `NA`
@@ -234,8 +270,10 @@ embedCellNeighborhoods.sd <- function(sd, embedding, ks = c(5, 50), tissue = NUL
 #'     \item `metadata(tables(sd)[[table]])$SpaceMosaic$patch_diagnostics`,
 #'       `$assignment_summary` and `$connectivity_curve`: the three data frames
 #'       returned by `getPatchDiagnostics()`, if `patch_diagnostics = TRUE`.
-#'     \item `metadata(tables(sd)[[table]])$SpaceMosaic$patch_polys`: patch polygons, if
-#'       `patch_polys = TRUE`.
+#'     \item `shapes(sd)[[patch_shape]]`: if `patch_polys = TRUE`, one polygon
+#'       per patch (the convex hull of its cells), with a `patch` column and,
+#'       if `patch_diagnostics = TRUE`, the columns of `patch_diagnostics`.
+#'       Patches with fewer than three cells have no polygon.
 #'   }
 #'
 #' @seealso [getPatches()], [getPatchDiagnostics()], [getPatchPolys()],
@@ -256,6 +294,7 @@ embedCellNeighborhoods.sd <- function(sd, embedding, ks = c(5, 50), tissue = NUL
 #' )
 #' head(table(sd)$patch)
 #' head(metadata(table(sd))$SpaceMosaic$patch_diagnostics)
+#' shapes(sd)$patch_polys
 #'
 #' @export getPatches.sd
 getPatches.sd <- function(sd, X, npatches,
@@ -278,6 +317,7 @@ getPatches.sd <- function(sd, X, npatches,
                            patch_diagnostics = TRUE,
                            k = 10L, strict_k = NULL,
                            patch_polys = TRUE,
+                           patch_shape = "patch_polys",
                            patch_column = "patch",
                            table = 1,
                            verbose = TRUE) {
@@ -373,15 +413,21 @@ getPatches.sd <- function(sd, X, npatches,
       patch_data <- NULL
     }
 
+    sd <- .sdSetTable(sd, sce, table)
+
     if (patch_polys) {
-      patch_polys <- getPatchPolys(
+      polys <- getPatchPolys(
         xy = xy,
         patch = patch_vec,
         patch_data = patch_data
       )
-      metadata(sce)$SpaceMosaic$patch_polys <- patch_polys
+      if (nrow(polys) > 0) {
+        sd <- spatialdataR::`shape<-`(
+          sd, patch_shape, value = .sdShape(.patchPolysToSf(polys))
+        )
+      }
     }
-    return(.sdSetTable(sd, sce, table))
+    return(sd)
 }
 
 
@@ -845,3 +891,4 @@ moranTest.sd <- function(sd, assay_name = 'residuals', patch_column = "patch", k
                      adjustment_scope = adjustment_scope)
     return(res)
 }
+
