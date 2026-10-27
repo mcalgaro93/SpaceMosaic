@@ -28,6 +28,7 @@ getPatches.sd(
   k = 10L,
   strict_k = NULL,
   patch_polys = TRUE,
+  patch_shape = "patch_polys",
   patch_column = "patch",
   table = 1,
   verbose = TRUE
@@ -125,10 +126,13 @@ Default 10. Limited internally to \code{n - 1} for small datasets. Ignored when
 uses \code{min(5, k)}. Ignored when \code{patch_diagnostics = FALSE}.}
 
 \item{patch_polys}{Logical; if \code{TRUE} (default), compute patch polygons with
-\code{getPatchPolys()} and store the result in
-\code{metadata(tables(sd)[[table]])$SpaceMosaic$patch_polys}. When
-\code{patch_diagnostics = FALSE}, polygons are built without diagnostic
-information (\code{patch_data = NULL}).}
+\code{getPatchPolys()} and store them as the shapes element \code{patch_shape} of
+\code{sd}. When \code{patch_diagnostics = FALSE}, polygons are built without
+diagnostic information (\code{patch_data = NULL}).}
+
+\item{patch_shape}{Name of the shapes element of \code{sd} where patch polygons
+are stored when \code{patch_polys = TRUE}. Default \code{"patch_polys"}. An existing
+shapes element of the same name is overwritten.}
 
 \item{patch_column}{Column name in \code{colData(tables(sd)[[table]])} where patch
 assignments are stored. Default \code{"patch"}. An existing column of the same
@@ -140,7 +144,7 @@ Default \code{1} (the first table).}
 \item{verbose}{Logical; show progress. Default \code{TRUE}.}
 }
 \value{
-The input \code{sd}, with results attached to \code{tables(sd)[[table]]}:
+The input \code{sd}, with results attached:
 \itemize{
 \item \code{colData(tables(sd)[[table]])[[patch_column]]}: named vector/factor of final
 patch assignments, ordered to match \code{colnames(tables(sd)[[table]])}. \code{NA}
@@ -153,8 +157,10 @@ sum-of-squares of X across iterations).
 \item \code{metadata(tables(sd)[[table]])$SpaceMosaic$patch_diagnostics},
 \verb{$assignment_summary} and \verb{$connectivity_curve}: the three data frames
 returned by \code{getPatchDiagnostics()}, if \code{patch_diagnostics = TRUE}.
-\item \code{metadata(tables(sd)[[table]])$SpaceMosaic$patch_polys}: patch polygons, if
-\code{patch_polys = TRUE}.
+\item \code{shapes(sd)[[patch_shape]]}: if \code{patch_polys = TRUE}, one polygon
+per patch (the convex hull of its cells), with a \code{patch} column and,
+if \code{patch_diagnostics = TRUE}, the columns of \code{patch_diagnostics}.
+Patches with fewer than three cells have no polygon.
 }
 }
 \description{
@@ -163,13 +169,13 @@ Convenience wrapper for the SpaceMosaic patching workflow on a
 \code{getPatches()} identifies spatial patches, \code{getPatchDiagnostics()} computes
 patch-level information from the resulting patch assignments, and
 \code{getPatchPolys()} constructs patch polygons using the patch assignments and
-diagnostic information. Results are stored in \code{tables(sd)[[table]]}.
+diagnostic information. Patch assignments and diagnostics are stored in
+\code{tables(sd)[[table]]}, and patch polygons as a new shapes element of \code{sd}.
 }
 \details{
 Spatial coordinates are taken from the shapes element annotated by the
 table (see \code{\link[=embedCellNeighborhoods.sd]{embedCellNeighborhoods.sd()}} for details), design variables from \code{colData(tables(sd)[[table]])}, and (optionally) context
-embeddings from \code{reducedDims(tables(sd)[[table]])}. All results are returned attached
-to \code{tables(sd)[[table]]}.
+embeddings from \code{reducedDims(tables(sd)[[table]])}.
 }
 \examples{
 \dontshow{if (requireNamespace("spatialdataR", quietly = TRUE)) withAutoprint(\{ # examplesIf}
@@ -184,6 +190,7 @@ sd <- getPatches.sd(
 )
 head(table(sd)$patch)
 head(metadata(table(sd))$SpaceMosaic$patch_diagnostics)
+shapes(sd)$patch_polys
 \dontshow{\}) # examplesIf}
 }
 \seealso{

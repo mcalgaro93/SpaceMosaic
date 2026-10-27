@@ -31,8 +31,10 @@ spe_to_spatialdata <- function(spe, sd = NULL,
                                add_cell_id = TRUE) {
 
   # ---- Input checks ----
-  if (!requireNamespace("spatialdataR", quietly = TRUE)) {
-    stop("Package 'spatialdataR' is required. Please install it.")
+  for (pkg in c("spatialdataR", "sf", "duckspatial")) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      stop("Package '", pkg, "' is required. Please install it.")
+    }
   }
   if (!methods::is(spe, "SpatialExperiment")) {
     stop("`spe` must be a SpatialExperiment object.")
@@ -52,7 +54,9 @@ spe_to_spatialdata <- function(spe, sd = NULL,
     coords_df$cell_id <- colnames(spe)
   }
 
-  sd_shapes <- spatialdataR::SpatialDataShape(coords_df)
+  # .sdShape() avoids spatialdataR's shared DuckDB table (see its comment).
+  coords_sf <- sf::st_as_sf(coords_df, coords = c("x", "y"), crs = NA)
+  sd_shapes <- .sdShape(coords_sf)
 
   # ---- Build SpatialData and attach the table ----
   if (is.null(sd)) {
