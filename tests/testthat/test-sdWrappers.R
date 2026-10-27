@@ -68,6 +68,18 @@ test_that("coordinates are matched to cells by instance ID, not by position", {
   )
 })
 
+test_that("coordinates match the SpatialExperiment on the full dataset", {
+  # DuckDB does not preserve row order on larger tables, so cells must be
+  # matched to geometries by instance ID rather than by position.
+  sd_full <- spe_to_spatialdata(spe_full)
+  for (i in 1:2) {
+    expect_equal(
+      unname(SpaceMosaic:::.sdCoords(sd_full, sd_table(sd_full))),
+      unname(SpatialExperiment::spatialCoords(spe_full))
+    )
+  }
+})
+
 test_that("creating a new SpatialData object leaves earlier ones untouched", {
   # spatialdataR::SpatialDataShape() writes every data.frame to one shared
   # DuckDB table; spe_to_spatialdata() must not be affected by this.

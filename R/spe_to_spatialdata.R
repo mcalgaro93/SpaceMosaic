@@ -50,6 +50,9 @@ spe_to_spatialdata <- function(spe, sd = NULL,
   # ---- Coordinates -> duckspatial points ----
   coords_df <- as.data.frame(coords)
   colnames(coords_df) <- c("x", "y")
+  # Explicit instance IDs: the shapes are stored in DuckDB, which does not
+  # preserve row order, so cells cannot be matched to geometries by position.
+  coords_df$instance_id <- seq_len(nrow(coords_df))
   if (add_cell_id) {
     coords_df$cell_id <- colnames(spe)
   }
@@ -66,6 +69,11 @@ spe_to_spatialdata <- function(spe, sd = NULL,
     sd <- spatialdataR::`shape<-`(sd, shape_name, value = sd_shapes)
   }
   sd <- spatialdataR::setTable(sd, shape_name, sce, name = table_name)
+  # setTable() copies the shapes' instance IDs onto the table by position;
+  # reset them so table column i is matched to the geometry of cell i.
+  sce <- spatialdataR::tables(sd)[[table_name]]
+  spatialdataR::instances(sce) <- seq_len(ncol(sce))
+  sd <- .sdSetTable(sd, sce, table_name)
 
   # ---- Image (if any) ----
   if (nrow(SpatialExperiment::imgData(spe)) > 0) {

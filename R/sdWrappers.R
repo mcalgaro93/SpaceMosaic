@@ -71,19 +71,21 @@
     }
     shape <- spatialdataR::shapes(sd)[[region]]
 
+    # The shapes are a lazy DuckDB table whose row order is not stable across
+    # queries, so instance IDs are read from the same collected sf object as
+    # the geometries.
     geom <- spatialdataR::data(shape) |>
         sf::st_as_sf()
+    ik <- tryCatch(spatialdataR::instance_key(sce), error = function(e) NULL)
+    shape_ids <- if (!is.null(ik) && ik %in% names(geom)) geom[[ik]] else NULL
     if (!all(sf::st_geometry_type(geom) == "POINT")) {
         geom <- sf::st_centroid(sf::st_geometry(geom))
     }
     xy <- sf::st_coordinates(geom)[, c("X", "Y"), drop = FALSE]
 
-    ik <- tryCatch(spatialdataR::instance_key(sce), error = function(e) NULL)
     if (!is.null(ik)) {
-        shape_ids <- if (ik %in% names(shape)) {
-            spatialdataR::pull(shape, !!ik)
-        } else {
-            seq_len(nrow(xy))
+        if (is.null(shape_ids)) {
+            shape_ids <- seq_len(nrow(xy))
         }
         idx <- match(spatialdataR::instances(sce), shape_ids)
         if (anyNA(idx)) {
