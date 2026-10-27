@@ -1,0 +1,412 @@
+---
+title: "Case Study: Human basal-cell carcinoma with SpatialData"
+author: "Pere Moles"
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+vignette: >
+  %\VignetteIndexEntry{Human basal-cell carcinoma study with SpatialData}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6
+)
+library(SpaceMosaic)
+library(SpatialExperiment)
+library(spatialdataR)
+library(sf)
+library(ggplot2)
+library(viridis)
+```
+
+# Overview
+
+The workflow is:
+
+1. define the response-cell subset and design variable(s) ($X$);
+2. encode the cellular microenvironment ($Z$);
+3. identify and quality-control spatially contiguous patches;
+4. estimate within-patch expression associations;
+5. borrow information among patches with similar contexts ($W$); and
+6. interpret recurrent or context-specific effects in space.
+
+This vignette repeats the analysis of the `SpatialExperiment` case study, but
+on a `SpatialData` object. A `SpatialData` object keeps the cell geometries
+and the expression data in separate elements:
+
+- shapes: cell geometries (here, one point per cell) in
+  `shapes(sd)[[shape]]`, from which spatial coordinates are taken;
+- tables: a `SingleCellExperiment` in `tables(sd)[[table]]` that annotates a
+  shapes element and holds
+  - expression: assay **genes x cells**;
+  - $X$: column or columns in colData **cells x predictors**;
+  - $Z$: an embedding stored in reducedDims **cells x neighborhood features**;
+- $W$: patch-level attributes derived from $Z$ by `patchMetaAnalysis.sd()`
+  (**patches x patch features**), returned alongside the meta-analysis results
+  rather than stored back on `sd`.
+
+The `.sd`-suffixed functions used below (`embedCellNeighborhoods.sd()`,
+`getPatches.sd()`, `patchDE.sd()`, `patchMetaAnalysis.sd()`,
+`moranTest.sd()`) are `SpatialData` wrappers: they read $X$, $Z$, expression,
+and patch assignments from the table selected with the `table` argument, and
+spatial coordinates from the shapes element that table annotates.
+`embedCellNeighborhoods.sd()` and `getPatches.sd()` attach their results back
+onto `sd` and return it; `getPatches.sd()` also stores the patch polygons as a
+new shapes element. `patchDE.sd()` returns its differential-expression results
+alongside `sd` (whose table also gains a `"residuals"` assay when
+`return_residuals = TRUE`); and `patchMetaAnalysis.sd()` returns the
+meta-analysis results (`meta` and `W`, plus `subgroups_summary` when
+requested) without `sd`.
+
+# Data and analysis question
+
+Single-cell spatial transcriptomics (6k-plex CosMx SMI) dataset of human
+basal-cell carcinoma from https://zenodo.org/records/14330691 was preprocessed
+before the analysis. The original Seurat object was converted to a
+`SpatialExperiment` object, and data was filtered for Patient A and FOVs 39 to
+41. This consists of a nodular-ulcerated BCC sample.
+
+`spe_to_spatialdata()` converts it to a `SpatialData` object: the spatial
+coordinates become the points of the shapes element `shape1`, and everything
+else (assays, colData, reducedDims) becomes the table `table` annotating it.
+
+```{r load-data}
+spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
+sd <- spe_to_spatialdata(spe)
+sd
+```
+
+The shapes are stored in a DuckDB table whose row order is not guaranteed, so
+cells are always matched to their geometries by identifier. The helper below
+returns the coordinates of the cells of a table, in the order of its columns,
+using the `cell_id` column that `spe_to_spatialdata()` stores in the shapes.
+
+```{r cell-coords}
+cellCoords <- function(sd, shape, sce) {
+  cells <- st_as_sf(data(shapes(sd)[[shape]]))
+  xy <- st_coordinates(cells)[match(colnames(sce), cells$cell_id), ]
+  rownames(xy) <- colnames(sce)
+  xy
+}
+```
+
+We study the exposure of Cancer Cells near Fibroblasts.
+
+```{r define-x}
+# Example: distance to the nearest cell of a selected explanatory population.
+sce <- table(sd)
+xy <- cellCoords(sd, "shape1", sce)
+
+distance_to_explanatory <- FNN::get.knnx(
+  data = xy[sce$celltype == "Fibroblast", ],
+  query = xy,
+  k = 1
+)$nn.dist[, 1]
+
+sce$distance <- log1p(distance_to_explanatory)
+table(sd) <- sce
+```
+
+# Cellular-neighborhood embedding ($Z$)
+
+`embedCellNeighborhoods()` averages a cell-level embedding over spatial
+neighbor networks at multiple scales. Compute $Z$ on all cells before taking
+the response-cell subset, so the representation retains the surrounding
+tissue context. Supply `tissue` when the object contains multiple samples,
+slides, or fields of view; this prevents neighborhoods from crossing tissue
+boundaries.
+
+```{r cellular-neighborhoods}
+sd <- embedCellNeighborhoods.sd(
+  sd = sd,
+  embedding = 'PCA',
+  ks = c(5, 50),
+  tissue = 'sample_id'
+)
+
+head(reducedDim(table(sd), "Z")[, 1:5], 3)
+```
+
+# Response-cell subset
+
+Patches are built on the response cells only. Replacing `table` with a subset
+of its cells would make `spatialdataR` drop the geometries of the remaining
+cells from `shape1`, so we instead add the cancer cells as a separate
+shapes/table pair, `cancer_shape` and `cancer_cells`, carrying over $X$ and
+$Z$ computed above. The shapes element and the table must have different
+names.
+
+```{r define-subset}
+sce <- table(sd)
+use <- sce$celltype == "Cancer.cells"
+
+spe_use <- spe[, use]
+spe_use$distance <- sce$distance[use]
+reducedDim(spe_use, "Z") <- reducedDim(sce, "Z")[use, ]
+
+sd <- spe_to_spatialdata(
+  spe_use,
+  sd = sd,
+  shape_name = "cancer_shape",
+  table_name = "cancer_cells"
+)
+sd
+```
+
+From here on, every wrapper is called with `table = "cancer_cells"`.
+
+# Patch identification and quality control
+
+`getPatches()` favors spatially compact, contiguous regions that retain
+within-patch variation in $X$ while remaining coherent in $Z$.
+
+```{r identify-patches}
+set.seed(123)
+
+X = 'distance'
+sd <- getPatches.sd(
+  sd,
+  X = X,
+  Z = 'Z',
+  npatches = 100,       # CHANGE for tissue area and response-cell abundance
+  alpha = 0.5,          # weight of the Z-coherence penalty
+  beta = 1,   # weight of within-patch X diversity
+  hunger_weight = 0.5, # balances patch size and X variation
+  max_elongation = 4,
+  mahal_radius = 3,
+  n_candidates = 20,
+  n_iters = 5,
+  log_iters = TRUE,
+  table = "cancer_cells"
+)
+
+sce_use <- table(sd, "cancer_cells")
+
+plotPatchIterations(
+  xy = cellCoords(sd, "cancer_shape", sce_use),
+  result = metadata(sce_use)$SpaceMosaic$patch_iterations,
+  iters = 1:5,
+  ask = FALSE
+)
+```
+
+
+Patch diagnostics stored in the metadata of the table report assignment
+coverage and summarize patch size, within-patch variation in `X`, spatial
+connectivity, and final membership stability. These are general checks; RNA
+content, distance to an explanatory population, tissue region, and sample
+identity can reveal additional experiment-specific failure modes.
+
+```{r patch-diagnostics}
+
+patch_diagnostics <- metadata(sce_use)$SpaceMosaic$patch_diagnostics
+
+# CHANGE to the X column that should be inspected when X is multivariable.
+x_sd_column <- if (length(X) == 1L) "x_sd" else paste0("x_sd_", X[1])
+patch_diagnostics$selected_x_sd <- patch_diagnostics[[x_sd_column]]
+patch_diagnostics$connectivity <- factor(
+  ifelse(
+    patch_diagnostics$strict_component_fraction == 1,
+    "Connected",
+    "Fragmented"
+  ),
+  levels = c("Connected", "Fragmented")
+)
+
+# CHANGE after inspecting the diagnostic distributions and predictor scale.
+min_cells <- 30
+min_x_sd <- 0.1
+min_stability <- 0.9
+
+ggplot(patch_diagnostics, aes(n_cells, selected_x_sd)) +
+  geom_point(aes(fill = membership_stability, shape = connectivity), size = 3) +
+  geom_vline(xintercept = min_cells, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = min_x_sd, linetype = "dashed", color = "red") +
+  scale_fill_viridis_c(limits = c(0, 1), na.value = "grey70") +
+  scale_shape_manual(values = c(Connected = 21, Fragmented = 24)) +
+  theme_minimal() +
+  labs(
+    title = "Core patch diagnostics",
+    x = "Cells per patch",
+    y = "Within-patch standard deviation of X",
+    fill = "Membership stability",
+    shape = "Connectivity"
+  )
+
+keep <- with(
+  patch_diagnostics,
+  patch[
+    n_cells >= min_cells &
+      is.finite(selected_x_sd) & selected_x_sd >= min_x_sd &
+      !is.na(membership_stability) &
+      membership_stability >= min_stability &
+      strict_component_fraction == 1
+  ]
+)
+
+sce_use$patch[!sce_use$patch %in% keep] <- NA
+table(sd, "cancer_cells") <- sce_use
+```
+
+The plot combines patch size, predictor variation, final stability, and
+connectivity; crosses mark fragmentation at `strict_k`. Replace the
+example thresholds after inspecting the dataset and the scale of `X`, then set
+cells in excluded patches to `NA` in the table as shown above.
+
+`getPatches.sd()` stored one polygon per patch, annotated with the patch
+diagnostics, in the shapes element `patch_polys`. It still holds every patch;
+the excluded ones are dropped after converting it to an `sf` object.
+
+```{r patch-polys}
+polys <- st_as_sf(data(shapes(sd)$patch_polys))
+polys <- polys[polys$patch %in% keep, ]
+head(polys)
+```
+
+Overlay the retained patch boundaries on the per-cell map of $X$ to check
+visually that patches trace coherent regions of the exposure variable rather
+than cutting across it.
+
+```{r patch-map}
+sce <- table(sd)
+cells <- st_as_sf(data(shapes(sd)$shape1))
+cells$distance_use <- ifelse(
+  sce$celltype == "Cancer.cells",
+  sce$distance,
+  NA
+)[match(cells$cell_id, colnames(sce))]
+
+ggplot() +
+  geom_sf(data = cells, aes(color = distance_use), size = 0.5) +
+  geom_sf(data = polys, fill = NA, color = "black", linewidth = 0.3) +
+  scale_color_viridis_c() +
+  theme_minimal() +
+  labs(
+    title = "Distance to nearest Fibroblast",
+    x = "x",
+    y = "y",
+    color = "log1p(distance)"
+  )
+```
+
+# Within-patch differential expression
+
+`patchDE.sd()` wraps `patchDE()` for a `SpatialData` object: it takes the
+assay named by `assay` (genes x cells) from the selected table, transposes it
+internally, builds the predictor data frame from `predictor_cols` in its
+colData, and reads patch assignments from its `patch_column`; cells with a
+missing patch assignment are dropped automatically.
+
+For raw counts, `pearson = TRUE` computes Pearson residuals separately within
+each patch and requires `tot` to name a colData column holding per-cell total
+counts. Alternatively, transform or normalize expression before calling
+`patchDE.sd()` and include relevant technical covariates in `predictor_cols`.
+
+```{r patch-de}
+de_result <- patchDE.sd(
+  sd = sd,
+  predictor_cols = 'distance',
+  method = "limma",
+  pearson = FALSE,
+  tot = 'total',
+  return_residuals = TRUE,
+  table = "cancer_cells"
+)
+```
+
+# Borrowing information across patches ($W$)
+
+`patchMetaAnalysis.sd()` derives patch-level attributes ($W$) by averaging
+the embedding named by `embedding_name` (default `"Z"`, taken from the
+reducedDims of the table) within each patch, then borrows information across
+patches with similar $W$ by running `patchMetaAnalysis()` on the per-patch
+fits produced by `patchDE.sd()`. It uses the same table as `patchDE.sd()`
+unless `table` is given. Set `summarize_subgroups = TRUE` to also summarize
+effects within subgroups of patches, optionally annotated with
+`cellmeta_cols` taken from the colData of the table.
+
+```{r patch-meta}
+meta_result <- patchMetaAnalysis.sd(
+  patchDE_result = de_result,
+  summarize_subgroups = TRUE,
+  cellmeta_cols = c("celltype", "distance")
+)
+```
+
+
+
+# Result summaries and spatial validation
+
+Rank genes using a criterion chosen in advance. The example below uses the
+fraction of patches with an absolute posterior Z-score above 2. Effect sizes,
+posterior p-values, subgroup membership, and biological relevance should also
+be considered; very small p-values alone are not sufficient.
+
+```{r result-summary}
+z_score <- meta_result$meta$distance$ests/ meta_result$meta$distance$ses
+
+gene_summary <- data.frame(
+  gene = rownames(z_score),
+  recurrent = rowMeans(abs(z_score) > 2, na.rm = TRUE),
+  positive = rowMeans(z_score > 2, na.rm = TRUE),
+  negative = rowMeans(z_score < -2, na.rm = TRUE)
+)
+gene_summary <- gene_summary[
+  order(gene_summary$recurrent, decreasing = TRUE),
+]
+top_genes <- head(gene_summary$gene, 50)
+
+heatmap(
+  z_score[top_genes, , drop = FALSE],
+  scale = "none"
+)
+```
+
+
+`return_residuals = TRUE` stored the within-patch residuals as a
+`"residuals"` assay of the `cancer_cells` table of `de_result$sd`, which
+`moranTest.sd()` reads directly. To test only the top genes, replace that
+table by its subset of rows; cells, and therefore the shapes it annotates, are
+left untouched.
+
+```{r moran}
+sd_moran <- de_result$sd
+table(sd_moran, "cancer_cells") <- table(sd_moran, "cancer_cells")[top_genes, ]
+
+moran_test <- moranTest.sd(
+  sd_moran,
+  k = 20,
+  n_permutations = 20,
+  table = "cancer_cells"
+)
+
+head(moran_test[order(moran_test$observed, decreasing = TRUE),])
+```
+
+Finally, project representative effects back onto the tissue. Confirm that
+their direction agrees with the predictor and is not driven by an unmodeled
+sample, anatomical compartment, low-quality region, or segmentation artifact.
+
+```{r spatial-validation}
+gene <- top_genes[1]
+poly_gene <- polys
+poly_gene$z_score <- z_score[gene, ][as.character(poly_gene$patch)]
+
+ggplot(poly_gene) +
+  geom_sf(aes(fill = z_score), color = "grey30", linewidth = 0.2) +
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "red", midpoint = 0
+  ) +
+  theme_minimal() +
+  labs(title = gene, fill = "Posterior Z")
+
+```
