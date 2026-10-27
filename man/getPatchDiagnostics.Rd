@@ -26,10 +26,10 @@ greater than \code{k}. \code{NULL} uses \code{min(5, k)}.}
 \value{
 A list with three data frames:
 \describe{
-\item{patch_diagnostics}{One row per patch. A single \code{X} gives \code{x_sd};
-multiple columns give \verb{x_sd_<name>}. Other columns report patch size,
-strict connectivity, the first k with full connectivity, and
-membership stability.}
+\item{patch_diagnostics}{One row per patch. A single \code{X} gives \code{x_sd}
+and \code{x_ss}; multiple columns give \verb{x_sd_<name>} and \verb{x_ss_<name>} for
+each variable. Other columns report patch size, strict connectivity,
+the first k with full connectivity, and membership stability.}
 \item{assignment_summary}{Cell assignment counts and effective k values.}
 \item{connectivity_curve}{\code{patch}, \code{k}, and \code{component_fraction}, where
 the fraction is the largest connected component divided by patch size.}
@@ -51,6 +51,9 @@ Values near zero indicate little within-patch contrast for estimating
 its effect. Larger values indicate more contrast, but the magnitude
 depends on the scale of \code{X}. It is \code{NA} for patches with fewer than
 two cells.}
+\item{\code{x_ss}}{Centered within-patch sum of squares of a design variable:
+the sum of squared differences from its patch mean. It is zero for a
+single-cell patch.}
 \item{\code{strict_component_fraction}}{Fraction of patch cells in the largest
 connected component at \code{strict_k}. One indicates full connectivity;
 smaller values indicate greater fragmentation.}
