@@ -372,6 +372,12 @@ c(patches_retained = length(keep), cells_retained = sum(!is.na(patches_filtered)
 
 # Robustness analysis
 
+Patch assignments can vary across random seeds. We assess agreement across
+seeds, compare different numbers of patches, and check how patch count
+affects seed agreement. To keep computation manageable, this vignette focuses
+on patch diagnostics. A separate robustness report will examine how these
+assignment changes affect downstream DE and meta-analysis.
+
 ## Across random seeds
 
 To assess variation between runs, keep the data and patch settings fixed and
@@ -383,7 +389,7 @@ xy_use <- spatialCoords(spe)[use, , drop = FALSE]
 X_use <- X[use]
 Z_use <- Z[use, , drop = FALSE]
 
-seeds <- c(1L, 7L, 42L, 101L, 123L, 777L, 2024L, 2025L, 31415L, 271828L)
+seeds <- c(1, 7, 42, 101, 123, 777, 2024, 2025, 31415, 271828)
 runs <- vector("list", length(seeds))
 run_diags <- vector("list", length(seeds))
 names(runs) <- names(run_diags) <- as.character(seeds)
@@ -393,7 +399,7 @@ runs[["123"]] <- patches_res
 run_diags[["123"]] <- diagnostics
 
 # Refit with the other nine seeds and the same settings.
-for (seed in setdiff(seeds, 123L)) {
+for (seed in setdiff(seeds, 123)) {
   set.seed(seed)
   key <- as.character(seed)
   runs[[key]] <- getPatches(
@@ -458,30 +464,14 @@ assignments from two runs. A value of one means the assignments agree. Each
 comparison uses cells assigned in both runs.
 
 ```{r seed-agreement, fig.width=8, fig.height=7, fig.cap="Pairwise ARI for patch assignments from ten random seeds."}
-# Compare partitions on cells assigned in both runs.
-calc_ari <- function(first, second) {
-  stopifnot(identical(names(first), names(second)))
-  common <- !is.na(first) & !is.na(second)
-  counts <- table(first[common], second[common])
-  total_pairs <- choose(sum(counts), 2)
-  if (total_pairs == 0) return(NA_real_)
-  cell_pairs <- sum(choose(counts, 2))
-  row_pairs <- sum(choose(rowSums(counts), 2))
-  col_pairs <- sum(choose(colSums(counts), 2))
-  expected <- row_pairs * col_pairs / total_pairs
-  denominator <- (row_pairs + col_pairs) / 2 - expected
-  if (denominator == 0) return(NA_real_)
-  (cell_pairs - expected) / denominator
-}
-
 # Calculate all pairwise agreement values.
 agreement <- expand.grid(seed1 = seeds, seed2 = seeds)
 agreement$ari <- vapply(seq_len(nrow(agreement)), function(i) {
   a <- agreement$seed1[i]
   b <- agreement$seed2[i]
   if (a == b) return(1)
-  calc_ari(runs[[as.character(a)]]$patch,
-           runs[[as.character(b)]]$patch)
+  mclust::adjustedRandIndex(runs[[as.character(a)]]$patch,
+                           runs[[as.character(b)]]$patch)
 }, numeric(1))
 
 ggplot(agreement, aes(factor(seed1, levels = seeds),
@@ -583,8 +573,8 @@ runs. Each cell's map value is the mean score across its 30 neighbors.
 ```{r local-agreement, fig.width=8, fig.height=6, fig.cap="Local patch-assignment ambiguity across ten random seeds. Each epithelial cell is compared with its 30 nearest epithelial neighbors. Brighter colors show higher average ambiguity; grey cells have too few eligible neighbor pairs."}
 # Compare each cell with its 30 nearest neighbors in every run.
 knn <- FNN::get.knn(as.matrix(xy_use), k = 30)$nn.index
-co_count <- matrix(0L, nrow(knn), ncol(knn))
-valid_count <- matrix(0L, nrow(knn), ncol(knn))
+co_count <- matrix(0, nrow(knn), ncol(knn))
+valid_count <- matrix(0, nrow(knn), ncol(knn))
 for (patch in local_patches) {
   center <- matrix(patch, nrow(knn), ncol(knn))
   neighbor <- matrix(patch[knn], nrow(knn), ncol(knn))
@@ -597,7 +587,7 @@ for (patch in local_patches) {
 
 # Convert coassignment frequency to ambiguity, then average by cell.
 p_same <- co_count / valid_count
-p_same[valid_count < 2L] <- NA_real_
+p_same[valid_count < 2] <- NA_real_
 pair_ambiguity <- 4 * p_same * (1 - p_same)
 local_map <- data.frame(xy_use,
                         ambiguity = rowMeans(pair_ambiguity, na.rm = TRUE))
@@ -644,7 +634,7 @@ three settings on the same data, predictor, and embedding, using the same ten
 iterations as the seed comparison.
 
 ```{r grid-setup, class.source = "fold-show"}
-npatches_grid <- c(50L, 100L, 150L)
+npatches_grid <- c(50, 100, 150)
 
 # Reuse the 100-patch run and fit the two other settings.
 fits <- vector("list", length(npatches_grid))
@@ -653,7 +643,7 @@ names(fits) <- names(diags) <- as.character(npatches_grid)
 fits[["100"]] <- patches_res
 diags[["100"]] <- diagnostics
 
-for (i in which(npatches_grid != 100L)) {
+for (i in which(npatches_grid != 100)) {
   set.seed(123)
   fits[[i]] <- getPatches(
     xy = xy_use, X = X_use, Z = Z_use,
@@ -780,7 +770,7 @@ seeds above and the same three patch counts. Each comparison uses ten
 iterations. 
 
 ```{r interaction-runs}
-interaction_seeds <- c(42L, 123L, 2024L, 31415L, 271828L)
+interaction_seeds <- c(42, 123, 2024, 31415, 271828)
 seed_pairs <- combn(interaction_seeds, 2)
 
 # Reuse earlier fits; run the eight missing settings.
@@ -789,9 +779,9 @@ interaction_patches <- setNames(lapply(npatches_grid, function(k) {
                               as.character(interaction_seeds))
   for (seed in interaction_seeds) {
     key <- as.character(seed)
-    if (k == 100L) {
+    if (k == 100) {
       patches_by_seed[[key]] <- runs[[key]]$patch
-    } else if (seed == 123L) {
+    } else if (seed == 123) {
       patches_by_seed[[key]] <- fits[[as.character(k)]]$patch
     } else {
       set.seed(seed)
@@ -812,8 +802,10 @@ interaction_data <- do.call(rbind, lapply(npatches_grid, function(k) {
     npatches = k,
     pair = paste(seed_pairs[1, ], seed_pairs[2, ], sep = " / "),
     ari = vapply(seq_len(ncol(seed_pairs)), function(i) {
-      calc_ari(patches_by_seed[[as.character(seed_pairs[1, i])]],
-               patches_by_seed[[as.character(seed_pairs[2, i])]])
+      mclust::adjustedRandIndex(
+        patches_by_seed[[as.character(seed_pairs[1, i])]],
+        patches_by_seed[[as.character(seed_pairs[2, i])]]
+      )
     }, numeric(1))
   )
 }))
@@ -841,6 +833,11 @@ The median ARI is `r sprintf("%.2f", ari_medians["50"])` at 50 patches,
 `r sprintf("%.2f", ari_medians["100"])` at 100 patches, and
 `r sprintf("%.2f", ari_medians["150"])` at 150 patches. Agreement decreases
 slightly as the requested patch count rises for these five seeds.
+
+Across seeds, assignment changes are most visible near patch boundaries in
+this example. These results describe patch construction; the separate report
+will assess whether they change gene rankings, effect directions, or spatial
+DE patterns after meta-analysis.
 
 # Summary
 
