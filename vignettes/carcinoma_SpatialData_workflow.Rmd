@@ -147,19 +147,7 @@ into `sd` with `combine()` from `spatialdataR`. The shapes element and the
 table must have different names.
 
 ```{r define-subset}
-sce <- table(sd)
-use <- sce$celltype == "Cancer.cells"
-
-spe_use <- spe[, use]
-spe_use$distance <- sce$distance[use]
-reducedDim(spe_use, "Z") <- reducedDim(sce, "Z")[use, ]
-
-sd_use <- spe_to_spatialdata(
-  spe_use,
-  shape_name = "cancer_shape",
-  table_name = "cancer_cells"
-)
-sd <- combine(sd, sd_use)
+sd <- combine(sd, query(sd,celltype == 'Cancer.cells'))
 sd
 ```
 

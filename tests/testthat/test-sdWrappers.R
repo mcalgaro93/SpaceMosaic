@@ -55,6 +55,40 @@ test_that("spe_to_spatialdata keeps the table and coordinates of the SpatialExpe
   expect_identical(rownames(SpaceMosaic:::.sdCoords(sd, sce)), colnames(spe))
 })
 
+test_that("spe_to_spatialdata adds every image of the SpatialExperiment", {
+  spe_img <- spe
+  ids <- unique(spe_img$sample_id)[1]
+  set.seed(3)
+  rasters <- lapply(1:2, function(i) {
+    grDevices::as.raster(array(stats::runif(4 * 5 * 3), c(4, 5, 3)))
+  })
+  SpatialExperiment::imgData(spe_img) <- S4Vectors::DataFrame(
+    sample_id = rep(ids, 2),
+    image_id = c("lowres", "hires"),
+    data = I(lapply(rasters, SpatialExperiment::SpatialImage)),
+    scaleFactor = c(0.1, 0.5)
+  )
+
+  sd_img <- spe_to_spatialdata(spe_img)
+  expect_identical(
+    spatialdataR::imageNames(sd_img), paste0(ids, c("_lowres", "_hires"))
+  )
+  for (i in 1:2) {
+    expected <- aperm(
+      array(t(grDevices::col2rgb(t(as.matrix(rasters[[i]])))) / 255, c(5, 4, 3)),
+      c(3, 2, 1)
+    )
+    expect_equal(
+      as.array(spatialdataR::data(spatialdataR::image(sd_img, i))), expected
+    )
+  }
+
+  sd_named <- spe_to_spatialdata(spe_img, image_names = c("low", "high"))
+  expect_identical(spatialdataR::imageNames(sd_named), c("low", "high"))
+  expect_error(spe_to_spatialdata(spe_img, image_names = "low"),
+               "one unique name per row")
+})
+
 test_that("coordinates are matched to cells by instance ID, not by position", {
   set.seed(1)
   perm <- sample(ncol(spe))
