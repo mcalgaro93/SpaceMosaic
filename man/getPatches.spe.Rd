@@ -58,28 +58,33 @@ multiple design variables, scale down proportionally (e.g. \code{beta = 0.2}
 for K = 5). Raise if patches are too homogeneous; lower if patches are
 spatially fragmented.}
 
-\item{hunger_weight}{Controls how aggressively low-variance patches grab
-cells. Typical range 0.3--0.7; default 0.5. 0 = all patches equally hungry
+\item{hunger_weight}{Controls how aggressively low-variance patches grab cells.
+Typical range 0.3--0.7; default 0.5. 0 = all patches equally hungry
 (uniform sizes), 1 = hunger proportional to 1/totvar (maximizes variance
-reduction but allows extreme size imbalance).}
+reduction but allows extreme size imbalance). Lower if some patches shrink
+to nothing; raise if variance reduction is insufficient.}
 
 \item{max_elongation}{Maximum ratio of largest to smallest eigenvalue of a
 patch covariance matrix. Typical range 2--8; default 4. Lower values force
-rounder patches.}
+rounder patches; raise if tissue structures are genuinely elongated.}
 
 \item{max_radius}{Maximum Euclidean distance from a patch centroid for
-assignment. Cells beyond this get zero spatial score. Default \code{NULL}
-(auto: 3x the expected patch radius assuming uniform circular patches).}
+assignment. Cells beyond this get zero spatial score. Default NULL (auto:
+3x the expected patch radius assuming uniform circular patches). Override
+if patches span very different density regions.}
 
 \item{mahal_radius}{Maximum Mahalanobis radius for assignment. Cells beyond
 this (in each patch's own coordinate system) get zero spatial score.
-Typical range 2--4; default 3. \code{Inf} disables the cutoff entirely.}
+Typical range 2--4; default 3. Lower values make tighter patches with more
+unassigned cells; Inf disables the cutoff entirely.}
 
 \item{n_candidates}{Number of nearest patch centroids to evaluate per cell.
 Typical range 10--50; default 20. Higher values are more accurate but
-slower.}
+slower. Rarely needs tuning unless npatches is very large (>1000).}
 
-\item{n_iters}{Number of outer iterations. Typical range 10--30; default 15.}
+\item{n_iters}{Number of outer iterations. Typical range 10--30; default 15.
+Convergence is usually reached by 10--15; raise if patches are still
+shifting at the final iteration (check membership_log).}
 
 \item{init_method}{Initialization method for patch seeds. \code{"kmeans"}
 (default) uses isotropic k-means seeding; \code{"gradient_ellipse"} orients
@@ -87,12 +92,12 @@ initial ellipses along the local spatial gradient of X and currently
 requires \code{length(X) == 1}.}
 
 \item{init_gradient_k}{Number of nearest neighbors used to estimate local
-spatial gradients of X when \code{init_method = "gradient_ellipse"}. A finite
-integer >= 3; default 30.}
+spatial gradients of X when init_method = "gradient_ellipse". Must be a
+finite integer greater than or equal to 3.}
 
 \item{init_gradient_elongation}{Target initial ellipse elongation ratio
-(major/minor eigenvalue ratio) for \code{init_method = "gradient_ellipse"}.
-Finite and >= 1; default 4.}
+(major/minor eigenvalue ratio) for init_method = "gradient_ellipse". Must
+be finite and greater than or equal to 1.}
 
 \item{x_weighted_ellipse_second_pass}{Logical; if \code{TRUE}, the ellipse re-fit
 up-weights cells whose X is farther from their patch mean, which can
@@ -100,10 +105,10 @@ encourage elongated patches along smooth X gradients. Applied only when
 \code{length(X) == 1}. Default \code{FALSE}.}
 
 \item{x_ellipse_gamma}{Strength of X-based up-weighting in second-pass
-ellipse fitting. 0 disables weighting; typical range 0.5--1.5; default 1.}
+ellipse fitting. 0 disables weighting; typical range 0.5--1.5.}
 
 \item{x_ellipse_wmax}{Cap on standardized X-deviation used in the weighting
-rule, to limit outlier influence. Typical range 2--4; default 3.}
+rule to limit outlier influence. Typical range 2--4.}
 
 \item{log_iters}{Logical; if \code{TRUE} (default), per-iteration diagnostics are
 retained and stored in
@@ -131,7 +136,7 @@ polygons are built without diagnostic information (\code{patch_data = NULL}).}
 stored. Default \code{"patch"}. An existing column of the same name is
 overwritten.}
 
-\item{verbose}{Logical; show progress. Default \code{TRUE}.}
+\item{verbose}{Show progress. Default TRUE.}
 }
 \value{
 The input \code{spe}, with results attached:

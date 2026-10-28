@@ -5,12 +5,11 @@
 #' and the object's spatial coordinates, then storing the result as a new
 #' reduced dimension.
 #'
+#' @inheritParams embedCellNeighborhoods
 #' @param spe A SpatialExperiment object.
 #' @param embedding A single character string giving the name of a reduced
 #'   dimension stored in \code{reducedDim(spe)} with a 
 #'   single cell embeddings matrix (cells x features).
-#' @param ks Vector giving the number of nearest neighbors for each scale.
-#'   Default \code{c(5, 50)}.
 #' @param tissue Optional character string giving the name of a column in
 #'   \code{colData(spe)} containing tissue IDs to prevent cross-tissue
 #'   neighbor edges. Default NULL.
@@ -73,60 +72,30 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #' from `colData(spe)`, and (optionally) context embeddings from
 #' `reducedDims(spe)`. All results are returned attached to `spe`.
 #'
+#' @inheritParams getPatches
 #' @param spe A `SpatialExperiment` object. Must have `colnames` (cell
 #'   identifiers), non-empty `spatialCoords()`, and the columns named in `X`
 #'   present in `colData(spe)`.
 #' @param X Design variables for each spatial unit. A character vector of
 #'   column names in `colData(spe)`. Each column is scaled to unit SD by
 #'   `getPatches()`.
-#' @param npatches Number of patches to create.
 #' @param Z Character string or `NULL`. Name of an entry in
 #'   `reducedDimNames(spe)` holding per-cell context embeddings
 #'   (cells x features). If supplied, patches will prefer Z-coherent regions.
 #'   Default `NULL` disables this behaviour.
-#' @param alpha Weight of the Z penalty. Typical range 0.2--1.0; default 0.5.
-#'   Higher values force patches to respect microenvironment boundaries at the
-#'   cost of spatial compactness. Set to 0 to ignore Z entirely.
 #' @param beta Weight of the X diversity boost. Typical range 0.5/K--3/K where
 #'   K = `length(X)`; default 1 (appropriate for a single design variable). For
 #'   multiple design variables, scale down proportionally (e.g. `beta = 0.2`
 #'   for K = 5). Raise if patches are too homogeneous; lower if patches are
 #'   spatially fragmented.
-#' @param hunger_weight Controls how aggressively low-variance patches grab
-#'   cells. Typical range 0.3--0.7; default 0.5. 0 = all patches equally hungry
-#'   (uniform sizes), 1 = hunger proportional to 1/totvar (maximizes variance
-#'   reduction but allows extreme size imbalance).
-#' @param max_elongation Maximum ratio of largest to smallest eigenvalue of a
-#'   patch covariance matrix. Typical range 2--8; default 4. Lower values force
-#'   rounder patches.
-#' @param max_radius Maximum Euclidean distance from a patch centroid for
-#'   assignment. Cells beyond this get zero spatial score. Default `NULL`
-#'   (auto: 3x the expected patch radius assuming uniform circular patches).
-#' @param mahal_radius Maximum Mahalanobis radius for assignment. Cells beyond
-#'   this (in each patch's own coordinate system) get zero spatial score.
-#'   Typical range 2--4; default 3. `Inf` disables the cutoff entirely.
-#' @param n_candidates Number of nearest patch centroids to evaluate per cell.
-#'   Typical range 10--50; default 20. Higher values are more accurate but
-#'   slower.
-#' @param n_iters Number of outer iterations. Typical range 10--30; default 15.
 #' @param init_method Initialization method for patch seeds. `"kmeans"`
 #'   (default) uses isotropic k-means seeding; `"gradient_ellipse"` orients
 #'   initial ellipses along the local spatial gradient of X and currently
 #'   requires `length(X) == 1`.
-#' @param init_gradient_k Number of nearest neighbors used to estimate local
-#'   spatial gradients of X when `init_method = "gradient_ellipse"`. A finite
-#'   integer >= 3; default 30.
-#' @param init_gradient_elongation Target initial ellipse elongation ratio
-#'   (major/minor eigenvalue ratio) for `init_method = "gradient_ellipse"`.
-#'   Finite and >= 1; default 4.
 #' @param x_weighted_ellipse_second_pass Logical; if `TRUE`, the ellipse re-fit
 #'   up-weights cells whose X is farther from their patch mean, which can
 #'   encourage elongated patches along smooth X gradients. Applied only when
 #'   `length(X) == 1`. Default `FALSE`.
-#' @param x_ellipse_gamma Strength of X-based up-weighting in second-pass
-#'   ellipse fitting. 0 disables weighting; typical range 0.5--1.5; default 1.
-#' @param x_ellipse_wmax Cap on standardized X-deviation used in the weighting
-#'   rule, to limit outlier influence. Typical range 2--4; default 3.
 #' @param log_iters Logical; if `TRUE` (default), per-iteration diagnostics are
 #'   retained and stored in
 #'   `metadata(spe)$SpaceMosaic$patch_iterations`.
@@ -147,7 +116,6 @@ embedCellNeighborhoods.spe <- function(spe, embedding, ks = c(5, 50), tissue = N
 #' @param patch_column Column name in `colData(spe)` where patch assignments are
 #'   stored. Default `"patch"`. An existing column of the same name is
 #'   overwritten.
-#' @param verbose Logical; show progress. Default `TRUE`.
 #'
 #' @return The input `spe`, with results attached:
 #'   \itemize{
@@ -321,6 +289,7 @@ getPatches.spe <- function(spe, X, npatches,
 #' in a \code{SpatialExperiment} object and returns the raw results alongside
 #' the object they were computed from.
 #'
+#' @inheritParams patchDE
 #' @param spe A \code{SpatialExperiment} object. Must contain the requested
 #'   expression assay and patch assignments in \code{colData(spe)}.
 #' @param predictor_cols Character vector of column names in
@@ -331,9 +300,6 @@ getPatches.spe <- function(spe, X, npatches,
 #' @param patch_column Character string naming the column in
 #'   \code{colData(spe)} that contains patch assignments. Cells with \code{NA}
 #'   here are dropped by \code{patchDE()}. Default \code{"patch"}.
-#' @param method Differential-expression backend. \code{"hasty"} uses ordinary
-#'   least squares and \code{"limma"} uses empirical-Bayes moderated inference.
-#'   Default \code{"hasty"} for backward compatibility.
 #' @param pearson Logical; if TRUE, expression values are converted to Pearson
 #'   residuals within each patch before the model is fitted. Requires
 #'   \code{tot}. When \code{method = "limma"} this also disables the
@@ -341,17 +307,13 @@ getPatches.spe <- function(spe, X, npatches,
 #' @param tot Optional character string naming a column in
 #'   \code{colData(spe)} that holds per-cell total counts. Required when
 #'   \code{pearson = TRUE}; ignored otherwise. Default NULL.
-#' @param resid_mse Logical; passed to \code{patchDE()} to request per-gene
-#'   residual mean squared errors, which are carried through in the \code{de}
-#'   element. Default FALSE.
-#' @param return_residuals Logical; if TRUE, the cells-by-genes residual matrix
-#'   produced by \code{patchDE()} is transposed to genes-by-cells and stored
+#' @param return_residuals Logical; if TRUE, the per-patch model residuals
+#'   are assembled into a genes-by-cells matrix and stored
 #'   as assay \code{residual_assay} in the returned \code{spe}. Default FALSE.
 #' @param residual_assay Character string naming the assay under which
 #'   residuals are stored in \code{spe} when \code{return_residuals = TRUE}.
 #'   Matches the default \code{assay_name} expected by
 #'   \code{\link{moranTest.spe}}. Default \code{"residuals"}.
-#' @param verbose Logical; show a progress bar over patches. Default TRUE.
 #'
 #' @return A named list:
 #'   \describe{
@@ -367,10 +329,13 @@ getPatches.spe <- function(spe, X, npatches,
 #'   }
 #'
 #' @details
-#' The expression matrix is extracted from \code{assay(spe, assay)} and
-#' transposed from genes-by-cells to cells-by-genes before being passed to
-#' \code{patchDE()}. Predictor variables are taken from \code{colData(spe)},
-#' and patch assignments from \code{colData(spe)[[patch_column]]}.
+#' This is equivalent to calling \code{patchDE()} on the transposed
+#' expression matrix, but the full assay is never transposed: the
+#' genes-by-cells matrix from \code{assay(spe, assay)} is subset to one patch
+#' at a time, and only that slice is transposed before being passed to
+#' \code{\link{hastyDE}} or \code{\link{limmaDE}}. Predictor variables are
+#' taken from \code{colData(spe)}, and patch assignments from
+#' \code{colData(spe)[[patch_column]]}.
 #'
 #' Differential expression is run on every non-missing patch in \code{spe},
 #' and the patch columns of the returned matrices follow the order
@@ -464,8 +429,9 @@ patchDE.spe <- function(
         stop("`tot` must be supplied when `pearson = TRUE`.")
     }
 
-    # Expression matrix: genes x cells -> cells x genes
-    y <- t(SummarizedExperiment::assay(spe, assay))
+    # Expression matrix stays genes x cells; only one patch at a time is
+    # transposed to the cells x genes layout the DE backends expect.
+    y <- SummarizedExperiment::assay(spe, assay)
 
     df <- SummarizedExperiment::colData(
         spe
@@ -484,25 +450,49 @@ patchDE.spe <- function(
         tot <- SummarizedExperiment::colData(spe)[[tot]]
     }
 
-    # Run patchDE
-    de_res <- patchDE(
-        y,
-        df,
-        SummarizedExperiment::colData(spe)[[patch_column]],
-        method = method,
-        pearson = pearson,
-        tot = tot,
-        resid_mse = resid_mse,
-        return_residuals = return_residuals,
-        verbose = verbose
-    )
+    patch <- SummarizedExperiment::colData(spe)[[patch_column]]
+    patches <- unique(patch[!is.na(patch)])
+    if (length(patches) == 0L) {
+        stop("patch must contain at least one non-missing patch ID.")
+    }
 
-    # patchDE() wraps its output when residuals are requested
     if (return_residuals) {
-        SummarizedExperiment::assay(spe, residual_assay) <- t(de_res$residuals)
-        out <- list(de = de_res$de)
-    } else {
-        out <- list(de = de_res)
+        # Filled directly in the genes x cells layout of the assay
+        residual_matrix <- matrix(
+            NA_real_,
+            nrow = nrow(y),
+            ncol = ncol(y),
+            dimnames = dimnames(y)
+        )
+    }
+
+    results <- list()
+    if (verbose) {
+        cli::cli_progress_bar("patchDE", total = length(patches))
+    }
+    for (patchid in patches) {
+        cell_index <- which(!is.na(patch) & patch == patchid)
+        patch_name <- as.character(patchid)
+        results[[patch_name]] <- .fitPatch(
+            t(y[, cell_index, drop = FALSE]),
+            df[cell_index, , drop = FALSE],
+            method = method,
+            pearson = pearson,
+            tot = tot[cell_index],
+            return_residuals = return_residuals
+        )
+        if (return_residuals) {
+            residual_matrix[, cell_index] <-
+                t(results[[patch_name]]$residuals)
+            results[[patch_name]]$residuals <- NULL
+        }
+        if (verbose) cli::cli_progress_update()
+    }
+    if (verbose) cli::cli_progress_done()
+
+    out <- list(de = .formatPatchResults(results, resid_mse))
+    if (return_residuals) {
+        SummarizedExperiment::assay(spe, residual_assay) <- residual_matrix
     }
 
     out$spe <- spe
@@ -693,24 +683,12 @@ patchMetaAnalysis.spe <- function(
 #'   residuals from the specified assay and spatial coordinates from
 #'   \code{spatialCoords(spe)}, then dispatches to \code{moranTest}.
 #'
+#' @inheritParams moranTest
 #' @param spe A \code{SpatialExperiment} object.
 #' @param assay_name Character; name of the assay in \code{spe} containing
 #'   the values to test (e.g. Pearson residuals). Default \code{"residuals"}.
 #' @param patch_column Name of the column in `colData(spe)` where patch assignments are
 #'   stored. Default `"patch"`.
-#' @param k Number of nearest neighbors used to construct the graph. If `k` is
-#'   not smaller than the number of observations, it is reduced to `n - 1` with
-#'   a warning. Default 10.
-#' @param n_permutations Number of random permutations used to calculate the
-#'   empirical p-value. Default 999.
-#' @param alternative Direction of the alternative hypothesis: `"greater"`
-#'   tests for positive spatial autocorrelation, `"less"` for negative spatial
-#'   autocorrelation, and `"two.sided"` for either direction.
-#' @param p_adjust_method Method passed to [stats::p.adjust()] for multiple-test
-#'   correction. Use `"none"` to leave p-values unadjusted. Default `"BH"`.
-#' @param adjustment_scope Scope of the multiple-test correction: `"global"`
-#'   across every gene-patch test, `"patch"` separately within each patch, or
-#'   `"gene"` separately within each gene. Default `"global"`.
 #' @return A data frame with one row per gene and patch. It contains patch and
 #'   gene identifiers, number of cells, observed and expected Moran's I, raw and
 #'   adjusted empirical p-values, graph and permutation settings, and `status`.

@@ -46,12 +46,10 @@ mean-variance trend. Default FALSE.}
 \code{colData(spe)} that holds per-cell total counts. Required when
 \code{pearson = TRUE}; ignored otherwise. Default NULL.}
 
-\item{resid_mse}{Logical; passed to \code{patchDE()} to request per-gene
-residual mean squared errors, which are carried through in the \code{de}
-element. Default FALSE.}
+\item{resid_mse}{Logical; if TRUE, include per-gene residual MSE in output}
 
-\item{return_residuals}{Logical; if TRUE, the cells-by-genes residual matrix
-produced by \code{patchDE()} is transposed to genes-by-cells and stored
+\item{return_residuals}{Logical; if TRUE, the per-patch model residuals
+are assembled into a genes-by-cells matrix and stored
 as assay \code{residual_assay} in the returned \code{spe}. Default FALSE.}
 
 \item{residual_assay}{Character string naming the assay under which
@@ -59,7 +57,7 @@ residuals are stored in \code{spe} when \code{return_residuals = TRUE}.
 Matches the default \code{assay_name} expected by
 \code{\link{moranTest.spe}}. Default \code{"residuals"}.}
 
-\item{verbose}{Logical; show a progress bar over patches. Default TRUE.}
+\item{verbose}{Show progress. Default TRUE.}
 }
 \value{
 A named list:
@@ -81,10 +79,13 @@ in a \code{SpatialExperiment} object and returns the raw results alongside
 the object they were computed from.
 }
 \details{
-The expression matrix is extracted from \code{assay(spe, assay)} and
-transposed from genes-by-cells to cells-by-genes before being passed to
-\code{patchDE()}. Predictor variables are taken from \code{colData(spe)},
-and patch assignments from \code{colData(spe)[[patch_column]]}.
+This is equivalent to calling \code{patchDE()} on the transposed
+expression matrix, but the full assay is never transposed: the
+genes-by-cells matrix from \code{assay(spe, assay)} is subset to one patch
+at a time, and only that slice is transposed before being passed to
+\code{\link{hastyDE}} or \code{\link{limmaDE}}. Predictor variables are
+taken from \code{colData(spe)}, and patch assignments from
+\code{colData(spe)[[patch_column]]}.
 
 Differential expression is run on every non-missing patch in \code{spe},
 and the patch columns of the returned matrices follow the order

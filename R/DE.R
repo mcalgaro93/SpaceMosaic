@@ -276,22 +276,15 @@ patchDE <- function(y, df, patch, method = c("hasty", "limma"),
   }
   for (patchid in patches) {
     cell_index <- which(!is.na(patch) & patch == patchid)
-    ysub <- y[cell_index, , drop = FALSE]
-    if (pearson) {
-      ysub <- pearsonResiduals(ysub, tot = tot[cell_index])
-    }
     patch_name <- as.character(patchid)
-    de_function <- switch(method, hasty = hastyDE, limma = limmaDE)
-    de_args <- list(
-      y = ysub,
-      df = df[cell_index, , drop = FALSE],
+    results[[patch_name]] <- .fitPatch(
+      y[cell_index, , drop = FALSE],
+      df[cell_index, , drop = FALSE],
+      method = method,
+      pearson = pearson,
+      tot = tot[cell_index],
       return_residuals = return_residuals
     )
-    if (method == "limma") {
-      de_args$trend <- !pearson
-      de_args$robust <- TRUE
-    }
-    results[[patch_name]] <- do.call(de_function, de_args)
     if (return_residuals) {
       residual_matrix[cell_index, ] <- results[[patch_name]]$residuals
       # The residual matrix is returned separately and is not needed while the
@@ -301,7 +294,35 @@ patchDE <- function(y, df, patch, method = c("hasty", "limma"),
     if (verbose) cli::cli_progress_update()
   }
   if (verbose) cli::cli_progress_done()
-  # reformat to a per-variable list:
+  out <- .formatPatchResults(results, resid_mse)
+  if (return_residuals) {
+    return(list(de = out, residuals = residual_matrix))
+  }
+  out
+}
+
+
+# Helper: fit one patch (cells x genes) with the chosen DE backend
+.fitPatch <- function(ysub, dfsub, method, pearson, tot, return_residuals) {
+  if (pearson) {
+    ysub <- pearsonResiduals(ysub, tot = tot)
+  }
+  de_function <- switch(method, hasty = hastyDE, limma = limmaDE)
+  de_args <- list(
+    y = ysub,
+    df = dfsub,
+    return_residuals = return_residuals
+  )
+  if (method == "limma") {
+    de_args$trend <- !pearson
+    de_args$robust <- TRUE
+  }
+  do.call(de_function, de_args)
+}
+
+# Helper: reformat a per-patch list of DE fits into a per-variable list of
+# genes x patches matrices
+.formatPatchResults <- function(results, resid_mse) {
   variables <- colnames(results[[1]][[1]])
   out <- list()
   for (varname in variables) {
@@ -331,9 +352,6 @@ patchDE <- function(y, df, patch, method = c("hasty", "limma"),
       lapply(results, function(tmp) tmp$sigma2)
     )
     colnames(out[["resid_mse"]]) <- names(results)
-  }
-  if (return_residuals) {
-    return(list(de = out, residuals = residual_matrix))
   }
   out
 }
