@@ -8,8 +8,7 @@ spe_to_spatialdata(
   spe,
   shape_name = "shape1",
   table_name = "table",
-  add_cell_id = TRUE,
-  image_names = NULL
+  add_cell_id = TRUE
 )
 }
 \arguments{
@@ -23,10 +22,6 @@ SingleCellExperiment. Default \code{"table"}.}
 
 \item{add_cell_id}{If TRUE, stores the cell IDs (colnames) in the shapes
 so each table row can be matched to its geometry. Default TRUE.}
-
-\item{image_names}{Names of the image elements, one per row of
-\code{imgData(spe)}. Default \code{NULL} uses
-\code{"<sample_id>_<image_id>"}, e.g. \code{"section1_lowres"}.}
 }
 \value{
 A SpatialData object.
@@ -35,15 +30,11 @@ A SpatialData object.
 Stores the spatial coordinates of a \code{SpatialExperiment} as a points
 shapes element and everything else (assays, \code{colData},
 \code{reducedDims}, ...) as a \code{SingleCellExperiment} table annotating
-that shapes element. Every image in \code{imgData(spe)} is added as an
-image element.
+that shapes element.
 }
 \details{
-Images are stored at their own resolution, in pixels, without a coordinate
-transformation. The cell coordinates are in full-resolution pixels, so an
-image only lines up with the cells if its \code{scaleFactor} is 1;
-otherwise multiply the image coordinates by \code{1 / scaleFactor} to
-match them to the cells.
+Images are not converted for now: \code{imgData(spe)} is ignored and the
+resulting SpatialData object has no image elements.
 }
 \examples{
 \dontshow{if (requireNamespace("spatialdataR", quietly = TRUE)) withAutoprint(\{ # examplesIf}

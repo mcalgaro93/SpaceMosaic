@@ -1,9 +1,18 @@
 # Internal helpers -----------------------------------------------------------
 
-# Check that `sd` is a SpatialData object and that the packages needed to
-# work with it are available.
+# spatialdataR is only suggested: require it when a function needs it.
+.require_spatialdataR <- function() {
+    if (!requireNamespace("spatialdataR", quietly = TRUE)) {
+        msg <- paste("The 'spatialdataR' package is required to use this function.",
+                     "Please install it with 'BiocManager::install(\"spatialdataR\")'.")
+        cli::cli_abort(c("x" = msg))
+    }
+}
+
+# Check that `sd` is a SpatialData object and that the other packages needed
+# to work with it are available.
 .checkSd <- function(sd) {
-    for (pkg in c("spatialdataR", "sf", "duckspatial")) {
+    for (pkg in c("sf", "duckspatial")) {
         if (!requireNamespace(pkg, quietly = TRUE)) {
             stop("Package '", pkg, "' is required for SpatialData objects. ",
                  "Please install it.")
@@ -188,6 +197,7 @@
 embedCellNeighborhoods.sd <- function(sd, embedding, ks = c(5, 50), tissue = NULL,
                                       name = "Z", table = 1) {
 
+    .require_spatialdataR()
     .checkSd(sd)
     table <- .sdTableName(sd, table)
     sce <- .sdTable(sd, table)
@@ -324,6 +334,7 @@ getPatches.sd <- function(sd, X, npatches,
                            table = 1,
                            verbose = TRUE) {
 
+  .require_spatialdataR()
   .checkSd(sd)
   table <- .sdTableName(sd, table)
   sce <- .sdTable(sd, table)
@@ -532,6 +543,7 @@ patchDE.sd <- function(
     verbose = TRUE
 ) {
 
+    .require_spatialdataR()
     method <- match.arg(method)
 
     .checkSd(sd)
@@ -706,6 +718,7 @@ patchMetaAnalysis.sd <- function(
     table = NULL
 ) {
 
+    .require_spatialdataR()
     if (!is.list(patchDE_result) ||
         !all(c("de", "sd") %in% names(patchDE_result))) {
         stop(
@@ -865,6 +878,7 @@ moranTest.sd <- function(sd, assay_name = 'residuals', patch_column = "patch", k
                          adjustment_scope = c("global", "patch", "gene"),
                          table = 1) {
 
+    .require_spatialdataR()
     .checkSd(sd)
     table <- .sdTableName(sd, table)
     sce <- .sdTable(sd, table)
