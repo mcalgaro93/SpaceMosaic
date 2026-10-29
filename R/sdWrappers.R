@@ -120,8 +120,12 @@
 # ("sdShape"), overwriting the geometries of all previously created shapes.
 # Writing `x` to a uniquely named table ourselves and passing the resulting
 # duckspatial_df avoids this.
+# spatialdataR subsets shapes by position (filter(row_number() %in% i)), which
+# only selects the right rows if DuckDB returns them in a stable order; with
+# several threads it does not, so the connection is made single-threaded.
 .sdShape <- function(x) {
     conn <- suppressMessages(duckspatial::ddbs_create_conn())
+    DBI::dbExecute(conn, "SET threads = 1")
     table_id <- basename(tempfile("sdShape_"))
     suppressWarnings(suppressMessages(
         duckspatial::ddbs_write_table(

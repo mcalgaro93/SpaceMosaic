@@ -45,6 +45,7 @@ Suggests:
     BiocStyle,
     circlize,
     ComplexHeatmap,
+    DBI,
     ggplot2,
     ggrepel,
     HDF5Array,

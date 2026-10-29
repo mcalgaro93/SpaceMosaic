@@ -78,6 +78,12 @@ before the analysis. The original Seurat object was converted to a
 `spe_to_spatialdata()` converts it to a `SpatialData` object: the spatial
 coordinates become the points of the shapes element `shape1`, and everything
 else (assays, colData, reducedDims) becomes the table `table` annotating it.
+This function only exists so that this vignette can document the use of
+`SpatialData` objects in SpaceMosaic with the same data used to document the
+use of `SpatialExperiment` objects. It is not meant to be a complete
+conversion between these two classes of objects (images, for instance, are not
+converted); users interested in such a conversion should refer to the authors
+of the `spatialdataR` and `SpatialExperiment` packages.
 
 ```{r load-data}
 spe <- readRDS(system.file("extdata", "cosmx_carcinoma.rds", package = "SpaceMosaic"))
@@ -147,7 +153,10 @@ into `sd` with `combine()` from `spatialdataR`. The shapes element and the
 table must have different names.
 
 ```{r define-subset}
-sd <- combine(sd, query(sd,celltype == 'Cancer.cells'))
+cancer <- query(sd, celltype == 'Cancer.cells')
+shapeNames(cancer) <- "cancer_shape"
+tableNames(cancer) <- "cancer_cells"
+sd <- spatialdataR::combine(sd, cancer)
 sd
 ```
 
