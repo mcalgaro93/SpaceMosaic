@@ -31,15 +31,16 @@ library(patchwork)
 
 # Introduction
 
-`getPatchDiagnostics()` reports, for every patch produced by `getPatches()`, its size, its within-patch variation in the design variable `X`, whether its cells form one connected physical region, and (when iteration logs are available) the extent to which cell-to-patch assignments were still changing near the end of the algorithm.
+`getPatchDiagnostics()` reports, for every patch produced by `getPatches()`, its size, its within-patch variation and centered sum of squares in the design variable `X`, whether its cells form one connected physical region, and (when iteration logs are available) the extent to which cell-to-patch assignments were still changing near the end of the algorithm.
 
 This vignette uses the mouse colon dataset to show:
 
 - how to run `getPatches()` and `getPatchDiagnostics()` together,
 - what each diagnostic column means and how to read it,
 - how to trace a diagnostic outlier (for example, a fragmented patch) back to its spatial location,
-- how the diagnostics change across alternative `getPatches()` settings, to help choose `npatches`, and
-- how to turn diagnostics into an investigative filtering step.
+- how to turn diagnostics into an investigative filtering step,
+- how patch solutions vary across repeated runs with different random seeds, and
+- how changing `npatches` affects diagnostics and seed agreement.
 
 Differential expression and meta-analysis on the retained patches are covered separately in `vignette("mouse_colon")`.
 
@@ -95,7 +96,7 @@ patches_res <- getPatches(
   X = X[use],
   Z = Z[use, ],
   npatches = 100,
-  n_iters = 15,
+  n_iters = 10,
   log_iters = TRUE
 )
 patches <- patches_res$patch
@@ -111,7 +112,7 @@ names(diagnostics)
 
 `getPatchDiagnostics()` returns a list with three data frames:
 
-- `patch_diagnostics`: one row per patch, describing its size, within-patch variation in `X`, spatial connectivity, and membership stability (only when `getPatches(log_iters = TRUE)`).
+- `patch_diagnostics`: one row per patch, describing its size, within-patch variation and sum of squares in `X`, spatial connectivity, and membership stability (only when `getPatches(log_iters = TRUE)`).
 - `assignment_summary`: one row describing coverage over all analyzed cells, such as how many were assigned to a patch and the neighbor counts used to evaluate connectivity.
 - `connectivity_curve`: one row per patch per tested `k` neighbors, used below to show spatial fragmentation.
 
@@ -137,7 +138,7 @@ patch_data <- diagnostics$patch_diagnostics
 head(patch_data)
 ```
 
-`n_cells` is the number of cells assigned to the patch, and `x_sd` is the standard deviation of `X` within it. `strict_component_fraction` and `min_connectivity_k` summarize spatial connectivity (see [details above](#connectivity-details)). `membership_stability` is the fraction of the patch's final cells that were assigned to it in the preceding iteration. The rest of this vignette interprets each of these in turn.
+`n_cells` is the number of cells assigned to the patch, `x_sd` is the standard deviation of `X` within it, and `x_ss` is the centered within-patch sum of squares, $\sum_{i \in \mathrm{patch}}(X_i - \bar X_{\mathrm{patch}})^2$. `strict_component_fraction` and `min_connectivity_k` summarize spatial connectivity (see [details above](#connectivity-details)). `membership_stability` is the fraction of the patch's final cells that were assigned to it in the preceding iteration. The rest of this vignette interprets each of these in turn.
 
 ```{r assignment-summary-table, class.source = "fold-show"}
 diagnostics$assignment_summary
@@ -342,32 +343,312 @@ ggplot() +
 
 `membership_stability` is the fraction of a patch's final cells that were assigned to the same patch in the preceding iteration; it requires `getPatches(log_iters = TRUE)` and is `NA` otherwise. Values near 1 indicate little membership change in the final update. Lower values indicate that membership was still being reshuffled.
 
-# Comparing different numbers of patches
+# Example of filtering
+
+After investigating the diagnostics above, we can use dataset-specific
+thresholds and apply them reproducibly. The values below are illustrative choices
+for this example.
+
+```{r investigative-filtering, class.source = "fold-show"}
+# Dataset-specific thresholds for this example.
+min_cells <- 50
+min_x_sd <- 0.5
+min_stability <- 0.7
+min_strict_connectivity <- 0.9
+
+keep <- with(
+  patch_data,
+  patch[
+    n_cells >= min_cells &
+      is.finite(x_sd) & x_sd >= min_x_sd &
+      !is.na(membership_stability) & membership_stability >= min_stability &
+      strict_component_fraction >= min_strict_connectivity
+  ]
+)
+patches_filtered <- patches
+patches_filtered[!is.element(patches_filtered, keep)] <- NA
+c(patches_retained = length(keep), cells_retained = sum(!is.na(patches_filtered)))
+```
+
+# Robustness analysis
+
+Patch assignments can vary across random seeds. We assess agreement across
+seeds, compare different numbers of patches, and check how patch count
+affects seed agreement. To keep computation manageable, this vignette focuses
+on patch diagnostics. A separate robustness report will examine how these
+assignment changes affect downstream DE and meta-analysis.
+
+## Across random seeds
+
+To assess variation between runs, keep the data and patch settings fixed and
+repeat `getPatches()` with ten distinct seeds. The run with seed 123 is the
+100-patch result computed above; the other nine use the same ten iterations.
+
+```{r seed-runs}
+xy_use <- spatialCoords(spe)[use, , drop = FALSE]
+X_use <- X[use]
+Z_use <- Z[use, , drop = FALSE]
+
+seeds <- c(1, 7, 42, 101, 123, 777, 2024, 2025, 31415, 271828)
+runs <- vector("list", length(seeds))
+run_diags <- vector("list", length(seeds))
+names(runs) <- names(run_diags) <- as.character(seeds)
+
+# Reuse the 123 run computed above.
+runs[["123"]] <- patches_res
+run_diags[["123"]] <- diagnostics
+
+# Refit with the other nine seeds and the same settings.
+for (seed in setdiff(seeds, 123)) {
+  set.seed(seed)
+  key <- as.character(seed)
+  runs[[key]] <- getPatches(
+    xy = xy_use, X = X_use, Z = Z_use,
+    npatches = 100, n_iters = 10, log_iters = TRUE, verbose = FALSE
+  )
+  run_diags[[key]] <- getPatchDiagnostics(
+    xy = xy_use, X = X_use, patches = runs[[key]]
+  )
+}
+
+# Tag and stack the results from each seed.
+run_data <- do.call(rbind, Map(function(diag, seed) {
+  out <- diag$patch_diagnostics
+  out$seed <- as.character(seed)
+  out
+}, run_diags, seeds))
+run_data$seed <- factor(run_data$seed, levels = seeds)
+
+run_summary <- do.call(rbind, Map(function(diag, seed) {
+  out <- diag$assignment_summary
+  out$seed <- seed
+  out$strict_connected_fraction <- mean(
+    diag$patch_diagnostics$strict_component_fraction == 1
+  )
+  out
+}, run_diags, seeds))
+rownames(run_summary) <- NULL
+run_summary[, c("seed", "n_nonempty_patches", "fraction_assigned",
+                 "strict_connected_fraction")]
+```
+
+The box plots show the patch-level metrics for each run:
+
+```{r seed-diagnostic-boxplots, fig.width=12, fig.height=7, fig.cap="Patch diagnostic distributions across ten random seeds with identical data and patch settings."}
+run_metrics <- c(
+  n_cells = "Cells per patch",
+  x_sd = "SD of immune-neighbor count",
+  x_ss = "Sum of squares of immune-neighbor count",
+  membership_stability = "Membership stability"
+)
+# Stack the four metrics for faceted box plots.
+plot_data <- do.call(rbind, Map(function(column, label) {
+  data.frame(seed = run_data$seed, metric = label,
+             value = run_data[[column]])
+}, names(run_metrics), run_metrics))
+plot_data$metric <- factor(
+  plot_data$metric, levels = run_metrics
+)
+
+ggplot(plot_data, aes(seed, value)) +
+  geom_boxplot(fill = "#56B4E9", outlier.alpha = 0.4) +
+  facet_wrap(~metric, scales = "free_y", ncol = 2) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Random seed", y = NULL)
+```
+
+Patch size, variation in `X`, and membership stability have similar
+distributions across seeds. The adjusted Rand index (ARI) compares the cell
+assignments from two runs. A value of one means the assignments agree. Each
+comparison uses cells assigned in both runs.
+
+```{r seed-agreement, fig.width=8, fig.height=7, fig.cap="Pairwise ARI for patch assignments from ten random seeds."}
+# Calculate all pairwise agreement values.
+agreement <- expand.grid(seed1 = seeds, seed2 = seeds)
+agreement$ari <- vapply(seq_len(nrow(agreement)), function(i) {
+  a <- agreement$seed1[i]
+  b <- agreement$seed2[i]
+  if (a == b) return(1)
+  mclust::adjustedRandIndex(runs[[as.character(a)]]$patch,
+                           runs[[as.character(b)]]$patch)
+}, numeric(1))
+
+ggplot(agreement, aes(factor(seed1, levels = seeds),
+                      factor(seed2, levels = seeds), fill = ari)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", ari), color = ari < 0.8)) +
+  coord_equal() +
+  scale_fill_viridis_c() +
+  scale_color_manual(values = c(`TRUE` = "white", `FALSE` = "black"), guide = "none") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Random seed", y = "Random seed", fill = "ARI")
+```
+
+The ARI values between different seeds range from
+`r sprintf("%.2f", min(agreement$ari[agreement$seed1 < agreement$seed2]))`
+to
+`r sprintf("%.2f", max(agreement$ari[agreement$seed1 < agreement$seed2]))`
+in these ten runs. This spread shows that some cells change patches across
+seeds.
+
+The next figure compares the pairs with the lowest and highest ARI. Each row
+shows the two runs and their overlaid boundaries. All panels use the same
+coordinates. Boundary colors identify the seeds.
+
+
+```{r seed-boundaries, fig.width=18, fig.height=11, fig.cap="Patch boundaries for the lowest- and highest-ARI pairs among ten runs. Each row shows seed 1, seed 2, and their overlaid boundaries at the same spatial coordinates; grey points show epithelial cell locations."}
+# Select the two pairs at the ends of the ARI range.
+pairs <- agreement[agreement$seed1 < agreement$seed2, ]
+selected <- pairs[c(which.min(pairs$ari), which.max(pairs$ari)), ]
+comparisons <- c("Lowest ARI", "Highest ARI")
+panels <- do.call(rbind, lapply(seq_len(nrow(selected)), function(i) {
+  first <- as.character(selected$seed1[i])
+  second <- as.character(selected$seed2[i])
+  label <- sprintf("%s (%.2f)", comparisons[i], selected$ari[i])
+  data.frame(
+    seed = c(first, second, first, second),
+    panel = c(paste0(label, "\nSeed ", first),
+              paste0(label, "\nSeed ", second),
+              rep(paste0(label, "\nOverlaid"), 2))
+  )
+}))
+panel_levels <- unique(panels$panel)
+seed_levels <- unique(panels$seed)
+
+# Reuse each selected seed's boundary in its own panel and the overlay.
+seed_polys <- setNames(lapply(seed_levels, function(seed) {
+  getPatchPolys(xy_use, runs[[seed]]$patch)
+}), seed_levels)
+boundaries <- do.call(rbind, lapply(seq_len(nrow(panels)), function(i) {
+  out <- seed_polys[[panels$seed[i]]]
+  out$seed <- panels$seed[i]
+  out$panel <- panels$panel[i]
+  out
+}))
+boundaries$panel <- factor(boundaries$panel, levels = panel_levels)
+boundaries$seed <- factor(boundaries$seed, levels = seed_levels)
+colors <- setNames(c("#D55E00", "#0072B2", "#009E73", "#CC79A7")[seq_along(seed_levels)],
+                   seed_levels)
+
+boundary_plot <- ggplot() +
+  geom_point(data = as.data.frame(xy_use), aes(x, y),
+             color = "grey80", size = 0.05) +
+  geom_polygon(data = boundaries,
+               aes(x, y, group = interaction(seed, patch), color = seed),
+               fill = NA, linewidth = 0.5, alpha = 0.8) +
+  facet_wrap(~panel, ncol = 3) +
+  coord_fixed(xlim = range(xy_use[, "x"]),
+              ylim = range(xy_use[, "y"]), expand = FALSE) +
+  scale_color_manual(values = colors) +
+  theme_void() +
+  theme(strip.text = element_text(size = 11)) +
+  labs(color = "Seed")
+boundary_plot
+```
+
+The lowest-ARI pair has several shifted boundaries. The highest-ARI pair has
+closer overlap, with smaller shifts along some edges.
+
+### Local agreement between neighboring cells
+
+ARI gives one score for each pair of runs. The next map shows where local patch
+assignments change across the same ten runs.
+
+```{r local-patches, class.source = "fold-show"}
+local_patches <- lapply(runs, `[[`, "patch")
+stopifnot(all(vapply(local_patches, function(patch) {
+  identical(names(patch), rownames(xy_use))
+}, logical(1))))
+```
+
+For each cell, we find its 30 nearest epithelial neighbors. We count how often
+each cell-neighbor pair shares a patch. We divide this count by the number of
+runs that assign both cells. This gives a frequency, $p$. We turn it into an
+ambiguity score, $4p(1-p)$. The score is zero when a pair is always together or
+always apart. It is highest when the pair shares a patch in about half the
+runs. Each cell's map value is the mean score across its 30 neighbors.
+
+```{r local-agreement, fig.width=8, fig.height=6, fig.cap="Local patch-assignment ambiguity across ten random seeds. Each epithelial cell is compared with its 30 nearest epithelial neighbors. Brighter colors show higher average ambiguity; grey cells have too few eligible neighbor pairs."}
+# Compare each cell with its 30 nearest neighbors in every run.
+knn <- FNN::get.knn(as.matrix(xy_use), k = 30)$nn.index
+co_count <- matrix(0, nrow(knn), ncol(knn))
+valid_count <- matrix(0, nrow(knn), ncol(knn))
+for (patch in local_patches) {
+  center <- matrix(patch, nrow(knn), ncol(knn))
+  neighbor <- matrix(patch[knn], nrow(knn), ncol(knn))
+  valid <- !is.na(center) & !is.na(neighbor)
+  same <- valid
+  same[valid] <- center[valid] == neighbor[valid]
+  valid_count <- valid_count + valid
+  co_count <- co_count + same
+}
+
+# Convert coassignment frequency to ambiguity, then average by cell.
+p_same <- co_count / valid_count
+p_same[valid_count < 2] <- NA_real_
+pair_ambiguity <- 4 * p_same * (1 - p_same)
+local_map <- data.frame(xy_use,
+                        ambiguity = rowMeans(pair_ambiguity, na.rm = TRUE))
+local_map$ambiguity[is.nan(local_map$ambiguity)] <- NA_real_
+
+local_plot <- ggplot(local_map, aes(x, y, color = ambiguity)) +
+  geom_point(size = 0.2) +
+  coord_fixed(xlim = range(xy_use[, "x"]),
+              ylim = range(xy_use[, "y"]), expand = FALSE) +
+  scale_color_viridis_c(option = "plasma", limits = c(0, 1),
+                        na.value = "grey80") +
+  theme_void() +
+  labs(color = "Ambiguity")
+local_plot
+```
+
+Bright areas cluster along patch boundaries. Most patch interiors have low
+ambiguity. We calculate each pair's score when both cells are assigned in at
+least two runs. Grey cells have too few eligible neighbor pairs.
+
+The histogram shows how many cells have each ambiguity score.
+
+```{r local-ambiguity-histogram, fig.width=8, fig.height=4, fig.cap="Distribution of cell-level patch-assignment ambiguity across ten random seeds, using 30 nearest epithelial neighbors per cell."}
+ambiguity_hist <- ggplot(local_map[!is.na(local_map$ambiguity), ], aes(ambiguity)) +
+  geom_histogram(binwidth = 0.05, boundary = 0, closed = "left",
+                 fill = "#56B4E9", color = "white") +
+  scale_x_continuous(breaks = seq(0, 1, by = 0.2)) +
+  coord_cartesian(xlim = c(0, 1)) +
+  theme_minimal() +
+  labs(x = "Mean local ambiguity", y = "Number of cells")
+ambiguity_hist
+```
+
+Many cells have low ambiguity. Fewer cells have high scores, matching the
+smaller bright regions in the spatial map.
+
+## Number of patches
 
 `npatches` controls an important trade-off. Fewer requested patches generally
 produce larger spatial units, whereas more requested patches generally produce
 smaller units with finer spatial resolution. The effects on within-patch
 variation, connectivity, and assignment coverage are data-dependent. We compare
-three settings on the same data, predictor, and embedding, using fewer
-iterations to keep this comparison quick.
+three settings on the same data, predictor, and embedding, using the same ten
+iterations as the seed comparison.
 
 ```{r grid-setup, class.source = "fold-show"}
-xy_use <- spatialCoords(spe)[use, , drop = FALSE]
-X_use <- X[use]
-Z_use <- Z[use, , drop = FALSE]
+npatches_grid <- c(50, 100, 150)
 
-npatches_grid <- c(50L, 100L, 150L)
-
-# Run getPatches() + getPatchDiagnostics() once per npatches setting
+# Reuse the 100-patch run and fit the two other settings.
 fits <- vector("list", length(npatches_grid))
 diags <- vector("list", length(npatches_grid))
 names(fits) <- names(diags) <- as.character(npatches_grid)
+fits[["100"]] <- patches_res
+diags[["100"]] <- diagnostics
 
-for (i in seq_along(npatches_grid)) {
+for (i in which(npatches_grid != 100)) {
   set.seed(123)
   fits[[i]] <- getPatches(
     xy = xy_use, X = X_use, Z = Z_use,
-    npatches = npatches_grid[i], n_iters = 5, log_iters = TRUE
+    npatches = npatches_grid[i], n_iters = 10, log_iters = TRUE,
+    verbose = FALSE
   )
   diags[[i]] <- getPatchDiagnostics(xy = xy_use, X = X_use, patches = fits[[i]])
 }
@@ -406,8 +687,8 @@ patch depends on how the diagnostics below respond.
 
 Density plots compare the size/variation trade-off across settings:
 
-```{r grid-distributions, fig.width=10, fig.height=4, fig.cap="Distributions across different numbers of patches. Color and line type denote the requested number of patches; panels show cells per patch, membership stability, and the SD of the immune-neighbor predictor."}
-metrics <- c(n_cells = "Cells per patch", x_sd = "SD of immune-neighbor count", membership_stability = "Membership stability")
+```{r grid-distributions, fig.width=10, fig.height=6, fig.cap="Distributions across different numbers of patches. Color and line type denote the requested number of patches; panels show cells per patch, membership stability, SD, and centered sum of squares of the immune-neighbor predictor."}
+metrics <- c(n_cells = "Cells per patch", x_sd = "SD of immune-neighbor count", x_ss = "Sum of squares of immune-neighbor count", membership_stability = "Membership stability")
 distribution_data <- do.call(rbind, Map(function(col, label) {
   data.frame(npatches = patch_data_grid$npatches, metric = label, value = patch_data_grid[[col]])
 }, names(metrics), metrics))
@@ -415,16 +696,15 @@ distribution_data$npatches <- factor(distribution_data$npatches, levels = npatch
 
 ggplot(distribution_data, aes(value, color = npatches, linetype = npatches)) +
   geom_density(linewidth = 1) +
-  facet_wrap(~metric, scales = "free", ncol = 3) +
+  facet_wrap(~metric, scales = "free", ncol = 2) +
   theme_minimal() +
   labs(x = NULL, y = "Density", color = "npatches")
 ```
 
 The size distributions shift as expected: requesting fewer patches produces
-larger patches. The `x_sd` and stability panels show whether that change also
+larger patches. The `x_sd`, `x_ss`, and stability panels show whether that change also
 alters within-patch predictor contrast or final-iteration membership for this
-dataset. Compare the full distributions rather than relying on a single patch
-or a universal cutoff.
+dataset.
 
 The same trade-offs can also be viewed patch by patch:
 
@@ -478,41 +758,91 @@ spatial distribution of unassigned cells changes with `npatches`, the
 connectivity curves can change partly for that reason. This is why the curves,
 assignment coverage, and spatial maps should be considered together.
 
-In this run, the unassigned fractions are all close to 0.4%, whereas the median
-curve reaches 1 earliest for `npatches = 150`; the observed median difference
-therefore does not indicate worse connectivity at the largest setting.
+In this run, the unassigned fraction decreases from 1.0% at 50 patches to
+0.2% at 150 patches. The median curve reaches 1 at `k = 3` for 150 patches
+and at `k = 4` for the other two settings. Both coverage and the connectivity
+curve change with `npatches`.
 
-# Example of filtering
+## Interaction between seeds and patch count
 
-After investigating the diagnostics above, we can use dataset-specific
-thresholds and apply them reproducibly. The values below are illustrative choices
-for this example.
+We now ask whether seed agreement changes with `npatches`. We use five of the
+seeds above and the same three patch counts. Each comparison uses ten
+iterations. 
 
-```{r investigative-filtering, class.source = "fold-show"}
-# Dataset-specific thresholds for this example.
-min_cells <- 50
-min_x_sd <- 0.5
-min_stability <- 0.7
-min_strict_connectivity <- 0.9
+```{r interaction-runs}
+interaction_seeds <- c(42, 123, 2024, 31415, 271828)
+seed_pairs <- combn(interaction_seeds, 2)
 
-keep <- with(
-  patch_data,
-  patch[
-    n_cells >= min_cells &
-      is.finite(x_sd) & x_sd >= min_x_sd &
-      !is.na(membership_stability) & membership_stability >= min_stability &
-      strict_component_fraction >= min_strict_connectivity
-  ]
-)
-patches_filtered <- patches
-patches_filtered[!is.element(patches_filtered, keep)] <- NA
-c(patches_retained = length(keep), cells_retained = sum(!is.na(patches_filtered)))
+# Reuse earlier fits; run the eight missing settings.
+interaction_patches <- setNames(lapply(npatches_grid, function(k) {
+  patches_by_seed <- setNames(vector("list", length(interaction_seeds)),
+                              as.character(interaction_seeds))
+  for (seed in interaction_seeds) {
+    key <- as.character(seed)
+    if (k == 100) {
+      patches_by_seed[[key]] <- runs[[key]]$patch
+    } else if (seed == 123) {
+      patches_by_seed[[key]] <- fits[[as.character(k)]]$patch
+    } else {
+      set.seed(seed)
+      patches_by_seed[[key]] <- getPatches(
+        xy = xy_use, X = X_use, Z = Z_use,
+        npatches = k, n_iters = 10, log_iters = FALSE,
+        verbose = FALSE
+      )
+    }
+  }
+  patches_by_seed
+}), as.character(npatches_grid))
+
+# Compare the same ten seed pairs at each patch count.
+interaction_data <- do.call(rbind, lapply(npatches_grid, function(k) {
+  patches_by_seed <- interaction_patches[[as.character(k)]]
+  data.frame(
+    npatches = k,
+    pair = paste(seed_pairs[1, ], seed_pairs[2, ], sep = " / "),
+    ari = vapply(seq_len(ncol(seed_pairs)), function(i) {
+      mclust::adjustedRandIndex(
+        patches_by_seed[[as.character(seed_pairs[1, i])]],
+        patches_by_seed[[as.character(seed_pairs[2, i])]]
+      )
+    }, numeric(1))
+  )
+}))
+interaction_data$npatches <- factor(interaction_data$npatches,
+                                    levels = npatches_grid)
+ari_medians <- tapply(interaction_data$ari, interaction_data$npatches, median)
 ```
+
+Each grey line follows one seed pair across patch counts. The blue line shows
+the median agreement among the ten pairs.
+
+```{r interaction-ari, fig.width=8, fig.height=5, fig.cap="Pairwise ARI for five seeds at three requested patch counts. Grey lines track the same seed pair; blue points and line show the median."}
+ggplot(interaction_data, aes(npatches, ari, group = pair)) +
+  geom_line(color = "grey65", alpha = 0.7) +
+  geom_point(color = "grey45", size = 1.6) +
+  stat_summary(aes(group = 1), fun = median, geom = "line",
+               color = "#0072B2", linewidth = 1.2) +
+  stat_summary(aes(group = 1), fun = median, geom = "point",
+               color = "#0072B2", size = 2.8) +
+  theme_minimal() +
+  labs(x = "Requested number of patches", y = "Pairwise ARI")
+```
+
+The median ARI is `r sprintf("%.2f", ari_medians["50"])` at 50 patches,
+`r sprintf("%.2f", ari_medians["100"])` at 100 patches, and
+`r sprintf("%.2f", ari_medians["150"])` at 150 patches. Agreement decreases
+slightly as the requested patch count rises for these five seeds.
+
+Across seeds, assignment changes are most visible near patch boundaries in
+this example. These results describe patch construction; the separate report
+will assess whether they change gene rankings, effect directions, or spatial
+DE patterns after meta-analysis.
 
 # Summary
 
 `getPatchDiagnostics()` summarizes overall assignment coverage and evaluates
-each patch's size, within-patch variation, connectivity, and membership
+each patch's size, within-patch variation and sum of squares, connectivity, and membership
 stability. The connectivity curve shows how spatial connectivity changes as
 the neighbor graph is widened.
 
@@ -526,7 +856,7 @@ A practical screening workflow is therefore:
    `connectivity_curve`, and a spatial map;
 4. check `membership_stability`; when it is low, consider
    whether more iterations or different construction settings are warranted;
-5. compare plausible settings such as `npatches`, then document any thresholds
+5. compare plausible settings such as `npatches` and repeated random seeds, then document any thresholds
    and retain the code that applies them.
 
 These diagnostics assess patch construction; they do not by themselves decide

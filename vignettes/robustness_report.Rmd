@@ -1,0 +1,534 @@
+---
+title: "Robustness across seeds: patches and DE"
+author: "Peiying Cai"
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, warning = FALSE, message = FALSE,
+  fig.width = 8, fig.height = 6
+)
+library(SpaceMosaic)
+library(HDF5Array)
+library(SpatialExperiment)
+library(ggplot2)
+library(patchwork)
+```
+
+# Aim
+
+The [patch diagnostics vignette](patch_diagnostics.Rmd) shows that patch
+assignments vary across seeds. Here we test how this variation affects
+differential expression (DE) and meta analysis. We use the mouse colon immune
+surveillance example from the [`mouse_colon` vignette](mouse_colon.Rmd). For
+each seed, we build patches with the default 15 iterations. We then run DE and
+meta analysis.
+
+# Data and settings
+
+```{r data}
+h5_path <- system.file("extdata", "mouse_colon", package = "SpaceMosaic")
+spe <- HDF5Array::loadHDF5SummarizedExperiment(h5_path)
+xy <- spatialCoords(spe)
+rownames(xy) <- as.character(spe$cell_id)
+cell_types <- spe$tier1
+use <- cell_types == "Epithelial"
+is_immune <- cell_types == "Immune"
+
+# Compute the same neighborhood embedding and predictor for every seed.
+Z <- embedCellNeighborhoods(reducedDim(spe, "PCA"), xy, ks = c(5, 50))
+nn <- FNN::get.knn(as.matrix(xy), k = 100)$nn.index
+X <- apply(nn, 1, function(i) sum(is_immune[i]))
+
+xy_use <- as.matrix(xy[use, , drop = FALSE])
+Z_use <- Z[use, , drop = FALSE]
+X_use <- X[use]
+counts <- assay(spe, "counts")[, use, drop = FALSE]
+y <- t(counts)  # cells x genes
+rownames(y) <- rownames(xy_use)
+colnames(y) <- rownames(spe)
+tot <- colSums(counts)
+stopifnot(nrow(y) == nrow(xy_use), nrow(Z_use) == nrow(y),
+          length(X_use) == nrow(y), length(tot) == nrow(y))
+
+# Use the same thresholds across seeds.
+dist_to_immune <- FNN::get.knnx(
+  data = as.matrix(xy[is_immune, , drop = FALSE]),
+  query = xy_use, k = 1
+)$nn.dist[, 1]
+log_tot <- log2(tot + 1)
+seeds <- c(1, 7, 42, 101, 123, 777, 2024, 2025, 31415, 271828)
+npatches <- 100; n_iters <- 15
+min_cells <- 50; min_x_sd <- 0.5; min_stability <- 0.7
+dist_thresh <- 15; count_thresh <- 6.65
+```
+
+We calculate patch diagnostics for every seed, and then
+apply the same filtering thresholds as Scenario 1 in `mouse_colon.Rmd`.
+Unassigned cells and filtered patches do not enter DE.
+
+```{r patch-runs}
+runs <- patch_data <- vector("list", length(seeds))
+names(runs) <- names(patch_data) <- as.character(seeds)
+run_info <- vector("list", length(seeds))
+
+for (i in seq_along(seeds)) {
+  seed <- seeds[i]
+  key <- as.character(seed)
+  # Build patches and collect their diagnostics.
+  set.seed(seed)
+  fit <- getPatches(
+    xy = xy_use, X = X_use, Z = Z_use,
+    npatches = npatches, n_iters = n_iters,
+    log_iters = TRUE, verbose = FALSE
+  )
+  runs[[key]] <- fit$patch
+  diag <- getPatchDiagnostics(xy = xy_use, X = X_use, patches = fit)
+  pd <- diag$patch_diagnostics
+
+  # Add the two filtering measures.
+  pd$min_dist <- as.numeric(
+    tapply(dist_to_immune, fit$patch, min)[as.character(pd$patch)]
+  )
+  pd$mean_counts <- as.numeric(
+    tapply(log_tot, fit$patch, mean)[as.character(pd$patch)]
+  )
+  patch_data[[key]] <- pd
+  # Keep a brief run summary.
+  run_info[[i]] <- data.frame(
+    seed = seed,
+    patches = diag$assignment_summary$n_nonempty_patches,
+    assigned = diag$assignment_summary$fraction_assigned
+  )
+}
+```
+
+```{r plot-data, include=FALSE}
+plot_data <- do.call(rbind, Map(function(pd, seed) {
+  pd$seed <- seed
+  pd
+}, patch_data, as.character(seeds)))
+plot_data$seed <- factor(plot_data$seed, levels = as.character(seeds))
+facet_theme <- theme_classic() +
+  theme(panel.border = element_rect(color = "grey65", fill = NA))
+```
+
+## Patch diagnostics before filtering {.tabset}
+
+The tabs show patch properties across seeds. Red lines mark the thresholds
+used below.
+
+### Patch size and X variation
+
+```{r filter-size, fig.width=18, fig.height=8, fig.cap="Patch size and variation in X. The red line marks 50 for size and 0.5 for SD."}
+ggplot(plot_data, aes(n_cells, x_sd)) +
+  geom_point(aes(color = membership_stability), size = 2) +
+  geom_vline(xintercept = min_cells, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = min_x_sd, linetype = "dashed", color = "red") +
+  facet_wrap(~seed, ncol = 5) +
+  scale_color_viridis_c(limits = c(0, 1), na.value = "grey70") +
+  facet_theme +
+  labs(x = "Cells per patch", y = "Within-patch SD of X",
+       color = "Stability")
+```
+
+### Immune distance and mean counts
+
+```{r filter-context, fig.width=18, fig.height=8, fig.cap="Immune distance and mean counts. The red line marks 15 for distance and 6.65 for mean log2(total counts + 1)."}
+ggplot(plot_data, aes(min_dist, mean_counts)) +
+  geom_point(aes(size = n_cells, color = x_sd), alpha = 0.7) +
+  geom_vline(xintercept = dist_thresh, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = count_thresh, linetype = "dashed", color = "red") +
+  facet_wrap(~seed, ncol = 5) +
+  scale_color_viridis_c(option = "plasma") +
+  facet_theme +
+  labs(x = "Minimum distance to immune cells",
+       y = "Mean log2(total counts + 1)", color = "X SD", size = "Cells")
+```
+
+### Membership stability
+
+```{r filter-stability, fig.width=18, fig.height=8, fig.cap="Membership stability. The red line marks 0.7."}
+ggplot(plot_data, aes(membership_stability)) +
+  geom_histogram(binwidth = 0.05, fill = "#56B4E9", color = "white") +
+  geom_vline(xintercept = min_stability, linetype = "dashed", color = "red") +
+  facet_wrap(~seed, ncol = 5) +
+  facet_theme +
+  labs(x = "Membership stability", y = "Number of patches")
+```
+
+### Mean counts
+
+```{r filter-counts, fig.width=18, fig.height=8, fig.cap="Mean log2 total counts per patch. The red line marks 6.65."}
+ggplot(plot_data, aes(mean_counts)) +
+  geom_histogram(bins = 20, fill = "#56B4E9", color = "white") +
+  geom_vline(xintercept = count_thresh, linetype = "dashed", color = "red") +
+  facet_wrap(~seed, ncol = 5) +
+  facet_theme +
+  labs(x = "Mean log2(total counts + 1)", y = "Number of patches")
+```
+
+### Minimum immune distance
+
+```{r filter-distance, fig.width=18, fig.height=8, fig.cap="Minimum distance to immune cells per patch. The square root scale shows values near zero. The red line marks 15."}
+ggplot(plot_data, aes(min_dist)) +
+  geom_histogram(bins = 20, fill = "#56B4E9", color = "white") +
+  geom_vline(xintercept = dist_thresh, linetype = "dashed", color = "red") +
+  facet_wrap(~seed, ncol = 5) +
+  scale_x_continuous(trans = "sqrt", breaks = c(0, 5, 15, 30, 60)) +
+  facet_theme +
+  labs(x = "Minimum distance to immune cells", y = "Number of patches")
+```
+
+## Filtering and DE
+
+We apply the same thresholds in every run.
+
+```{r de-runs}
+filtered <- meta_z <- vector("list", length(seeds))
+names(filtered) <- names(meta_z) <- as.character(seeds)
+for (i in seq_along(seeds)) {
+  key <- as.character(seeds[i])
+  pd <- patch_data[[key]]
+
+  # Apply the Scenario 1 patch filters.
+  keep <- with(pd, patch[
+    mean_counts > count_thresh & min_dist < dist_thresh &
+      n_cells >= min_cells & is.finite(x_sd) & x_sd >= min_x_sd &
+      !is.na(membership_stability) & membership_stability >= min_stability
+  ])
+  patch <- runs[[key]]
+  patch[!(patch %in% keep)] <- NA
+  filtered[[key]] <- patch
+  stopifnot(length(keep) >= 2)
+
+  # Run DE and meta analysis for this patch set.
+  de <- patchDE(
+    y = y, df = data.frame(X = X_use), patch = patch,
+    pearson = TRUE, tot = tot, verbose = FALSE
+  )
+  W <- getPatchAttributes(Z = Z_use, patch = patch)
+  meta <- patchMetaAnalysis(DEobj = de, W = W, k = 10)
+  meta_z[[key]] <- meta$X$ests / meta$X$ses
+
+  run_info[[i]]$retained <- length(keep)
+  run_info[[i]]$cells_for_DE <- sum(!is.na(patch))
+}
+run_info <- do.call(rbind, run_info)
+run_info
+```
+
+Most patches pass the filters. On average, each run excludes
+`r round(mean(run_info$patches - run_info$retained))` patches.
+
+# Patch assignment agreement
+
+Patch labels differ across runs. ARI compares cell assignments without matching
+patch labels. We show results before and after filtering.
+
+```{r assignment-ari, fig.width=16, fig.height=9, fig.cap="ARI between seed pairs. The top row shows heatmaps; the bottom row shows the 45 pair values. Before filtering is on the left."}
+pairs <- combn(as.character(seeds), 2, simplify = FALSE)
+ari <- do.call(rbind, lapply(pairs, function(pair) {
+  data.frame(seed1 = pair[1], seed2 = pair[2],
+             before = mclust::adjustedRandIndex(runs[[pair[1]]], runs[[pair[2]]]),
+             after = mclust::adjustedRandIndex(filtered[[pair[1]]], filtered[[pair[2]]]))
+}))
+ari_long <- rbind(
+  data.frame(seed1 = ari$seed1, seed2 = ari$seed2,
+             assignment = "Before filtering", ari = ari$before),
+  data.frame(seed1 = ari$seed1, seed2 = ari$seed2,
+             assignment = "After filtering", ari = ari$after)
+)
+ari_long$assignment <- factor(ari_long$assignment,
+                              levels = c("Before filtering", "After filtering"))
+diag_map <- expand.grid(seed = as.character(seeds),
+                        assignment = c("Before filtering", "After filtering"))
+diag_map$assignment <- factor(diag_map$assignment,
+                              levels = levels(ari_long$assignment))
+ari_map <- rbind(
+  ari_long,
+  data.frame(seed1 = ari_long$seed2, seed2 = ari_long$seed1,
+             assignment = ari_long$assignment, ari = ari_long$ari),
+  data.frame(seed1 = diag_map$seed, seed2 = diag_map$seed,
+             assignment = diag_map$assignment, ari = 1)
+)
+stages <- levels(ari_long$assignment)
+p_heat <- lapply(stages, function(stage) {
+  ggplot(ari_map[ari_map$assignment == stage, ],
+         aes(factor(seed1, levels = seeds), factor(seed2, levels = seeds),
+             fill = ari)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = sprintf("%.2f", ari), color = seed1 != seed2),
+              size = 3) +
+    scale_fill_viridis_c(limits = range(ari_map$ari)) +
+    scale_color_manual(values = c(`TRUE` = "white", `FALSE` = "black"),
+                       guide = "none") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          plot.title = element_text(hjust = 0.5)) +
+    labs(title = stage, x = "Random seed", y = "Random seed", fill = "ARI")
+})
+p_hist <- lapply(stages, function(stage) {
+  ggplot(ari_long[ari_long$assignment == stage, ], aes(ari)) +
+    geom_histogram(binwidth = 0.025, fill = "#56B4E9", color = "white") +
+    coord_cartesian(xlim = range(ari_long$ari)) +
+    theme_minimal() +
+    labs(x = "Pairwise ARI", y = "Number of seed pairs")
+})
+(wrap_plots(p_heat, ncol = 2) / wrap_plots(p_hist, ncol = 2)) +
+  plot_layout(heights = c(1.5, 1), guides = "collect")
+```
+
+The mean rises from
+`r sprintf("%.2f", mean(ari$before))` to
+`r sprintf("%.2f", mean(ari$after))`. 
+The median ARI remains the same (`r sprintf("%.2f", median(ari$before))`).
+Each filtered pair uses cells retained in
+both runs. Below, we compare genes by name and map results to the same cell
+coordinates.
+
+# DE and meta analysis agreement
+
+`patchMetaAnalysis()` gives an estimate and a standard error for each gene in
+each retained patch. We divide the estimate by its standard error to get a
+$Z$ score. A positive score means expression rises with the number of nearby
+immune cells. A negative score means expression falls. As in `mouse_colon.Rmd`,
+we use $|Z| > 2$ to describe strong signals.
+
+```{r de-counts}
+# Count strong Z scores in each run.
+de_counts <- do.call(rbind, lapply(seq_along(seeds), function(i) {
+  z <- meta_z[[i]]
+  data.frame(
+    seed = seeds[i], n_patches = ncol(z),
+    n_pairs_Z2 = sum(abs(z) > 2, na.rm = TRUE),
+    n_genes_Z2 = sum(rowSums(abs(z) > 2, na.rm = TRUE) > 0)
+  )
+}))
+de_counts
+```
+
+Across runs, `r min(de_counts$n_pairs_Z2)` to
+`r max(de_counts$n_pairs_Z2)` gene and patch pairs have $|Z| > 2$.
+The number of genes with at least one such patch ranges from
+`r min(de_counts$n_genes_Z2)` to `r max(de_counts$n_genes_Z2)`.
+We next rank genes by the fraction of retained patches with $|Z| > 2$ in each
+run.
+
+```{r top-genes}
+genes <- rownames(meta_z[[1]])
+stopifnot(all(vapply(meta_z, function(z) identical(rownames(z), genes), logical(1))))
+
+# Rank genes in each run and count top 50 appearances.
+frac <- lapply(meta_z, function(z) {
+  score <- rowMeans(abs(z) > 2, na.rm = TRUE)
+  score[!is.finite(score)] <- NA_real_
+  names(score) <- rownames(z)
+  score
+})
+top50 <- lapply(frac, function(score) {
+  head(names(score)[order(-score, names(score), na.last = TRUE)], 50)
+})
+top50_g <- rowSums(vapply(top50, function(x) genes %in% x,
+                         logical(length(genes))))
+frac_mat <- do.call(cbind, frac)
+
+# Summarize positive and negative signals in each run.
+up_mat <- do.call(cbind, lapply(meta_z, function(z) rowMeans(z > 2, na.rm = TRUE)))
+down_mat <- do.call(cbind, lapply(meta_z, function(z) rowMeans(z < -2, na.rm = TRUE)))
+
+# Take the median of each fraction across seeds.
+gene_summary <- data.frame(
+  gene = genes, top50_g = top50_g,
+  median_fraction = apply(frac_mat, 1, median, na.rm = TRUE),
+  median_up = apply(up_mat, 1, median, na.rm = TRUE),
+  median_down = apply(down_mat, 1, median, na.rm = TRUE)
+)
+gene_summary <- gene_summary[
+  order(-gene_summary$top50_g, -gene_summary$median_fraction,
+        gene_summary$gene),
+]
+rownames(gene_summary) <- NULL
+head(gene_summary, 20)
+```
+
+Each row is one gene. `top50_g` records the number of runs in which the gene ranks among the top 50.
+For each run, we compute the fraction of retained patches with \(|Z| > 2\),
+and `median_fraction` is the median of these ten fractions.
+`median_up` is based on \(Z > 2\), while `median_down` is based on \(Z < -2\).
+A gene may have both positive and negative patches.
+For `Axin2`, the median fractions are approximately `r round(100 * gene_summary$median_up[gene_summary$gene == "Axin2"])`% up and `r round(100 * gene_summary$median_down[gene_summary$gene == "Axin2"])`% down.
+
+```{r top50-frequency, fig.cap="Frequency of each gene's inclusion among top 50 lists."}
+ggplot(gene_summary[gene_summary$top50_g > 0, ], aes(top50_g)) +
+  geom_bar(fill = "#56B4E9") +
+  scale_x_continuous(breaks = seq_along(seeds)) +
+  theme_minimal() +
+  labs(x = "Top 50 appearances across ten runs", y = "Number of genes")
+```
+
+In these runs, `r sum(gene_summary$top50_g == length(seeds))` genes appear in
+the top 50 every time.
+
+The next plot shows the up and down fractions for the ten genes that appear
+most often in the top 50.
+
+```{r directions, fig.width=16, fig.height=8, fig.cap="Fraction of patches with Z above 2 or below minus 2 for ten frequent top 50 genes."}
+# Show each seed's directional fractions for recurrent genes.
+top10 <- head(gene_summary$gene, 10)
+idx <- match(top10, genes)
+direction_data <- do.call(rbind, lapply(seq_along(seeds), function(i) {
+  data.frame(
+    gene = rep(top10, 2), seed = rep(as.character(seeds[i]), 2 * length(top10)),
+    direction = rep(c("Up", "Down"), each = length(top10)),
+    fraction = c(up_mat[idx, i], down_mat[idx, i])
+  )
+}))
+direction_data$seed <- factor(direction_data$seed, levels = as.character(seeds))
+
+ggplot(direction_data, aes(seed, fraction, color = direction,
+                           group = direction)) +
+  geom_line() + geom_point(size = 1) +
+  facet_wrap(~gene, ncol = 5) +
+  scale_color_manual(values = c(Up = "#D55E00", Down = "#0072B2")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Random seed", y = "Fraction of retained patches", color = NULL)
+```
+
+`Irf8` has mostly positive signals. `Tnfrsf21` has negative signals. `Nlrp9b`
+has patches with both directions.
+
+We first map `Axin2`, which appears in every top 50 list.
+It has positive signals in similar areas across seeds. Patch boundaries
+and Z scores vary within those areas.
+
+```{r spatial-gene, fig.width=16, fig.height=8, fig.cap="Axin2 meta analysis Z scores across ten seeds. Grey cells were excluded from DE."}
+# Map patch Z scores to the same cell coordinates.
+gene_map <- function(gene) {
+  map <- do.call(rbind, lapply(names(meta_z), function(seed) {
+    patch <- filtered[[seed]]
+    zmat <- meta_z[[seed]]
+    patch_col <- match(as.character(patch), colnames(zmat))
+    stopifnot(all(!is.na(patch_col[!is.na(patch)])))
+    data.frame(x = xy_use[, 1], y = xy_use[, 2], seed = seed,
+               z = as.numeric(zmat[gene, patch_col]))
+  }))
+  map$seed <- factor(map$seed, levels = as.character(seeds))
+  map
+}
+axin2_map <- gene_map("Axin2")
+ggplot(axin2_map, aes(x, y, color = z)) +
+  geom_point(size = 0.12) +
+  facet_wrap(~seed, ncol = 5) +
+  coord_fixed(xlim = range(xy_use[, 1]), ylim = range(xy_use[, 2])) +
+  scale_color_gradient2(low = "#0072B2", mid = "white", high = "#D55E00",
+                        midpoint = 0, na.value = "grey80") +
+  theme_void() +
+  labs(title = "Axin2", color = "Meta Z")
+```
+
+
+We also look for genes that change more across seeds. The table includes genes
+that enter the top 50 at least once. `min_frac` and `max_frac` are the lowest and
+highest fractions with $|Z| > 2$. `min_net` and `max_net` show the range of
+`up - down`. A change of sign means the balance of directions shifts.
+
+```{r variable-genes}
+# Rank genes by the range across seeds.
+net_mat <- up_mat - down_mat
+variation <- data.frame(
+  gene = genes, top50_g = top50_g,
+  min_frac = apply(frac_mat, 1, min, na.rm = TRUE),
+  max_frac = apply(frac_mat, 1, max, na.rm = TRUE),
+  min_net = apply(net_mat, 1, min, na.rm = TRUE),
+  max_net = apply(net_mat, 1, max, na.rm = TRUE)
+)
+variation$range_frac <- variation$max_frac - variation$min_frac
+variation <- variation[variation$top50_g > 0 & is.finite(variation$range_frac), ]
+variation <- variation[order(-variation$range_frac, variation$gene), ]
+rownames(variation) <- NULL
+head(variation[, c("gene", "top50_g", "min_frac", "max_frac",
+                   "range_frac", "min_net", "max_net")], 10)
+```
+
+The next map shows the gene with the largest change in the fraction of patches
+with $|Z| > 2$ among genes that entered the top 50.
+
+```{r variable-gene-map, fig.width=18, fig.height=10, fig.cap="Z scores for a variable gene. Each seed has its own color scale. Black borders mark the lowest and highest fractions with absolute Z above 2."}
+variable_gene <- variation$gene[1]
+variable_map <- gene_map(variable_gene)
+variable_frac <- frac_mat[match(variable_gene, genes), ]
+low_seed <- which.min(variable_frac)
+high_seed <- which.max(variable_frac)
+
+# Show strong patches clearly and mark the two extreme runs.
+seed_maps <- lapply(seq_along(seeds), function(i) {
+  seed <- as.character(seeds[i])
+  map <- variable_map[variable_map$seed == seed, ]
+  limit <- max(2, abs(map$z), na.rm = TRUE)
+  tag <- if (i == low_seed) " low" else if (i == high_seed) " high" else ""
+  edge <- if (nzchar(tag)) "black" else "grey80"
+  ggplot(map, aes(x, y, color = z)) +
+    geom_point(aes(alpha = abs(z) > 2), size = 0.12) +
+    coord_fixed(xlim = range(xy_use[, 1]), ylim = range(xy_use[, 2])) +
+    scale_color_gradient2(low = "#0072B2", mid = "white", high = "#D55E00",
+                          midpoint = 0, limits = c(-limit, limit),
+                          breaks = c(-limit, 0, limit),
+                          labels = round(c(-limit, 0, limit), 1),
+                          na.value = "grey80", name = "Z",
+                          guide = guide_colorbar(barwidth = grid::unit(2, "cm"),
+                                                 barheight = grid::unit(0.15, "cm"),
+                                                 title.position = "top")) +
+    scale_alpha_manual(values = c(`FALSE` = 0.25, `TRUE` = 1),
+                       na.value = 0.6, guide = "none") +
+    theme_void() +
+    theme(panel.border = element_rect(color = edge, fill = NA,
+                                      linewidth = if (nzchar(tag)) 1.1 else 0.3),
+          plot.title = element_text(size = 9, hjust = 0.5),
+          legend.position = "bottom",
+          legend.title = element_text(size = 7),
+          legend.text = element_text(size = 6)) +
+    labs(title = paste0(seed, ": ", sprintf("%.1f%%", 100 * variable_frac[i]), tag))
+})
+wrap_plots(seed_maps, ncol = 5)
+```
+
+For `r variable_gene`, the fraction of patches with $|Z| > 2$ ranges from
+`r sprintf("%.2f", variation$min_frac[1])` to
+`r sprintf("%.2f", variation$max_frac[1])` across seeds. Panel titles give this
+fraction for each seed. Black borders mark the lowest and highest runs. Patches
+with $|Z| \leq 2$ are faded. Each panel has its own Z scale; use its legend to
+read the color values.
+
+```{r variable-gene-distribution, fig.width=18, fig.height=6, fig.cap="Patch Z scores for the variable gene across seeds. Red lines mark Z = -2 and Z = 2."}
+# Use one Z score per retained patch.
+z_dist <- do.call(rbind, lapply(seq_along(seeds), function(i) {
+  data.frame(seed = as.character(seeds[i]),
+             z = as.numeric(meta_z[[i]][variable_gene, ]))
+}))
+z_dist <- z_dist[is.finite(z_dist$z), ]
+z_dist$seed <- factor(z_dist$seed, levels = as.character(seeds))
+
+ggplot(z_dist, aes(z)) +
+  geom_histogram(binwidth = 0.5, fill = "#56B4E9", color = "white") +
+  geom_vline(xintercept = c(-2, 2), color = "red", linetype = "dashed") +
+  facet_wrap(~seed, ncol = 5) +
+  theme_minimal() +
+  labs(x = "Patch Z score", y = "Number of patches")
+```
+
+Seed 31415 has more patches above $Z = 2$ and a longer positive tail. Most
+patches for seed 271828 fall between the red lines.
+
+# Session info
+
+```{r session-info}
+sessionInfo()
+```
