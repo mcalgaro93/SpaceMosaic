@@ -2,7 +2,7 @@
 % Please edit documentation in R/spe_to_spatialdata.R
 \name{spe_to_spatialdata}
 \alias{spe_to_spatialdata}
-\title{Convert a SpatialExperiment object to a SpatialData object}
+\title{Internal function to convert a SpatialExperiment object to a SpatialData object}
 \usage{
 spe_to_spatialdata(
   spe,
@@ -33,8 +33,15 @@ shapes element and everything else (assays, \code{colData},
 that shapes element.
 }
 \details{
-Images are not converted for now: \code{imgData(spe)} is ignored and the
-resulting SpatialData object has no image elements.
+This function exists so that the use of SpatialData objects in SpaceMosaic
+can be documented with the same data used to document the use of
+SpatialExperiment objects. It is not meant to be a complete conversion
+between these two classes of objects; users interested in such a conversion
+should refer to the authors of the \pkg{spatialdataR} and
+\pkg{SpatialExperiment} packages.
+
+Images are not converted: \code{imgData(spe)} is ignored and the resulting
+SpatialData object has no image elements.
 }
 \examples{
 \dontshow{if (requireNamespace("spatialdataR", quietly = TRUE)) withAutoprint(\{ # examplesIf}
