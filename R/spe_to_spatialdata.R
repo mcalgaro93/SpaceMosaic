@@ -5,8 +5,15 @@
 #' \code{reducedDims}, ...) as a \code{SingleCellExperiment} table annotating
 #' that shapes element.
 #'
-#' Images are not converted for now: \code{imgData(spe)} is ignored and the
-#' resulting SpatialData object has no image elements.
+#' This function exists so that the use of SpatialData objects in SpaceMosaic
+#' can be documented with the same data used to document the use of
+#' SpatialExperiment objects. It is not meant to be a complete conversion
+#' between these two classes of objects; users interested in such a conversion
+#' should refer to the authors of the \pkg{spatialdataR} and
+#' \pkg{SpatialExperiment} packages.
+#'
+#' Images are not converted: \code{imgData(spe)} is ignored and the resulting
+#' SpatialData object has no image elements.
 #'
 #' @param spe A SpatialExperiment object.
 #' @param shape_name Name of the shapes element that holds the cell
