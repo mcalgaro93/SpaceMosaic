@@ -140,39 +140,82 @@ test_that("getPatches.sd matches getPatches.spe", {
 
   expect_identical(result_table$patch, expected$patch)
 
-  # Everything but the polygons is stored in the table's metadata ...
+  # Per-iteration assignments are stored as a reducedDim of the cell table,
+  # which keeps no SpaceMosaic metadata ...
   expected_metadata <- S4Vectors::metadata(expected)$SpaceMosaic
+  expect_identical(
+    SingleCellExperiment::reducedDim(result_table, "patch_iterations"),
+    expected_metadata$patch_iterations$membership_log
+  )
+  expect_null(S4Vectors::metadata(result_table)$SpaceMosaic)
+
+  # ... patch-level results in a table annotating the polygons ...
+  patches <- sd_table(result, "patches")
+  diagnostics <- expected_metadata$patch_diagnostics
+  expect_identical(colnames(patches), diagnostics$patch)
+  expect_identical(spatialdataR::region(patches), "patch_polys")
+  expect_identical(spatialdataR::instance_key(patches), "patch")
+  expect_identical(spatialdataR::instances(patches), diagnostics$patch)
   expect_equal(
-    S4Vectors::metadata(result_table)$SpaceMosaic,
-    expected_metadata[setdiff(names(expected_metadata), "patch_polys")]
+    as.data.frame(SummarizedExperiment::colData(patches)),
+    `rownames<-`(diagnostics[, names(diagnostics) != "patch"], diagnostics$patch)
+  )
+  curve <- SingleCellExperiment::reducedDim(patches, "connectivity_curve")
+  expected_curve <- expected_metadata$connectivity_curve
+  expect_equal(
+    curve[cbind(expected_curve$patch, paste0("k", expected_curve$k))],
+    expected_curve$component_fraction
+  )
+  expect_equal(
+    SingleCellExperiment::reducedDim(patches, "ss_log"),
+    expected_metadata$patch_iterations$ss_log[diagnostics$patch, ]
+  )
+  expect_equal(
+    S4Vectors::metadata(patches)$SpaceMosaic$assignment_summary,
+    expected_metadata$assignment_summary
   )
 
-  # ... while the polygons are stored as a shapes element, one per patch.
+  # ... and the polygons as a shapes element, one per patch, keyed by patch.
   expected_polys <- expected_metadata$patch_polys
-  result_polys <- spatialdataR::data(spatialdataR::shapes(result)$patch_polys) |>
-    sf::st_as_sf()
-  expect_identical(result_polys$patch, unique(expected_polys$patch))
+  polys_shape <- spatialdataR::shapes(result)$patch_polys
+  result_polys <- spatialdataR::data(polys_shape) |> sf::st_as_sf()
+  expect_identical(names(sf::st_drop_geometry(result_polys)), "patch")
+  expect_setequal(result_polys$patch, unique(expected_polys$patch))
+  expect_identical(spatialdataR::instances(polys_shape), result_polys$patch)
   for (id in result_polys$patch) {
     vertices <- sf::st_coordinates(result_polys[result_polys$patch == id, ])
     hull <- as.matrix(expected_polys[expected_polys$patch == id, c("x", "y")])
     expect_equal(unname(vertices[, c("X", "Y")]), unname(rbind(hull, hull[1, ])))
   }
-  annotations <- setdiff(names(expected_polys), c("x", "y"))
-  expect_equal(
-    as.data.frame(sf::st_drop_geometry(result_polys))[, annotations],
-    `rownames<-`(expected_polys[!duplicated(expected_polys$patch), annotations], NULL)
-  )
 })
 
-test_that("getPatches.sd stores patch polygons under `patch_shape`", {
+test_that("subsetting the patch table drops the polygons of excluded patches", {
+  set.seed(123)
+  result <- getPatches.sd(
+    sd, X = "distance_to_fibroblast", npatches = 4, n_iters = 3, verbose = FALSE
+  )
+  patches <- sd_table(result, "patches")
+  keep <- colnames(patches)[c(3, 1)]
+  result <- spatialdataR::`table<-`(result, i = "patches", value = patches[, keep])
+
+  polys <- spatialdataR::data(spatialdataR::shapes(result)$patch_polys) |>
+    sf::st_as_sf()
+  expect_setequal(polys$patch, keep)
+})
+
+test_that("getPatches.sd stores patch results under `patch_shape` and `patch_table`", {
   set.seed(123)
   result <- getPatches.sd(
     sd, X = "distance_to_fibroblast", npatches = 4, n_iters = 3,
-    patch_shape = "my_patches", verbose = FALSE
+    patch_shape = "my_patches", patch_table = "my_patch_table", verbose = FALSE
   )
 
   expect_true("my_patches" %in% spatialdataR::shapeNames(result))
   expect_false("patch_polys" %in% spatialdataR::shapeNames(result))
+  expect_identical(spatialdataR::tableNames(result), c("table", "my_patch_table"))
+  expect_identical(
+    spatialdataR::region(sd_table(result, "my_patch_table")), "my_patches"
+  )
   # Cell coordinates are untouched by adding the polygons.
   expect_equal(
     unname(SpaceMosaic:::.sdCoords(result, sd_table(result))),
@@ -213,24 +256,30 @@ test_that("getPatches.sd on a cell-subsetted object matches getPatches.spe", {
   expect_identical(sd_table(result)$patch, expected$patch)
 })
 
-test_that("getPatches.sd skips metadata storage when log_iters/patch_diagnostics/patch_polys are FALSE", {
+test_that("getPatches.sd stores only polygons and patch IDs when log_iters/patch_diagnostics are FALSE", {
   set.seed(123)
   expected <- getPatches.spe(
     spe, X = "distance_to_fibroblast", npatches = 4, n_iters = 3,
-    log_iters = FALSE, patch_diagnostics = FALSE, patch_polys = FALSE,
-    verbose = FALSE
+    log_iters = FALSE, patch_diagnostics = FALSE, verbose = FALSE
   )
   set.seed(123)
   result <- getPatches.sd(
     sd, X = "distance_to_fibroblast", npatches = 4, n_iters = 3,
-    log_iters = FALSE, patch_diagnostics = FALSE, patch_polys = FALSE,
-    verbose = FALSE
+    log_iters = FALSE, patch_diagnostics = FALSE, verbose = FALSE
   )
   result_table <- sd_table(result)
 
   expect_identical(result_table$patch, expected$patch)
   expect_null(S4Vectors::metadata(result_table)$SpaceMosaic)
-  expect_identical(spatialdataR::shapeNames(result), "shape1")
+  expect_identical(SingleCellExperiment::reducedDimNames(result_table),
+                   SingleCellExperiment::reducedDimNames(sd_table(sd)))
+  expect_identical(spatialdataR::shapeNames(result), c("shape1", "patch_polys"))
+
+  patches <- sd_table(result, "patches")
+  expect_setequal(colnames(patches), unique(stats::na.omit(expected$patch)))
+  expect_identical(ncol(SummarizedExperiment::colData(patches)), 0L)
+  expect_identical(SingleCellExperiment::reducedDimNames(patches), character())
+  expect_null(S4Vectors::metadata(patches)$SpaceMosaic)
 })
 
 test_that("patchDE.sd matches patchDE.spe", {

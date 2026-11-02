@@ -123,7 +123,10 @@
 # spatialdataR subsets shapes by position (filter(row_number() %in% i)), which
 # only selects the right rows if DuckDB returns them in a stable order; with
 # several threads it does not, so the connection is made single-threaded.
-.sdShape <- function(x) {
+# `instance_key` names the column of `x` holding instance IDs; without one,
+# spatialdataR uses row positions, which tables cannot be matched against
+# reliably.
+.sdShape <- function(x, instance_key = NULL) {
     conn <- suppressMessages(duckspatial::ddbs_create_conn())
     DBI::dbExecute(conn, "SET threads = 1")
     table_id <- basename(tempfile("sdShape_"))
@@ -135,7 +138,71 @@
     x_duck <- duckspatial::as_duckspatial_df(
         x = table_id, conn = conn, crs = NA_character_,
         geom_col = attr(x, "sf_column"))
-    spatialdataR::SpatialDataShape(x_duck)
+    meta <- spatialdataR::SpatialDataAttrs(type = "shape")
+    if (!is.null(instance_key)) {
+        spatialdataR::instance_key(meta) <- instance_key
+    }
+    spatialdataR::SpatialDataShape(x_duck, meta = meta)
+}
+
+# Make the table `y` annotate the shapes element `region`: column i of `y` is
+# the geometry whose `instance_key` column equals `ids[i]`. spatialdataR does
+# not export `region_key<-`, and `regions<-` fails on a table without a
+# region key, so the key is written to the table's attributes directly.
+.sdAnnotate <- function(y, region, instance_key, ids) {
+    attrs <- SingleCellExperiment::int_metadata(y)$spatialdata_attrs
+    attrs$region_key <- "region"
+    SingleCellExperiment::int_metadata(y)$spatialdata_attrs <- attrs
+    spatialdataR::instance_key(y) <- instance_key
+    spatialdataR::regions(y) <- region
+    spatialdataR::instances(y) <- ids
+    y
+}
+
+# Unique non-missing patch IDs, in numeric order when all are numbers and in
+# lexical order otherwise, as in getPatchDiagnostics().
+.sortedPatchIds <- function(patch) {
+    patch <- as.character(patch)
+    patch_ids <- unique(patch[!is.na(patch)])
+    numeric_patch_ids <- suppressWarnings(as.numeric(patch_ids))
+    if (all(is.finite(numeric_patch_ids))) {
+        patch_ids[order(numeric_patch_ids)]
+    } else {
+        sort(patch_ids)
+    }
+}
+
+# Build the patch table: a SingleCellExperiment with one column per patch in
+# `patch_ids` and no rows. Patch diagnostics go to its colData, the
+# connectivity curve (patches x k) and the per-iteration sum of squares
+# (patches x iterations) to its reducedDims, and the assignment summary to
+# its metadata. Any of `diagnostics` and `ss_log` may be NULL.
+.patchTable <- function(patch_ids, diagnostics = NULL, ss_log = NULL) {
+    y <- SingleCellExperiment::SingleCellExperiment(
+        colData = S4Vectors::DataFrame(row.names = patch_ids)
+    )
+    if (!is.null(diagnostics)) {
+        pd <- diagnostics$patch_diagnostics
+        SummarizedExperiment::colData(y) <- S4Vectors::DataFrame(
+            pd[match(patch_ids, pd$patch), setdiff(names(pd), "patch"),
+               drop = FALSE],
+            row.names = patch_ids, check.names = FALSE
+        )
+        cc <- diagnostics$connectivity_curve
+        ks <- sort(unique(cc$k))
+        curve <- matrix(NA_real_, nrow = length(patch_ids), ncol = length(ks),
+                        dimnames = list(patch_ids, paste0("k", ks)))
+        curve[cbind(match(cc$patch, patch_ids), match(cc$k, ks))] <-
+            cc$component_fraction
+        SingleCellExperiment::reducedDim(y, "connectivity_curve") <- curve
+        S4Vectors::metadata(y)$SpaceMosaic$assignment_summary <-
+            diagnostics$assignment_summary
+    }
+    if (!is.null(ss_log)) {
+        SingleCellExperiment::reducedDim(y, "ss_log") <-
+            ss_log[patch_ids, , drop = FALSE]
+    }
+    y
 }
 
 # Convert the vertex data frame returned by getPatchPolys() (columns `x`, `y`,
@@ -233,9 +300,11 @@ embedCellNeighborhoods.sd <- function(sd, embedding, ks = c(5, 50), tissue = NUL
 #' `SpatialData` object. This wrapper contains three steps:
 #' `getPatches()` identifies spatial patches, `getPatchDiagnostics()` computes
 #' patch-level information from the resulting patch assignments, and
-#' `getPatchPolys()` constructs patch polygons using the patch assignments and
-#' diagnostic information. Patch assignments and diagnostics are stored in
-#' `tables(sd)[[table]]`, and patch polygons as a new shapes element of `sd`.
+#' `getPatchPolys()` constructs patch polygons. Patch assignments are stored in
+#' `tables(sd)[[table]]`, patch polygons as a new shapes element of `sd`, and
+#' patch-level results in a new table that annotates those polygons, with one
+#' column per patch. Subsetting that table to some patches therefore also
+#' drops the polygons of the other patches from `sd`.
 #'
 #' Spatial coordinates are taken from the shapes element annotated by the
 #' table (see [embedCellNeighborhoods.sd()] for details), design variables from `colData(tables(sd)[[table]])`, and (optionally) context
@@ -255,20 +324,17 @@ embedCellNeighborhoods.sd <- function(sd, embedding, ks = c(5, 50), tissue = NUL
 #'   Default `NULL` disables this behaviour.
 #' @inheritParams embedCellNeighborhoods.sd
 #' @inheritParams getPatches.spe
-#' @param log_iters Logical; if `TRUE` (default), per-iteration diagnostics are
-#'   retained and stored in
-#'   `metadata(tables(sd)[[table]])$SpaceMosaic$patch_iterations`.
+#' @param log_iters Logical; if `TRUE` (default), per-iteration patch
+#'   assignments and sums of squares are retained (see Value).
 #' @param patch_diagnostics Logical; if `TRUE` (default), compute patch-level
-#'   diagnostics with `getPatchDiagnostics()` and merge its elements
-#'   (`patch_diagnostics`, `assignment_summary`, `connectivity_curve`) into
-#'   `metadata(tables(sd)[[table]])$SpaceMosaic`.
-#' @param patch_polys Logical; if `TRUE` (default), compute patch polygons with
-#'   `getPatchPolys()` and store them as the shapes element `patch_shape` of
-#'   `sd`. When `patch_diagnostics = FALSE`, polygons are built without
-#'   diagnostic information (`patch_data = NULL`).
+#'   diagnostics with `getPatchDiagnostics()` and store them in
+#'   `tables(sd)[[patch_table]]`.
 #' @param patch_shape Name of the shapes element of `sd` where patch polygons
-#'   are stored when `patch_polys = TRUE`. Default `"patch_polys"`. An existing
-#'   shapes element of the same name is overwritten.
+#'   are stored. Default `"patch_polys"`. An existing shapes element of the
+#'   same name is overwritten.
+#' @param patch_table Name of the table of `sd` where patch-level results are
+#'   stored. Default `"patches"`. An existing table of the same name is
+#'   overwritten.
 #' @param patch_column Column name in `colData(tables(sd)[[table]])` where patch
 #'   assignments are stored. Default `"patch"`. An existing column of the same
 #'   name is overwritten.
@@ -278,18 +344,28 @@ embedCellNeighborhoods.sd <- function(sd, embedding, ks = c(5, 50), tissue = NUL
 #'     \item `colData(tables(sd)[[table]])[[patch_column]]`: named vector/factor of final
 #'       patch assignments, ordered to match `colnames(tables(sd)[[table]])`. `NA`
 #'       denotes an unassigned cell.
-#'     \item `metadata(tables(sd)[[table]])$SpaceMosaic$patch_iterations`: if
-#'       `log_iters = TRUE`, a list with `patch` (final assignments),
-#'       `membership_log` (n_cells x n_iters matrix of patch assignments per
-#'       iteration) and `ss_log` (npatches x n_iters matrix of per-patch
-#'       sum-of-squares of X across iterations).
-#'     \item `metadata(tables(sd)[[table]])$SpaceMosaic$patch_diagnostics`,
-#'       `$assignment_summary` and `$connectivity_curve`: the three data frames
-#'       returned by `getPatchDiagnostics()`, if `patch_diagnostics = TRUE`.
-#'     \item `shapes(sd)[[patch_shape]]`: if `patch_polys = TRUE`, one polygon
-#'       per patch (the convex hull of its cells), with a `patch` column and,
-#'       if `patch_diagnostics = TRUE`, the columns of `patch_diagnostics`.
-#'       Patches with fewer than three cells have no polygon.
+#'     \item `reducedDim(tables(sd)[[table]], paste0(patch_column, "_iterations"))`:
+#'       if `log_iters = TRUE`, a cells x iterations character matrix of patch
+#'       assignments per iteration.
+#'     \item `shapes(sd)[[patch_shape]]`: one polygon per patch (the convex hull of its cells), with a `patch` column
+#'       holding the patch ID, which is also its instance ID. Patches with
+#'       fewer than three cells have no polygon.
+#'     \item `tables(sd)[[patch_table]]`: a `SingleCellExperiment` with no rows and one column per non-empty
+#'       patch, named by patch ID, that annotates `shapes(sd)[[patch_shape]]`
+#'       with `patch` as instance key. It holds:
+#'       \itemize{
+#'         \item in its `colData`, if `patch_diagnostics = TRUE`, the columns
+#'           of the `patch_diagnostics` data frame returned by
+#'           `getPatchDiagnostics()`;
+#'         \item `reducedDim(, "connectivity_curve")`, if
+#'           `patch_diagnostics = TRUE`, a patches x k matrix of the fraction
+#'           of patch cells in the largest connected component at each k;
+#'         \item `reducedDim(, "ss_log")`, if `log_iters = TRUE`, a patches x
+#'           iterations matrix of per-patch sum-of-squares of X;
+#'         \item `metadata()$SpaceMosaic$assignment_summary`, if
+#'           `patch_diagnostics = TRUE`, the assignment summary returned by
+#'           `getPatchDiagnostics()`.
+#'       }
 #'   }
 #'
 #' @seealso [getPatches()], [getPatchDiagnostics()], [getPatchPolys()],
@@ -309,7 +385,13 @@ embedCellNeighborhoods.sd <- function(sd, embedding, ks = c(5, 50), tissue = NUL
 #'   npatches = 50
 #' )
 #' head(table(sd)$patch)
-#' head(metadata(table(sd))$SpaceMosaic$patch_diagnostics)
+#' patches <- table(sd, "patches")
+#' head(colData(patches))
+#' shapes(sd)$patch_polys
+#'
+#' # Keeping only patches with at least 120 cells also drops the polygons of
+#' # the other patches.
+#' table(sd, "patches") <- patches[, patches$n_cells >= 120]
 #' shapes(sd)$patch_polys
 #'
 #' @export getPatches.sd
@@ -332,8 +414,8 @@ getPatches.sd <- function(sd, X, npatches,
                            log_iters = TRUE,
                            patch_diagnostics = TRUE,
                            k = 10L, strict_k = NULL,
-                           patch_polys = TRUE,
                            patch_shape = "patch_polys",
+                           patch_table = "patches",
                            patch_column = "patch",
                            table = 1,
                            verbose = TRUE) {
@@ -395,55 +477,51 @@ getPatches.sd <- function(sd, X, npatches,
              log_iters = log_iters,
              verbose = verbose)
 
-      if (log_iters) {
-          patch_vec      <- patchResult$patch[colnames(sce)]
-          membership_log <- patchResult$membership_log[colnames(sce), , drop = FALSE]
-          ss_log         <- patchResult$ss_log
-      } else {
-          patch_vec <- patchResult[colnames(sce)]
-      }
+    if (log_iters) {
+        patch_vec      <- patchResult$patch[colnames(sce)]
+        membership_log <- patchResult$membership_log[colnames(sce), , drop = FALSE]
+        SingleCellExperiment::reducedDim(
+            sce, paste0(patch_column, "_iterations")
+        ) <- membership_log
+        patch_info <- list(patch = patch_vec, membership_log = membership_log)
+    } else {
+        patch_vec  <- patchResult[colnames(sce)]
+        patch_info <- patch_vec
+    }
 
-      SummarizedExperiment::colData(sce)[[patch_column]] <- patch_vec
+    SummarizedExperiment::colData(sce)[[patch_column]] <- patch_vec
+    sd <- .sdSetTable(sd, sce, table)
 
-      if (log_iters) {
-          S4Vectors::metadata(sce)[["SpaceMosaic"]][["patch_iterations"]] <- list(
-              patch = patch_vec,
-              membership_log = membership_log,
-              ss_log = ss_log
-          )
-          patch_metadata <- S4Vectors::metadata(sce)[["SpaceMosaic"]][["patch_iterations"]]
-      } else {
-          patch_metadata <- patch_vec
-      }
+    polys <- getPatchPolys(xy = xy, patch = patch_vec)
+    if (nrow(polys) == 0) {
+        warning("No patch has three or more cells, so no patch polygons ",
+                "or patch table were stored.")
+        return(sd)
+    }
+    sd <- spatialdataR::`shape<-`(
+        sd, patch_shape,
+        value = .sdShape(.patchPolysToSf(polys), instance_key = "patch")
+    )
 
-    if(patch_diagnostics) {
-      patch_diagnostics_list <- getPatchDiagnostics(
+    diagnostics <- NULL
+    if (patch_diagnostics) {
+        diagnostics <- getPatchDiagnostics(
             xy = xy,
             X = X_mat,
-            patches = patch_metadata,
+            patches = patch_info,
             k = k,
             strict_k = strict_k
         )
-      metadata(sce)$SpaceMosaic[names(patch_diagnostics_list)] <- patch_diagnostics_list
-      patch_data <- patch_diagnostics_list$patch_diagnostics
-    } else{
-      patch_data <- NULL
     }
+    patch_ids <- .sortedPatchIds(patch_vec)
+    patch_sce <- .patchTable(
+        patch_ids,
+        diagnostics = diagnostics,
+        ss_log = if (log_iters) patchResult$ss_log
+    )
+    patch_sce <- .sdAnnotate(patch_sce, patch_shape, "patch", patch_ids)
+    sd <- .sdSetTable(sd, patch_sce, patch_table)
 
-    sd <- .sdSetTable(sd, sce, table)
-
-    if (patch_polys) {
-      polys <- getPatchPolys(
-        xy = xy,
-        patch = patch_vec,
-        patch_data = patch_data
-      )
-      if (nrow(polys) > 0) {
-        sd <- spatialdataR::`shape<-`(
-          sd, patch_shape, value = .sdShape(.patchPolysToSf(polys))
-        )
-      }
-    }
     return(sd)
 }
 

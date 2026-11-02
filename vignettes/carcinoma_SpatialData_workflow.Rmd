@@ -91,9 +91,7 @@ sd <- spe_to_spatialdata(spe)
 sd
 ```
 
-The shapes are stored in a DuckDB table whose row order is not guaranteed, so
-cells are always matched to their geometries by identifier. The helper below
-returns the coordinates of the cells of a table, in the order of its columns,
+The helper below returns the coordinates of the cells of a table, in the order of its columns,
 using the `cell_id` column that `spe_to_spatialdata()` stores in the shapes.
 
 ```{r cell-coords}
@@ -191,14 +189,16 @@ sce_use <- table(sd, "cancer_cells")
 
 plotPatchIterations(
   xy = cellCoords(sd, "cancer_shape", sce_use),
-  result = metadata(sce_use)$SpaceMosaic$patch_iterations,
+  result = list(membership_log = reducedDim(sce_use, "patch_iterations")),
   iters = 1:5,
   ask = FALSE
 )
 ```
 
 
-Patch diagnostics stored in the metadata of the table report assignment
+`getPatches.sd()` also added the table `patches`, with one column per patch,
+which annotates the patch polygons in the shapes element `patch_polys`. Its
+colData holds patch diagnostics that report assignment
 coverage and summarize patch size, within-patch variation in `X`, spatial
 connectivity, and final membership stability. These are general checks; RNA
 content, distance to an explanatory population, tissue region, and sample
@@ -206,7 +206,9 @@ identity can reveal additional experiment-specific failure modes.
 
 ```{r patch-diagnostics}
 
-patch_diagnostics <- metadata(sce_use)$SpaceMosaic$patch_diagnostics
+patches <- table(sd, "patches")
+patch_diagnostics <- as.data.frame(colData(patches))
+patch_diagnostics$patch <- colnames(patches)
 
 # CHANGE to the X column that should be inspected when X is multivariable.
 x_sd_column <- if (length(X) == 1L) "x_sd" else paste0("x_sd_", X[1])
@@ -260,13 +262,13 @@ connectivity; crosses mark fragmentation at `strict_k`. Replace the
 example thresholds after inspecting the dataset and the scale of `X`, then set
 cells in excluded patches to `NA` in the table as shown above.
 
-`getPatches.sd()` stored one polygon per patch, annotated with the patch
-diagnostics, in the shapes element `patch_polys`. It still holds every patch;
-the excluded ones are dropped after converting it to an `sf` object.
+Subsetting the `patches` table to the retained patches also drops the
+polygons of the excluded patches from `patch_polys`, since the table
+annotates them.
 
 ```{r patch-polys}
+table(sd, "patches") <- patches[, keep]
 polys <- st_as_sf(data(shapes(sd)$patch_polys))
-polys <- polys[polys$patch %in% keep, ]
 head(polys)
 ```
 

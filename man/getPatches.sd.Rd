@@ -27,8 +27,8 @@ getPatches.sd(
   patch_diagnostics = TRUE,
   k = 10L,
   strict_k = NULL,
-  patch_polys = TRUE,
   patch_shape = "patch_polys",
+  patch_table = "patches",
   patch_column = "patch",
   table = 1,
   verbose = TRUE
@@ -108,14 +108,12 @@ ellipse fitting. 0 disables weighting; typical range 0.5--1.5; default 1.}
 \item{x_ellipse_wmax}{Cap on standardized X-deviation used in the weighting
 rule, to limit outlier influence. Typical range 2--4; default 3.}
 
-\item{log_iters}{Logical; if \code{TRUE} (default), per-iteration diagnostics are
-retained and stored in
-\code{metadata(tables(sd)[[table]])$SpaceMosaic$patch_iterations}.}
+\item{log_iters}{Logical; if \code{TRUE} (default), per-iteration patch
+assignments and sums of squares are retained (see Value).}
 
 \item{patch_diagnostics}{Logical; if \code{TRUE} (default), compute patch-level
-diagnostics with \code{getPatchDiagnostics()} and merge its elements
-(\code{patch_diagnostics}, \code{assignment_summary}, \code{connectivity_curve}) into
-\code{metadata(tables(sd)[[table]])$SpaceMosaic}.}
+diagnostics with \code{getPatchDiagnostics()} and store them in
+\code{tables(sd)[[patch_table]]}.}
 
 \item{k}{Maximum number of spatial neighbors used by \code{getPatchDiagnostics()}.
 Default 10. Limited internally to \code{n - 1} for small datasets. Ignored when
@@ -125,14 +123,13 @@ Default 10. Limited internally to \code{n - 1} for small datasets. Ignored when
 \code{getPatchDiagnostics()}. Must be no greater than \code{k}; \code{NULL} (default)
 uses \code{min(5, k)}. Ignored when \code{patch_diagnostics = FALSE}.}
 
-\item{patch_polys}{Logical; if \code{TRUE} (default), compute patch polygons with
-\code{getPatchPolys()} and store them as the shapes element \code{patch_shape} of
-\code{sd}. When \code{patch_diagnostics = FALSE}, polygons are built without
-diagnostic information (\code{patch_data = NULL}).}
-
 \item{patch_shape}{Name of the shapes element of \code{sd} where patch polygons
-are stored when \code{patch_polys = TRUE}. Default \code{"patch_polys"}. An existing
-shapes element of the same name is overwritten.}
+are stored. Default \code{"patch_polys"}. An existing shapes element of the
+same name is overwritten.}
+
+\item{patch_table}{Name of the table of \code{sd} where patch-level results are
+stored. Default \code{"patches"}. An existing table of the same name is
+overwritten.}
 
 \item{patch_column}{Column name in \code{colData(tables(sd)[[table]])} where patch
 assignments are stored. Default \code{"patch"}. An existing column of the same
@@ -149,18 +146,28 @@ The input \code{sd}, with results attached:
 \item \code{colData(tables(sd)[[table]])[[patch_column]]}: named vector/factor of final
 patch assignments, ordered to match \code{colnames(tables(sd)[[table]])}. \code{NA}
 denotes an unassigned cell.
-\item \code{metadata(tables(sd)[[table]])$SpaceMosaic$patch_iterations}: if
-\code{log_iters = TRUE}, a list with \code{patch} (final assignments),
-\code{membership_log} (n_cells x n_iters matrix of patch assignments per
-iteration) and \code{ss_log} (npatches x n_iters matrix of per-patch
-sum-of-squares of X across iterations).
-\item \code{metadata(tables(sd)[[table]])$SpaceMosaic$patch_diagnostics},
-\verb{$assignment_summary} and \verb{$connectivity_curve}: the three data frames
-returned by \code{getPatchDiagnostics()}, if \code{patch_diagnostics = TRUE}.
-\item \code{shapes(sd)[[patch_shape]]}: if \code{patch_polys = TRUE}, one polygon
-per patch (the convex hull of its cells), with a \code{patch} column and,
-if \code{patch_diagnostics = TRUE}, the columns of \code{patch_diagnostics}.
-Patches with fewer than three cells have no polygon.
+\item \code{reducedDim(tables(sd)[[table]], paste0(patch_column, "_iterations"))}:
+if \code{log_iters = TRUE}, a cells x iterations character matrix of patch
+assignments per iteration.
+\item \code{shapes(sd)[[patch_shape]]}: one polygon per patch (the convex hull of its cells), with a \code{patch} column
+holding the patch ID, which is also its instance ID. Patches with
+fewer than three cells have no polygon.
+\item \code{tables(sd)[[patch_table]]}: a \code{SingleCellExperiment} with no rows and one column per non-empty
+patch, named by patch ID, that annotates \code{shapes(sd)[[patch_shape]]}
+with \code{patch} as instance key. It holds:
+\itemize{
+\item in its \code{colData}, if \code{patch_diagnostics = TRUE}, the columns
+of the \code{patch_diagnostics} data frame returned by
+\code{getPatchDiagnostics()};
+\item \code{reducedDim(, "connectivity_curve")}, if
+\code{patch_diagnostics = TRUE}, a patches x k matrix of the fraction
+of patch cells in the largest connected component at each k;
+\item \code{reducedDim(, "ss_log")}, if \code{log_iters = TRUE}, a patches x
+iterations matrix of per-patch sum-of-squares of X;
+\item \code{metadata()$SpaceMosaic$assignment_summary}, if
+\code{patch_diagnostics = TRUE}, the assignment summary returned by
+\code{getPatchDiagnostics()}.
+}
 }
 }
 \description{
@@ -168,9 +175,11 @@ Convenience wrapper for the SpaceMosaic patching workflow on a
 \code{SpatialData} object. This wrapper contains three steps:
 \code{getPatches()} identifies spatial patches, \code{getPatchDiagnostics()} computes
 patch-level information from the resulting patch assignments, and
-\code{getPatchPolys()} constructs patch polygons using the patch assignments and
-diagnostic information. Patch assignments and diagnostics are stored in
-\code{tables(sd)[[table]]}, and patch polygons as a new shapes element of \code{sd}.
+\code{getPatchPolys()} constructs patch polygons. Patch assignments are stored in
+\code{tables(sd)[[table]]}, patch polygons as a new shapes element of \code{sd}, and
+patch-level results in a new table that annotates those polygons, with one
+column per patch. Subsetting that table to some patches therefore also
+drops the polygons of the other patches from \code{sd}.
 }
 \details{
 Spatial coordinates are taken from the shapes element annotated by the
@@ -189,7 +198,13 @@ sd <- getPatches.sd(
   npatches = 50
 )
 head(table(sd)$patch)
-head(metadata(table(sd))$SpaceMosaic$patch_diagnostics)
+patches <- table(sd, "patches")
+head(colData(patches))
+shapes(sd)$patch_polys
+
+# Keeping only patches with at least 120 cells also drops the polygons of
+# the other patches.
+table(sd, "patches") <- patches[, patches$n_cells >= 120]
 shapes(sd)$patch_polys
 \dontshow{\}) # examplesIf}
 }
