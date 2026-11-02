@@ -16,6 +16,7 @@ patchDE.sd(
   return_residuals = FALSE,
   residual_assay = "residuals",
   table = 1,
+  patch_table = "patches",
   verbose = TRUE
 )
 }
@@ -63,28 +64,38 @@ expected by \code{\link{moranTest.sd}}. Default \code{"residuals"}.}
 \item{table}{Name or index of the table in \code{tables(sd)} to use.
 Default \code{1} (the first table).}
 
+\item{patch_table}{Name of the patch table of \code{sd} created by
+\code{getPatches.sd()}, where results are stored. Default
+\code{"patches"}.}
+
 \item{verbose}{Logical; show a progress bar over patches. Default TRUE.}
 }
 \value{
-A named list:
-\describe{
-\item{\code{de}}{The differential-expression results exactly as returned
-by \code{patchDE()}: one element per entry of \code{predictor_cols},
-each holding the \code{pvals}, \code{ests} and \code{ses} matrices
-(genes by patches), plus anything else the backend produced, such as
-residual mean squared errors when \code{resid_mse = TRUE}.}
-\item{\code{sd}}{The input \code{SpatialData} object. When
-\code{return_residuals = TRUE}, \code{tables(sd)[[table]]} includes a new
-\code{residual_assay} assay (genes by cells) holding the residual
-matrix from \code{patchDE()}; otherwise it is returned unchanged.}
-\item{\code{table}}{The name of the table that was used, so that
-\code{patchMetaAnalysis.sd()} picks the same one by default.}
+The input \code{sd}, with results attached:
+\itemize{
+\item \code{tables(sd)[[patch_table]]} is rebuilt with one row per gene,
+and every earlier result of \code{patchDE.sd()},
+\code{patchMetaAnalysis.sd()} and \code{moranTest.sd()} is removed
+from it. The results of \code{getPatches.sd()} are kept. For each
+predictor \code{<p>} of \code{patchDE()} (one per entry of
+\code{predictor_cols}, or per model-matrix column for factors) it
+gains the genes-by-patches assays \code{est_<p>}, \code{se_<p>} and
+\code{pval_<p>}, in that order, plus \code{resid_mse} when
+\code{resid_mse = TRUE}. Patches without a fit, such as those
+whose cells were all set to \code{NA}, get \code{NA}.
+\code{metadata(tables(sd)[[patch_table]])$SpaceMosaic$patchDE}
+records the cell table used, the predictors, and the fitted patches
+in the order \code{patchDE()} produced, for
+\code{patchMetaAnalysis.sd()}.
+\item \code{assay(tables(sd)[[table]], residual_assay)}: if
+\code{return_residuals = TRUE}, the residual matrix from
+\code{patchDE()} (genes by cells).
 }
 }
 \description{
 Runs \code{patchDE()} on the expression data and patch assignments stored
-in \code{tables(sd)[[table]]} and returns the raw results alongside the object they
-were computed from.
+in \code{tables(sd)[[table]]} and stores the results in the patch table
+created by \code{getPatches.sd()}.
 }
 \details{
 The expression matrix is extracted from \code{assay(tables(sd)[[table]], assay)} and
@@ -93,9 +104,9 @@ transposed from genes-by-cells to cells-by-genes before being passed to
 \code{colData(tables(sd)[[table]])}, and patch assignments from
 \code{colData(tables(sd)[[table]])[[patch_column]]}.
 
-Differential expression is run on every non-missing patch, and the patch
-columns of the returned matrices follow the order \code{patchDE()}
-produced.
+Differential expression is run on every non-missing patch. Results are
+matched to the columns of the patch table by patch ID; fitted patches that
+are not columns of the patch table are dropped with a warning.
 
 \code{patchDE()} returns one residual matrix per fit, not one per
 predictor, so cells with a missing patch assignment (and therefore no fit)
@@ -113,11 +124,12 @@ sd <- getPatches.sd(
   X = "distance_to_fibroblast",
   npatches = 50
 )
-de_result <- patchDE.sd(sd,
+sd <- patchDE.sd(sd,
   predictor_cols = "distance_to_fibroblast"
 )
-names(de_result)
-head(de_result$de$distance_to_fibroblast$pvals)
+patches <- table(sd, "patches")
+assayNames(patches)
+assay(patches, "pval_distance_to_fibroblast")[1:5, 1:5]
 \dontshow{\}) # examplesIf}
 }
 \seealso{

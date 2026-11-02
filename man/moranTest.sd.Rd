@@ -13,7 +13,8 @@ moranTest.sd(
   alternative = c("greater", "less", "two.sided"),
   p_adjust_method = "BH",
   adjustment_scope = c("global", "patch", "gene"),
-  table = 1
+  table = 1,
+  patch_table = "patches"
 )
 }
 \arguments{
@@ -46,19 +47,33 @@ across every gene-patch test, \code{"patch"} separately within each patch, or
 
 \item{table}{Name or index of the table in \code{tables(sd)} to use.
 Default \code{1} (the first table).}
+
+\item{patch_table}{Name of the patch table of \code{sd} created by
+\code{getPatches.sd()}, where results are stored. Default \code{"patches"}.}
 }
 \value{
-A data frame with one row per gene and patch. It contains patch and
-gene identifiers, number of cells, observed and expected Moran's I, raw and
-adjusted empirical p-values, graph and permutation settings, and \code{status}.
-A status of \code{"ok"} indicates a completed test; non-testable inputs such as
-constant or non-finite residuals return missing statistics with an
-explanatory status rather than stopping the remaining tests.
+The input \code{sd}, with the results of \code{moranTest()} attached to
+\code{tables(sd)[[patch_table]]}, replacing earlier ones:
+\itemize{
+\item the genes-by-patches assays \code{moran_observed}, \code{moran_expected},
+\code{moran_p_value}, \code{moran_p_adjusted} (observed and expected Moran's I,
+raw and adjusted empirical p-values) and \code{moran_status}. A status of
+\code{"ok"} indicates a completed test; non-testable inputs such as
+constant or non-finite residuals have missing statistics and an
+explanatory status. Genes or patches that were not tested are \code{NA}.
+\item the \code{colData} columns \code{moran_n_cells} and \code{moran_effective_k}:
+the number of cells and the number of neighbors used per patch.
+\item \code{metadata()$SpaceMosaic$moranTest}: the cell table and assay
+used and the graph, permutation and adjustment settings.
+}
+If the patch table has no rows yet (\code{patchDE.sd()} has not been run),
+it is given one row per tested gene.
 }
 \description{
 moranTest() method for \code{SpatialData} objects. Extracts residuals from
 the specified assay of \code{tables(sd)[[table]]} and spatial coordinates from
-the shapes element it annotates, then dispatches to \code{moranTest}.
+the shapes element it annotates, dispatches to \code{moranTest}, and stores
+the results in the patch table created by \code{getPatches.sd()}.
 }
 \examples{
 \dontshow{if (requireNamespace("spatialdataR", quietly = TRUE)) withAutoprint(\{ # examplesIf}
@@ -72,12 +87,13 @@ sd <- getPatches.sd(
   X = "distance_to_fibroblast",
   npatches = 50
 )
-de_result <- patchDE.sd(sd,
+sd <- patchDE.sd(sd,
   predictor_cols = "distance_to_fibroblast",
   return_residuals = TRUE
 )
-moran_result <- moranTest.sd(de_result$sd)
-head(moran_result)
+sd <- moranTest.sd(sd)
+patches <- table(sd, "patches")
+assay(patches, "moran_p_adjusted")[1:5, 1:5]
 \dontshow{\}) # examplesIf}
 }
 \seealso{

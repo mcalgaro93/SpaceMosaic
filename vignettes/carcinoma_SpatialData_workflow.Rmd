@@ -51,21 +51,20 @@ and the expression data in separate elements:
   - $X$: column or columns in colData **cells x predictors**;
   - $Z$: an embedding stored in reducedDims **cells x neighborhood features**;
 - $W$: patch-level attributes derived from $Z$ by `patchMetaAnalysis.sd()`
-  (**patches x patch features**), returned alongside the meta-analysis results
-  rather than stored back on `sd`.
+  (**patches x patch features**), stored as a reducedDim of the patch table.
 
 The `.sd`-suffixed functions used below (`embedCellNeighborhoods.sd()`,
 `getPatches.sd()`, `patchDE.sd()`, `patchMetaAnalysis.sd()`,
 `moranTest.sd()`) are `SpatialData` wrappers: they read $X$, $Z$, expression,
 and patch assignments from the table selected with the `table` argument, and
 spatial coordinates from the shapes element that table annotates.
-`embedCellNeighborhoods.sd()` and `getPatches.sd()` attach their results back
-onto `sd` and return it; `getPatches.sd()` also stores the patch polygons as a
-new shapes element. `patchDE.sd()` returns its differential-expression results
-alongside `sd` (whose table also gains a `"residuals"` assay when
-`return_residuals = TRUE`); and `patchMetaAnalysis.sd()` returns the
-meta-analysis results (`meta` and `W`, plus `subgroups_summary` when
-requested) without `sd`.
+All of them attach their results back onto `sd` and return it.
+`getPatches.sd()` stores the patch polygons as a new shapes element,
+`patch_polys`, and creates a patch table, `patches`, that annotates them with
+one column per patch. `patchDE.sd()`, `patchMetaAnalysis.sd()` and
+`moranTest.sd()` store their genes x patches results as assays of that table,
+and `patchDE.sd()` also adds a `"residuals"` assay to the cell table when
+`return_residuals = TRUE`.
 
 # Data and analysis question
 
@@ -304,7 +303,11 @@ ggplot() +
 assay named by `assay` (genes x cells) from the selected table, transposes it
 internally, builds the predictor data frame from `predictor_cols` in its
 colData, and reads patch assignments from its `patch_column`; cells with a
-missing patch assignment are dropped automatically.
+missing patch assignment are dropped automatically. The estimates, standard
+errors and p-values are stored as the assays `est_distance`, `se_distance`
+and `pval_distance` (genes x patches) of the `patches` table. Running
+`patchDE.sd()` again replaces them, together with any meta-analysis and
+Moran's I results.
 
 For raw counts, `pearson = TRUE` computes Pearson residuals separately within
 each patch and requires `tot` to name a colData column holding per-cell total
@@ -312,7 +315,7 @@ counts. Alternatively, transform or normalize expression before calling
 `patchDE.sd()` and include relevant technical covariates in `predictor_cols`.
 
 ```{r patch-de}
-de_result <- patchDE.sd(
+sd <- patchDE.sd(
   sd = sd,
   predictor_cols = 'distance',
   method = "limma",
@@ -332,14 +335,19 @@ patches with similar $W$ by running `patchMetaAnalysis()` on the per-patch
 fits produced by `patchDE.sd()`. It uses the same table as `patchDE.sd()`
 unless `table` is given. Set `summarize_subgroups = TRUE` to also summarize
 effects within subgroups of patches, optionally annotated with
-`cellmeta_cols` taken from the colData of the table.
+`cellmeta_cols` taken from the colData of the table. The results are stored
+in the `patches` table: the assays `meta_est_distance`, `meta_se_distance`,
+`meta_pval_distance` and `meta_subgroups_distance`, the reducedDim `W`, and
+the subgroup summary in its metadata.
 
 ```{r patch-meta}
-meta_result <- patchMetaAnalysis.sd(
-  patchDE_result = de_result,
+sd <- patchMetaAnalysis.sd(
+  sd,
   summarize_subgroups = TRUE,
   cellmeta_cols = c("celltype", "distance")
 )
+patches <- table(sd, "patches")
+patches
 ```
 
 
@@ -352,7 +360,7 @@ posterior p-values, subgroup membership, and biological relevance should also
 be considered; very small p-values alone are not sufficient.
 
 ```{r result-summary}
-z_score <- meta_result$meta$distance$ests/ meta_result$meta$distance$ses
+z_score <- assay(patches, "meta_est_distance") / assay(patches, "meta_se_distance")
 
 gene_summary <- data.frame(
   gene = rownames(z_score),
@@ -373,23 +381,31 @@ heatmap(
 
 
 `return_residuals = TRUE` stored the within-patch residuals as a
-`"residuals"` assay of the `cancer_cells` table of `de_result$sd`, which
-`moranTest.sd()` reads directly. To test only the top genes, replace that
-table by its subset of rows; cells, and therefore the shapes it annotates, are
-left untouched.
+`"residuals"` assay of the `cancer_cells` table, which `moranTest.sd()` reads
+directly. To test only the top genes, replace that table by its subset of
+rows; cells, and therefore the shapes it annotates, are left untouched.
+Moran's I statistics are stored as `moran_` assays of the `patches` table,
+with `NA` for genes that were not tested.
 
 ```{r moran}
-sd_moran <- de_result$sd
+sd_moran <- sd
 table(sd_moran, "cancer_cells") <- table(sd_moran, "cancer_cells")[top_genes, ]
 
-moran_test <- moranTest.sd(
+sd_moran <- moranTest.sd(
   sd_moran,
   k = 20,
   n_permutations = 20,
   table = "cancer_cells"
 )
 
-head(moran_test[order(moran_test$observed, decreasing = TRUE),])
+moran_patches <- table(sd_moran, "patches")[top_genes, ]
+moran_test <- data.frame(
+  gene = rep(top_genes, times = ncol(moran_patches)),
+  patch = rep(colnames(moran_patches), each = length(top_genes)),
+  observed = as.vector(assay(moran_patches, "moran_observed")),
+  p_adjusted = as.vector(assay(moran_patches, "moran_p_adjusted"))
+)
+head(moran_test[order(moran_test$observed, decreasing = TRUE), ])
 ```
 
 Finally, project representative effects back onto the tissue. Confirm that

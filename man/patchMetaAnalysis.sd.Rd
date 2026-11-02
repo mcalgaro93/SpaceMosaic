@@ -5,19 +5,18 @@
 \title{Meta-analyse patch-level differential expression across an embedding}
 \usage{
 patchMetaAnalysis.sd(
-  patchDE_result,
+  sd,
   embedding_name = "Z",
   patch_column = "patch",
   summarize_subgroups = FALSE,
   cellmeta_cols = NULL,
-  table = NULL
+  table = NULL,
+  patch_table = "patches"
 )
 }
 \arguments{
-\item{patchDE_result}{The list returned by \code{patchDE.sd()}. Must
-contain a \code{de} element holding the per-predictor differential
-expression results and an \code{sd} element holding the
-\code{SpatialData} object they were computed from.}
+\item{sd}{A \code{SpatialData} object on which \code{patchDE.sd()} has
+been run.}
 
 \item{embedding_name}{Character string naming the entry of
 \code{reducedDims(tables(sd)[[table]])} used to derive patch attributes. Default
@@ -38,33 +37,39 @@ Default NULL.}
 
 \item{table}{Name or index of the table in \code{tables(sd)} to use.
 Default \code{NULL} uses the table \code{patchDE.sd()} was run on.}
+
+\item{patch_table}{Name of the patch table of \code{sd} holding the
+results of \code{patchDE.sd()}, where results are stored. Default
+\code{"patches"}.}
 }
 \value{
-A named list:
-\describe{
-\item{\code{meta}}{The meta-analysis results as returned by
-\code{patchMetaAnalysis()}: one element per predictor, each holding
-\code{pvals}, \code{ests} and \code{ses}, and \code{subgroups} where
-the backend produced it.}
-\item{\code{W}}{The patches-by-attributes matrix from
-\code{getPatchAttributes()}, with rows in the same order as the patch
-columns of the differential expression results.}
-\item{\code{subgroups_summary}}{The output of
-\code{summarizeSubgroups()}. Present only when
-\code{summarize_subgroups = TRUE}.}
+The input \code{sd}, with results attached to
+\code{tables(sd)[[patch_table]]}. Earlier results of
+\code{patchMetaAnalysis.sd()} are replaced.
+\itemize{
+\item For each predictor \code{<p>}, the genes-by-patches assays
+\code{meta_est_<p>}, \code{meta_se_<p>} and \code{meta_pval_<p>},
+and \code{meta_subgroups_<p>} where the backend produced it, as
+returned by \code{patchMetaAnalysis()}.
+\item \code{reducedDim(, "W")}: the patches-by-attributes matrix from
+\code{getPatchAttributes()}. Patches without cells get \code{NA}.
+\item \code{metadata()$SpaceMosaic$subgroups_summary}: the output of
+\code{summarizeSubgroups()}, if \code{summarize_subgroups = TRUE}.
 }
 }
 \description{
-Takes the output of \code{patchDE.sd()}, derives patch-level attributes
-from a reduced-dimension embedding stored in \code{tables(sd)[[table]]}, and runs
-\code{patchMetaAnalysis()} to combine the per-patch fits.
+Takes the results of \code{patchDE.sd()} from the patch table, derives
+patch-level attributes from a reduced-dimension embedding stored in
+\code{tables(sd)[[table]]}, runs \code{patchMetaAnalysis()} to combine the
+per-patch fits, and stores the results in the patch table.
 }
 \details{
-Patch attributes are computed from the full embedding and then reordered to
-match the patch columns of the differential expression matrices, so the two
-line up when passed to \code{patchMetaAnalysis()}. The patches represented
-in \code{colData(tables(sd)[[table]])[[patch_column]]} and those in the differential
-expression results must be the same set; their order need not agree.
+The per-patch fits are read from the \code{est_<p>}, \code{se_<p>} and
+\code{pval_<p>} assays of the patch table, restricted to the patches
+\code{patchDE()} fitted, in the order it produced. Patch attributes are
+computed from \code{colData(tables(sd)[[table]])[[patch_column]]}; the
+patches represented there and those fitted by \code{patchDE.sd()} must be
+the same set; their order need not agree.
 }
 \examples{
 \dontshow{if (requireNamespace("spatialdataR", quietly = TRUE)) withAutoprint(\{ # examplesIf}
@@ -80,11 +85,12 @@ sd <- getPatches.sd(
   X = "distance_to_fibroblast",
   npatches = 50
 )
-de_result <- patchDE.sd(sd,
+sd <- patchDE.sd(sd,
   predictor_cols = "distance_to_fibroblast"
 )
-meta_result <- patchMetaAnalysis.sd(de_result, embedding_name = "Z")
-head(meta_result$meta$distance_to_fibroblast$pvals)
+sd <- patchMetaAnalysis.sd(sd, embedding_name = "Z")
+patches <- table(sd, "patches")
+assay(patches, "meta_pval_distance_to_fibroblast")[1:5, 1:5]
 \dontshow{\}) # examplesIf}
 }
 \seealso{

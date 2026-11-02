@@ -159,6 +159,97 @@
     y
 }
 
+# Patch table `patch_table` of `sd`, as created by getPatches.sd().
+.sdPatchTable <- function(sd, patch_table) {
+    if (!patch_table %in% spatialdataR::tableNames(sd)) {
+        stop("`sd` has no table '", patch_table, "'; run getPatches.sd() ",
+             "first or set `patch_table`.")
+    }
+    spatialdataR::tables(sd)[[patch_table]]
+}
+
+# Rebuild the patch table `y` with one row per gene in `genes`, dropping the
+# results of patchDE.sd(), patchMetaAnalysis.sd() and moranTest.sd() (assays,
+# the "W" reducedDim, `moran_` colData columns and their metadata) while
+# keeping those of getPatches.sd().
+.patchTableReset <- function(y, genes) {
+    cd <- SummarizedExperiment::colData(y)
+    out <- SingleCellExperiment::SingleCellExperiment(
+        rowData = S4Vectors::DataFrame(row.names = genes),
+        colData = cd[, !startsWith(names(cd), "moran_"), drop = FALSE]
+    )
+    rd <- SingleCellExperiment::reducedDims(y)
+    SingleCellExperiment::reducedDims(out) <- rd[names(rd) != "W"]
+    md <- S4Vectors::metadata(y)
+    md$SpaceMosaic[c("patchDE", "subgroups_summary", "moranTest")] <- NULL
+    S4Vectors::metadata(out) <- md
+    .sdAnnotate(out, spatialdataR::region(y), spatialdataR::instance_key(y),
+                spatialdataR::instances(y))
+}
+
+# Remove the assays of `y` whose names start with `prefix`.
+.dropAssays <- function(y, prefix) {
+    keep <- !startsWith(as.character(SummarizedExperiment::assayNames(y)),
+                        prefix)
+    SummarizedExperiment::assays(y) <- SummarizedExperiment::assays(y)[keep]
+    y
+}
+
+# Store the genes x patches matrices in `mats` as assays of the patch table
+# `y`, matched to its rows and columns by name. Entries of `y` without a
+# match are NA; genes and patches of `mats` missing from `y` are dropped
+# with a warning.
+.patchTableAssays <- function(y, mats) {
+    dropped_genes <- unique(unlist(lapply(mats, function(m)
+        setdiff(rownames(m), rownames(y)))))
+    dropped_patches <- unique(unlist(lapply(mats, function(m)
+        setdiff(colnames(m), colnames(y)))))
+    if (length(dropped_genes) > 0) {
+        warning(length(dropped_genes), " gene(s) are not rows of the patch ",
+                "table and were dropped: ",
+                paste(utils::head(dropped_genes, 5), collapse = ", "),
+                if (length(dropped_genes) > 5) ", ...")
+    }
+    if (length(dropped_patches) > 0) {
+        warning(length(dropped_patches), " patch(es) are not columns of the ",
+                "patch table and were dropped: ",
+                paste(dropped_patches, collapse = ", "))
+    }
+    for (nm in names(mats)) {
+        m <- mats[[nm]]
+        full <- matrix(NA, nrow(y), ncol(y), dimnames = dimnames(y))
+        storage.mode(full) <- storage.mode(m)
+        i <- match(rownames(m), rownames(y))
+        j <- match(colnames(m), colnames(y))
+        full[i[!is.na(i)], j[!is.na(j)]] <-
+            m[!is.na(i), !is.na(j), drop = FALSE]
+        SummarizedExperiment::assay(y, nm) <- full
+    }
+    y
+}
+
+# Store the convex hulls of the patches in `patch` (cells with coordinates
+# `xy`) as the shapes element `patch_shape` of `sd`, and a patch table
+# annotating them (see .patchTable()) as the table `patch_table`.
+.sdAddPatchTable <- function(sd, xy, patch, patch_shape, patch_table,
+                             diagnostics = NULL, ss_log = NULL) {
+    polys <- getPatchPolys(xy = xy, patch = patch)
+    if (nrow(polys) == 0) {
+        warning("No patch has three or more cells, so no patch polygons ",
+                "or patch table were stored.")
+        return(sd)
+    }
+    sd <- spatialdataR::`shape<-`(
+        sd, patch_shape,
+        value = .sdShape(.patchPolysToSf(polys), instance_key = "patch")
+    )
+    patch_ids <- .sortedPatchIds(patch)
+    patch_sce <- .patchTable(patch_ids, diagnostics = diagnostics,
+                             ss_log = ss_log)
+    patch_sce <- .sdAnnotate(patch_sce, patch_shape, "patch", patch_ids)
+    .sdSetTable(sd, patch_sce, patch_table)
+}
+
 # Unique non-missing patch IDs, in numeric order when all are numbers and in
 # lexical order otherwise, as in getPatchDiagnostics().
 .sortedPatchIds <- function(patch) {
@@ -492,17 +583,6 @@ getPatches.sd <- function(sd, X, npatches,
     SummarizedExperiment::colData(sce)[[patch_column]] <- patch_vec
     sd <- .sdSetTable(sd, sce, table)
 
-    polys <- getPatchPolys(xy = xy, patch = patch_vec)
-    if (nrow(polys) == 0) {
-        warning("No patch has three or more cells, so no patch polygons ",
-                "or patch table were stored.")
-        return(sd)
-    }
-    sd <- spatialdataR::`shape<-`(
-        sd, patch_shape,
-        value = .sdShape(.patchPolysToSf(polys), instance_key = "patch")
-    )
-
     diagnostics <- NULL
     if (patch_diagnostics) {
         diagnostics <- getPatchDiagnostics(
@@ -513,16 +593,13 @@ getPatches.sd <- function(sd, X, npatches,
             strict_k = strict_k
         )
     }
-    patch_ids <- .sortedPatchIds(patch_vec)
-    patch_sce <- .patchTable(
-        patch_ids,
+    .sdAddPatchTable(
+        sd, xy, patch_vec,
+        patch_shape = patch_shape,
+        patch_table = patch_table,
         diagnostics = diagnostics,
         ss_log = if (log_iters) patchResult$ss_log
     )
-    patch_sce <- .sdAnnotate(patch_sce, patch_shape, "patch", patch_ids)
-    sd <- .sdSetTable(sd, patch_sce, patch_table)
-
-    return(sd)
 }
 
 
@@ -530,8 +607,8 @@ getPatches.sd <- function(sd, X, npatches,
 #' Run patch-level differential expression on a SpatialData object
 #'
 #' Runs \code{patchDE()} on the expression data and patch assignments stored
-#' in \code{tables(sd)[[table]]} and returns the raw results alongside the object they
-#' were computed from.
+#' in \code{tables(sd)[[table]]} and stores the results in the patch table
+#' created by \code{getPatches.sd()}.
 #'
 #' @param sd A \code{SpatialData} object. \code{tables(sd)[[table]]} must contain the
 #'   requested expression assay and patch assignments in its \code{colData}.
@@ -553,22 +630,31 @@ getPatches.sd <- function(sd, X, npatches,
 #'   residuals are stored in \code{tables(sd)[[table]]} when
 #'   \code{return_residuals = TRUE}. Matches the default \code{assay_name}
 #'   expected by \code{\link{moranTest.sd}}. Default \code{"residuals"}.
+#' @param patch_table Name of the patch table of \code{sd} created by
+#'   \code{getPatches.sd()}, where results are stored. Default
+#'   \code{"patches"}.
 #' @inheritParams embedCellNeighborhoods.sd
 #' @inheritParams patchDE.spe
 #'
-#' @return A named list:
-#'   \describe{
-#'     \item{\code{de}}{The differential-expression results exactly as returned
-#'       by \code{patchDE()}: one element per entry of \code{predictor_cols},
-#'       each holding the \code{pvals}, \code{ests} and \code{ses} matrices
-#'       (genes by patches), plus anything else the backend produced, such as
-#'       residual mean squared errors when \code{resid_mse = TRUE}.}
-#'     \item{\code{sd}}{The input \code{SpatialData} object. When
-#'       \code{return_residuals = TRUE}, \code{tables(sd)[[table]]} includes a new
-#'       \code{residual_assay} assay (genes by cells) holding the residual
-#'       matrix from \code{patchDE()}; otherwise it is returned unchanged.}
-#'     \item{\code{table}}{The name of the table that was used, so that
-#'       \code{patchMetaAnalysis.sd()} picks the same one by default.}
+#' @return The input \code{sd}, with results attached:
+#'   \itemize{
+#'     \item \code{tables(sd)[[patch_table]]} is rebuilt with one row per gene,
+#'       and every earlier result of \code{patchDE.sd()},
+#'       \code{patchMetaAnalysis.sd()} and \code{moranTest.sd()} is removed
+#'       from it. The results of \code{getPatches.sd()} are kept. For each
+#'       predictor \code{<p>} of \code{patchDE()} (one per entry of
+#'       \code{predictor_cols}, or per model-matrix column for factors) it
+#'       gains the genes-by-patches assays \code{est_<p>}, \code{se_<p>} and
+#'       \code{pval_<p>}, in that order, plus \code{resid_mse} when
+#'       \code{resid_mse = TRUE}. Patches without a fit, such as those
+#'       whose cells were all set to \code{NA}, get \code{NA}.
+#'       \code{metadata(tables(sd)[[patch_table]])$SpaceMosaic$patchDE}
+#'       records the cell table used, the predictors, and the fitted patches
+#'       in the order \code{patchDE()} produced, for
+#'       \code{patchMetaAnalysis.sd()}.
+#'     \item \code{assay(tables(sd)[[table]], residual_assay)}: if
+#'       \code{return_residuals = TRUE}, the residual matrix from
+#'       \code{patchDE()} (genes by cells).
 #'   }
 #'
 #' @details
@@ -578,9 +664,9 @@ getPatches.sd <- function(sd, X, npatches,
 #' \code{colData(tables(sd)[[table]])}, and patch assignments from
 #' \code{colData(tables(sd)[[table]])[[patch_column]]}.
 #'
-#' Differential expression is run on every non-missing patch, and the patch
-#' columns of the returned matrices follow the order \code{patchDE()}
-#' produced.
+#' Differential expression is run on every non-missing patch. Results are
+#' matched to the columns of the patch table by patch ID; fitted patches that
+#' are not columns of the patch table are dropped with a warning.
 #'
 #' \code{patchDE()} returns one residual matrix per fit, not one per
 #' predictor, so cells with a missing patch assignment (and therefore no fit)
@@ -603,11 +689,12 @@ getPatches.sd <- function(sd, X, npatches,
 #'   X = "distance_to_fibroblast",
 #'   npatches = 50
 #' )
-#' de_result <- patchDE.sd(sd,
+#' sd <- patchDE.sd(sd,
 #'   predictor_cols = "distance_to_fibroblast"
 #' )
-#' names(de_result)
-#' head(de_result$de$distance_to_fibroblast$pvals)
+#' patches <- table(sd, "patches")
+#' assayNames(patches)
+#' assay(patches, "pval_distance_to_fibroblast")[1:5, 1:5]
 #'
 #' @export
 patchDE.sd <- function(
@@ -622,6 +709,7 @@ patchDE.sd <- function(
     return_residuals = FALSE,
     residual_assay = "residuals",
     table = 1,
+    patch_table = "patches",
     verbose = TRUE
 ) {
 
@@ -672,6 +760,8 @@ patchDE.sd <- function(
         stop("`tot` must be supplied when `pearson = TRUE`.")
     }
 
+    patch_sce <- .sdPatchTable(sd, patch_table)
+
     # Expression matrix: genes x cells -> cells x genes
     y <- t(SummarizedExperiment::assay(sce, assay))
 
@@ -709,26 +799,46 @@ patchDE.sd <- function(
     if (return_residuals) {
         SummarizedExperiment::assay(sce, residual_assay) <- t(de_res$residuals)
         sd <- .sdSetTable(sd, sce, table)
-        out <- list(de = de_res$de)
-    } else {
-        out <- list(de = de_res)
+        de_res <- de_res$de
     }
 
-    out$sd <- sd
-    out$table <- table
-    return(out)
+    # One element per predictor, next to backend extras such as resid_mse.
+    predictors <- names(de_res)[vapply(de_res, function(x)
+        is.list(x) && "ests" %in% names(x), logical(1))]
+    ests <- de_res[[predictors[1]]]$ests
+
+    # One assay per statistic and predictor, estimates first.
+    stats <- c(est = "ests", se = "ses", pval = "pvals")
+    mats <- list()
+    for (stat in names(stats)) {
+        for (predictor in predictors) {
+            mats[[paste0(stat, "_", predictor)]] <-
+                de_res[[predictor]][[stats[[stat]]]]
+        }
+    }
+    if (resid_mse) {
+        mats$resid_mse <- de_res$resid_mse
+    }
+
+    patch_sce <- .patchTableReset(patch_sce, rownames(ests))
+    patch_sce <- .patchTableAssays(patch_sce, mats)
+    S4Vectors::metadata(patch_sce)$SpaceMosaic$patchDE <- list(
+        table = table,
+        predictors = predictors,
+        patches = colnames(ests)
+    )
+    .sdSetTable(sd, patch_sce, patch_table)
 }
 
 #' Meta-analyse patch-level differential expression across an embedding
 #'
-#' Takes the output of \code{patchDE.sd()}, derives patch-level attributes
-#' from a reduced-dimension embedding stored in \code{tables(sd)[[table]]}, and runs
-#' \code{patchMetaAnalysis()} to combine the per-patch fits.
+#' Takes the results of \code{patchDE.sd()} from the patch table, derives
+#' patch-level attributes from a reduced-dimension embedding stored in
+#' \code{tables(sd)[[table]]}, runs \code{patchMetaAnalysis()} to combine the
+#' per-patch fits, and stores the results in the patch table.
 #'
-#' @param patchDE_result The list returned by \code{patchDE.sd()}. Must
-#'   contain a \code{de} element holding the per-predictor differential
-#'   expression results and an \code{sd} element holding the
-#'   \code{SpatialData} object they were computed from.
+#' @param sd A \code{SpatialData} object on which \code{patchDE.sd()} has
+#'   been run.
 #' @param embedding_name Character string naming the entry of
 #'   \code{reducedDims(tables(sd)[[table]])} used to derive patch attributes. Default
 #'   \code{"Z"}.
@@ -741,28 +851,32 @@ patchDE.sd <- function(
 #'   Default NULL.
 #' @param table Name or index of the table in \code{tables(sd)} to use.
 #'   Default \code{NULL} uses the table \code{patchDE.sd()} was run on.
+#' @param patch_table Name of the patch table of \code{sd} holding the
+#'   results of \code{patchDE.sd()}, where results are stored. Default
+#'   \code{"patches"}.
 #' @inheritParams patchMetaAnalysis.spe
 #'
-#' @return A named list:
-#'   \describe{
-#'     \item{\code{meta}}{The meta-analysis results as returned by
-#'       \code{patchMetaAnalysis()}: one element per predictor, each holding
-#'       \code{pvals}, \code{ests} and \code{ses}, and \code{subgroups} where
-#'       the backend produced it.}
-#'     \item{\code{W}}{The patches-by-attributes matrix from
-#'       \code{getPatchAttributes()}, with rows in the same order as the patch
-#'       columns of the differential expression results.}
-#'     \item{\code{subgroups_summary}}{The output of
-#'       \code{summarizeSubgroups()}. Present only when
-#'       \code{summarize_subgroups = TRUE}.}
+#' @return The input \code{sd}, with results attached to
+#'   \code{tables(sd)[[patch_table]]}. Earlier results of
+#'   \code{patchMetaAnalysis.sd()} are replaced.
+#'   \itemize{
+#'     \item For each predictor \code{<p>}, the genes-by-patches assays
+#'       \code{meta_est_<p>}, \code{meta_se_<p>} and \code{meta_pval_<p>},
+#'       and \code{meta_subgroups_<p>} where the backend produced it, as
+#'       returned by \code{patchMetaAnalysis()}.
+#'     \item \code{reducedDim(, "W")}: the patches-by-attributes matrix from
+#'       \code{getPatchAttributes()}. Patches without cells get \code{NA}.
+#'     \item \code{metadata()$SpaceMosaic$subgroups_summary}: the output of
+#'       \code{summarizeSubgroups()}, if \code{summarize_subgroups = TRUE}.
 #'   }
 #'
 #' @details
-#' Patch attributes are computed from the full embedding and then reordered to
-#' match the patch columns of the differential expression matrices, so the two
-#' line up when passed to \code{patchMetaAnalysis()}. The patches represented
-#' in \code{colData(tables(sd)[[table]])[[patch_column]]} and those in the differential
-#' expression results must be the same set; their order need not agree.
+#' The per-patch fits are read from the \code{est_<p>}, \code{se_<p>} and
+#' \code{pval_<p>} assays of the patch table, restricted to the patches
+#' \code{patchDE()} fitted, in the order it produced. Patch attributes are
+#' computed from \code{colData(tables(sd)[[table]])[[patch_column]]}; the
+#' patches represented there and those fitted by \code{patchDE.sd()} must be
+#' the same set; their order need not agree.
 #'
 #' @seealso
 #' \code{\link{patchDE.sd}},
@@ -784,45 +898,37 @@ patchDE.sd <- function(
 #'   X = "distance_to_fibroblast",
 #'   npatches = 50
 #' )
-#' de_result <- patchDE.sd(sd,
+#' sd <- patchDE.sd(sd,
 #'   predictor_cols = "distance_to_fibroblast"
 #' )
-#' meta_result <- patchMetaAnalysis.sd(de_result, embedding_name = "Z")
-#' head(meta_result$meta$distance_to_fibroblast$pvals)
+#' sd <- patchMetaAnalysis.sd(sd, embedding_name = "Z")
+#' patches <- table(sd, "patches")
+#' assay(patches, "meta_pval_distance_to_fibroblast")[1:5, 1:5]
 #'
 #' @export
 patchMetaAnalysis.sd <- function(
-    patchDE_result,
+    sd,
     embedding_name = "Z",
     patch_column = "patch",
     summarize_subgroups = FALSE,
     cellmeta_cols = NULL,
-    table = NULL
+    table = NULL,
+    patch_table = "patches"
 ) {
 
     .require_spatialdataR()
-    if (!is.list(patchDE_result) ||
-        !all(c("de", "sd") %in% names(patchDE_result))) {
-        stop(
-            "`patchDE_result` must be a list with `de` and `sd` elements, ",
-            "as returned by `patchDE.sd()`."
-        )
+    .checkSd(sd)
+    patch_sce <- .sdPatchTable(sd, patch_table)
+    de_info <- S4Vectors::metadata(patch_sce)$SpaceMosaic$patchDE
+    if (is.null(de_info)) {
+        stop("No patchDE.sd() results found in tables(sd)[[patch_table]]; ",
+             "run patchDE.sd() first.")
     }
-
-    .checkSd(patchDE_result$sd)
     if (is.null(table)) {
-        table <- if (is.null(patchDE_result$table)) 1 else patchDE_result$table
+        table <- de_info$table
     }
-    table <- .sdTableName(patchDE_result$sd, table)
-    sce <- .sdTable(patchDE_result$sd, table)
-    de_res <- patchDE_result$de
-
-    if (length(de_res) == 0 || is.null(names(de_res))) {
-        stop(
-            "`patchDE_result$de` must be a named list with one element ",
-            "per predictor."
-        )
-    }
+    table <- .sdTableName(sd, table)
+    sce <- .sdTable(sd, table)
 
     if (!patch_column %in%
         colnames(SummarizedExperiment::colData(sce))) {
@@ -840,21 +946,17 @@ patchMetaAnalysis.sd <- function(
         ))
     }
 
-    # Every predictor must carry the statistics the meta-analysis needs
-    for (predictor in names(de_res)) {
-
-        if (!all(
-            c("pvals", "ests", "ses") %in%
-            names(de_res[[predictor]])
-        )) {
-            stop(
-                "Expected `patchDE_result$de[[predictor]]` to contain ",
-                "`pvals`, `ests`, and `ses` for predictor '",
-                predictor,
-                "'."
-            )
+    # Rebuild the patchDE() output from the assays, with the fitted patches
+    # in the order patchDE() produced.
+    fitted <- de_info$patches[de_info$patches %in% colnames(patch_sce)]
+    de_res <- lapply(stats::setNames(nm = de_info$predictors), function(p) {
+        stat <- function(prefix) {
+            SummarizedExperiment::assay(
+                patch_sce, paste0(prefix, "_", p)
+            )[, fitted, drop = FALSE]
         }
-    }
+        list(pvals = stat("pval"), ests = stat("est"), ses = stat("se"))
+    })
 
     patch <- SummarizedExperiment::colData(sce)[[patch_column]]
 
@@ -876,11 +978,25 @@ patchMetaAnalysis.sd <- function(
         W
     )
 
-    out <- list(
-        meta = de_res_meta,
-        W = W
-    )
+    # One assay per statistic and predictor, replacing earlier ones.
+    stats <- c(ests = "est", ses = "se", pvals = "pval")
+    mats <- list()
+    for (predictor in names(de_res_meta)) {
+        for (stat in names(de_res_meta[[predictor]])) {
+            prefix <- if (stat %in% names(stats)) stats[[stat]] else stat
+            mats[[paste0("meta_", prefix, "_", predictor)]] <-
+                de_res_meta[[predictor]][[stat]]
+        }
+    }
+    patch_sce <- .patchTableAssays(.dropAssays(patch_sce, "meta_"), mats)
 
+    W_full <- matrix(NA_real_, ncol(patch_sce), ncol(W),
+                     dimnames = list(colnames(patch_sce), colnames(W)))
+    i <- match(rownames(W), colnames(patch_sce))
+    W_full[i[!is.na(i)], ] <- W[!is.na(i), , drop = FALSE]
+    SingleCellExperiment::reducedDim(patch_sce, "W") <- W_full
+
+    subgroups_summary <- NULL
     if (summarize_subgroups) {
 
         if (!is.null(cellmeta_cols)) {
@@ -899,7 +1015,7 @@ patchMetaAnalysis.sd <- function(
             }
         }
 
-        out$subgroups_summary <- summarizeSubgroups(
+        subgroups_summary <- summarizeSubgroups(
             de_res_meta,
             patch = patch,
             cellmeta = SummarizedExperiment::colData(
@@ -907,14 +1023,18 @@ patchMetaAnalysis.sd <- function(
             )[, cellmeta_cols, drop = FALSE]
         )
     }
-    return(out)
+    S4Vectors::metadata(patch_sce)$SpaceMosaic$subgroups_summary <-
+        subgroups_summary
+
+    .sdSetTable(sd, patch_sce, patch_table)
 }
 
 #' Moran's I test on a SpatialData object
 #'
 #' moranTest() method for \code{SpatialData} objects. Extracts residuals from
 #' the specified assay of \code{tables(sd)[[table]]} and spatial coordinates from
-#' the shapes element it annotates, then dispatches to \code{moranTest}.
+#' the shapes element it annotates, dispatches to \code{moranTest}, and stores
+#' the results in the patch table created by \code{getPatches.sd()}.
 #'
 #' @param sd A \code{SpatialData} object.
 #' @param assay_name Character; name of the assay in \code{tables(sd)[[table]]}
@@ -922,14 +1042,26 @@ patchMetaAnalysis.sd <- function(
 #'   \code{"residuals"}.
 #' @param patch_column Name of the column in `colData(tables(sd)[[table]])` where patch
 #'   assignments are stored. Default `"patch"`.
+#' @param patch_table Name of the patch table of `sd` created by
+#'   `getPatches.sd()`, where results are stored. Default `"patches"`.
 #' @inheritParams embedCellNeighborhoods.sd
 #' @inheritParams moranTest.spe
-#' @return A data frame with one row per gene and patch. It contains patch and
-#'   gene identifiers, number of cells, observed and expected Moran's I, raw and
-#'   adjusted empirical p-values, graph and permutation settings, and `status`.
-#'   A status of `"ok"` indicates a completed test; non-testable inputs such as
-#'   constant or non-finite residuals return missing statistics with an
-#'   explanatory status rather than stopping the remaining tests.
+#' @return The input `sd`, with the results of `moranTest()` attached to
+#'   `tables(sd)[[patch_table]]`, replacing earlier ones:
+#'   \itemize{
+#'     \item the genes-by-patches assays `moran_observed`, `moran_expected`,
+#'       `moran_p_value`, `moran_p_adjusted` (observed and expected Moran's I,
+#'       raw and adjusted empirical p-values) and `moran_status`. A status of
+#'       `"ok"` indicates a completed test; non-testable inputs such as
+#'       constant or non-finite residuals have missing statistics and an
+#'       explanatory status. Genes or patches that were not tested are `NA`.
+#'     \item the `colData` columns `moran_n_cells` and `moran_effective_k`:
+#'       the number of cells and the number of neighbors used per patch.
+#'     \item `metadata()$SpaceMosaic$moranTest`: the cell table and assay
+#'       used and the graph, permutation and adjustment settings.
+#'   }
+#'   If the patch table has no rows yet (`patchDE.sd()` has not been run),
+#'   it is given one row per tested gene.
 #'
 #' @seealso \code{\link{moranTest}}, \code{\link{moranTest.spe}}
 #'
@@ -946,24 +1078,28 @@ patchMetaAnalysis.sd <- function(
 #'   X = "distance_to_fibroblast",
 #'   npatches = 50
 #' )
-#' de_result <- patchDE.sd(sd,
+#' sd <- patchDE.sd(sd,
 #'   predictor_cols = "distance_to_fibroblast",
 #'   return_residuals = TRUE
 #' )
-#' moran_result <- moranTest.sd(de_result$sd)
-#' head(moran_result)
+#' sd <- moranTest.sd(sd)
+#' patches <- table(sd, "patches")
+#' assay(patches, "moran_p_adjusted")[1:5, 1:5]
 #' @export
 moranTest.sd <- function(sd, assay_name = 'residuals', patch_column = "patch", k = 10L,
                          n_permutations = 999L,
                          alternative = c("greater", "less", "two.sided"),
                          p_adjust_method = "BH",
                          adjustment_scope = c("global", "patch", "gene"),
-                         table = 1) {
+                         table = 1,
+                         patch_table = "patches") {
 
     .require_spatialdataR()
     .checkSd(sd)
     table <- .sdTableName(sd, table)
     sce <- .sdTable(sd, table)
+    alternative <- match.arg(alternative)
+    adjustment_scope <- match.arg(adjustment_scope)
 
     if (!is.character(assay_name) || length(assay_name) != 1) {
       stop("'assay_name' must be a single character string.")
@@ -979,6 +1115,8 @@ moranTest.sd <- function(sd, assay_name = 'residuals', patch_column = "patch", k
                    patch_column, paste(colnames(colData(sce)), collapse = ", ")))
     }
 
+    patch_sce <- .sdPatchTable(sd, patch_table)
+
     res <- moranTest(residuals = t(assay(sce, assay_name)),
                      xy = .sdCoords(sd, sce),
                      patch = colData(sce)[[patch_column]],
@@ -987,6 +1125,40 @@ moranTest.sd <- function(sd, assay_name = 'residuals', patch_column = "patch", k
                      alternative = alternative,
                      p_adjust_method = p_adjust_method,
                      adjustment_scope = adjustment_scope)
-    return(res)
+
+    if (nrow(patch_sce) == 0) {
+        patch_sce <- .patchTableReset(patch_sce, unique(res$gene))
+    }
+
+    # Long results (one row per gene and patch) -> genes x patches matrices
+    genes <- unique(res$gene)
+    patches <- unique(res$patch)
+    idx <- cbind(match(res$gene, genes), match(res$patch, patches))
+    mats <- list()
+    for (stat in c("observed", "expected", "p_value", "p_adjusted", "status")) {
+        m <- matrix(NA, length(genes), length(patches),
+                    dimnames = list(genes, patches))
+        storage.mode(m) <- storage.mode(res[[stat]])
+        m[idx] <- res[[stat]]
+        mats[[paste0("moran_", stat)]] <- m
+    }
+    patch_sce <- .patchTableAssays(.dropAssays(patch_sce, "moran_"), mats)
+
+    # Per-patch values
+    first <- res[!duplicated(res$patch), , drop = FALSE]
+    i <- match(colnames(patch_sce), first$patch)
+    patch_sce$moran_n_cells <- first$n_cells[i]
+    patch_sce$moran_effective_k <- first$effective_k[i]
+
+    S4Vectors::metadata(patch_sce)$SpaceMosaic$moranTest <- list(
+        table = table,
+        assay_name = assay_name,
+        k = k,
+        n_permutations = n_permutations,
+        alternative = alternative,
+        p_adjust_method = p_adjust_method,
+        adjustment_scope = adjustment_scope
+    )
+    .sdSetTable(sd, patch_sce, patch_table)
 }
 

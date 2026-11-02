@@ -20,11 +20,71 @@ sd <- spe_to_spatialdata(spe)
 # Table of a SpatialData object, by name or index.
 sd_table <- function(sd, table = 1) spatialdataR::tables(sd)[[table]]
 
-# Add a patch column to both the SpatialExperiment and its SpatialData copy.
+# Add a patch column to both the SpatialExperiment and its SpatialData copy,
+# and give the latter the patch polygons and patch table that
+# getPatches.sd() would create.
 with_patch <- function(patch) {
   spe_patch <- spe
   SummarizedExperiment::colData(spe_patch)$patch <- patch
-  list(spe = spe_patch, sd = spe_to_spatialdata(spe_patch))
+  sd_patch <- spe_to_spatialdata(spe_patch)
+  xy <- SpaceMosaic:::.sdCoords(sd_patch, sd_table(sd_patch))
+  sd_patch <- SpaceMosaic:::.sdAddPatchTable(
+    sd_patch, xy, patch, patch_shape = "patch_polys", patch_table = "patches"
+  )
+  list(spe = spe_patch, sd = sd_patch)
+}
+
+# Assay `name` of the patch table, restricted to the genes and patches of
+# `like` in the same order.
+patch_assay <- function(sd, name, like) {
+  SummarizedExperiment::assay(sd_table(sd, "patches"), name)[
+    rownames(like), colnames(like), drop = FALSE]
+}
+
+# Check the patch-table assays written by patchDE.sd() against the `de`
+# element returned by patchDE.spe().
+expect_de_assays <- function(sd, de) {
+  for (predictor in names(de)) {
+    if (predictor == "resid_mse") next
+    stats <- c(est = "ests", se = "ses", pval = "pvals")
+    for (stat in names(stats)) {
+      like <- de[[predictor]][[stats[[stat]]]]
+      expect_equal(patch_assay(sd, paste0(stat, "_", predictor), like), like)
+    }
+  }
+}
+
+# Check the patch-table assays and W written by patchMetaAnalysis.sd()
+# against the list returned by patchMetaAnalysis.spe().
+expect_meta_results <- function(sd, expected) {
+  prefixes <- c(ests = "est", ses = "se", pvals = "pval", subgroups = "subgroups")
+  for (predictor in names(expected$meta)) {
+    for (stat in names(expected$meta[[predictor]])) {
+      like <- expected$meta[[predictor]][[stat]]
+      expect_equal(
+        patch_assay(sd, paste0("meta_", prefixes[[stat]], "_", predictor), like),
+        like
+      )
+    }
+  }
+  W <- SingleCellExperiment::reducedDim(sd_table(sd, "patches"), "W")
+  expect_equal(W[rownames(expected$W), , drop = FALSE], expected$W)
+}
+
+# Check the patch-table assays written by moranTest.sd() against the data
+# frame returned by moranTest.spe().
+expect_moran_results <- function(sd, expected) {
+  patches <- sd_table(sd, "patches")
+  idx <- cbind(expected$gene, expected$patch)
+  for (stat in c("observed", "expected", "p_value", "p_adjusted", "status")) {
+    expect_equal(
+      SummarizedExperiment::assay(patches, paste0("moran_", stat))[idx],
+      expected[[stat]]
+    )
+  }
+  first <- expected[!duplicated(expected$patch), ]
+  expect_equal(patches[, first$patch]$moran_n_cells, first$n_cells)
+  expect_equal(patches[, first$patch]$moran_effective_k, first$effective_k)
 }
 
 test_that("spe_to_spatialdata keeps the table and coordinates of the SpatialExperiment", {
@@ -294,16 +354,27 @@ test_that("patchDE.sd matches patchDE.spe", {
     return_residuals = TRUE, verbose = FALSE
   )
 
-  expect_named(result, c("de", "sd", "table"))
-  expect_identical(result$table, "table")
-  expect_equal(result$de, expected$de)
+  expect_s4_class(result, "SpatialData")
+  patches <- sd_table(result, "patches")
+  expect_identical(rownames(patches), rownames(spe))
+  expect_identical(
+    SummarizedExperiment::assayNames(patches),
+    paste0(c("est_", "se_", "pval_"), "distance_to_fibroblast")
+  )
+  expect_de_assays(result, expected$de)
+  de_info <- S4Vectors::metadata(patches)$SpaceMosaic$patchDE
+  expect_identical(de_info$table, "table")
+  expect_identical(de_info$predictors, "distance_to_fibroblast")
+  expect_identical(
+    de_info$patches, colnames(expected$de$distance_to_fibroblast$ests)
+  )
   expect_equal(
-    SummarizedExperiment::assay(sd_table(result$sd), "residuals"),
+    SummarizedExperiment::assay(sd_table(result), "residuals"),
     SummarizedExperiment::assay(expected$spe, "residuals")
   )
 })
 
-test_that("patchDE.sd with return_residuals = FALSE returns unwrapped `de` and leaves assays untouched", {
+test_that("patchDE.sd with return_residuals = FALSE leaves the cell table's assays untouched", {
   obj <- with_patch(rep(c("1", "2"), length.out = ncol(spe)))
 
   # method defaults to "hasty".
@@ -314,9 +385,9 @@ test_that("patchDE.sd with return_residuals = FALSE returns unwrapped `de` and l
     obj$sd, predictor_cols = "distance_to_fibroblast", verbose = FALSE
   )
 
-  expect_equal(result$de, expected$de)
+  expect_de_assays(result, expected$de)
   expect_identical(
-    SummarizedExperiment::assayNames(sd_table(result$sd)),
+    SummarizedExperiment::assayNames(sd_table(result)),
     SummarizedExperiment::assayNames(obj$spe)
   )
 })
@@ -333,7 +404,25 @@ test_that("patchDE.sd with pearson = TRUE matches patchDE.spe", {
     pearson = TRUE, tot = "total", verbose = FALSE
   )
 
-  expect_equal(result$de, expected$de)
+  expect_de_assays(result, expected$de)
+})
+
+test_that("patchDE.sd fills patches without a fit with NA", {
+  obj <- with_patch(as.character(rep(1:3, length.out = ncol(spe))))
+  sce <- sd_table(obj$sd)
+  sce$patch[sce$patch == "3"] <- NA
+  spatialdataR::table(obj$sd, "table") <- sce
+
+  result <- patchDE.sd(
+    obj$sd, predictor_cols = "distance_to_fibroblast", verbose = FALSE
+  )
+  ests <- SummarizedExperiment::assay(
+    sd_table(result, "patches"), "est_distance_to_fibroblast"
+  )
+
+  expect_identical(colnames(ests), c("1", "2", "3"))
+  expect_true(all(is.na(ests[, "3"])))
+  expect_false(anyNA(ests[, c("1", "2")]))
 })
 
 test_that("patchMetaAnalysis.sd matches patchMetaAnalysis.spe", {
@@ -343,15 +432,18 @@ test_that("patchMetaAnalysis.sd matches patchMetaAnalysis.spe", {
     obj$spe, predictor_cols = "distance_to_fibroblast", method = "limma",
     verbose = FALSE
   )
-  de_sd <- patchDE.sd(
+  sd_de <- patchDE.sd(
     obj$sd, predictor_cols = "distance_to_fibroblast", method = "limma",
     verbose = FALSE
   )
 
   expected <- patchMetaAnalysis.spe(de_spe, embedding_name = "Z")
-  result <- patchMetaAnalysis.sd(de_sd, embedding_name = "Z")
+  result <- patchMetaAnalysis.sd(sd_de, embedding_name = "Z")
 
-  expect_equal(result, expected)
+  expect_meta_results(result, expected)
+  expect_null(
+    S4Vectors::metadata(sd_table(result, "patches"))$SpaceMosaic$subgroups_summary
+  )
 })
 
 test_that("patchMetaAnalysis.sd with summarize_subgroups = TRUE matches patchMetaAnalysis.spe", {
@@ -361,7 +453,7 @@ test_that("patchMetaAnalysis.sd with summarize_subgroups = TRUE matches patchMet
     obj$spe, predictor_cols = "distance_to_fibroblast", method = "limma",
     verbose = FALSE
   )
-  de_sd <- patchDE.sd(
+  sd_de <- patchDE.sd(
     obj$sd, predictor_cols = "distance_to_fibroblast", method = "limma",
     verbose = FALSE
   )
@@ -371,11 +463,35 @@ test_that("patchMetaAnalysis.sd with summarize_subgroups = TRUE matches patchMet
     cellmeta_cols = "distance_to_fibroblast"
   )
   result <- patchMetaAnalysis.sd(
-    de_sd, embedding_name = "Z", summarize_subgroups = TRUE,
+    sd_de, embedding_name = "Z", summarize_subgroups = TRUE,
     cellmeta_cols = "distance_to_fibroblast"
   )
 
-  expect_equal(result$subgroups_summary, expected$subgroups_summary)
+  expect_meta_results(result, expected)
+  expect_equal(
+    S4Vectors::metadata(sd_table(result, "patches"))$SpaceMosaic$subgroups_summary,
+    expected$subgroups_summary
+  )
+})
+
+test_that("patchMetaAnalysis.sd works after patchDE.sd with resid_mse = TRUE", {
+  obj <- with_patch(as.character(rep(1:3, length.out = ncol(spe))))
+
+  de_spe <- patchDE.spe(
+    obj$spe, predictor_cols = "distance_to_fibroblast", verbose = FALSE
+  )
+  sd_de <- patchDE.sd(
+    obj$sd, predictor_cols = "distance_to_fibroblast", resid_mse = TRUE,
+    verbose = FALSE
+  )
+  expect_true(
+    "resid_mse" %in% SummarizedExperiment::assayNames(sd_table(sd_de, "patches"))
+  )
+
+  expected <- patchMetaAnalysis.spe(de_spe, embedding_name = "Z")
+  result <- patchMetaAnalysis.sd(sd_de, embedding_name = "Z")
+
+  expect_meta_results(result, expected)
 })
 
 test_that("moranTest.sd matches moranTest.spe", {
@@ -385,7 +501,7 @@ test_that("moranTest.sd matches moranTest.spe", {
     obj$spe, predictor_cols = "distance_to_fibroblast", method = "limma",
     return_residuals = TRUE, verbose = FALSE
   )
-  de_sd <- patchDE.sd(
+  sd_de <- patchDE.sd(
     obj$sd, predictor_cols = "distance_to_fibroblast", method = "limma",
     return_residuals = TRUE, verbose = FALSE
   )
@@ -393,9 +509,13 @@ test_that("moranTest.sd matches moranTest.spe", {
   set.seed(99)
   expected <- moranTest.spe(de_spe$spe, k = 5, n_permutations = 19)
   set.seed(99)
-  result <- moranTest.sd(de_sd$sd, k = 5, n_permutations = 19)
+  result <- moranTest.sd(sd_de, k = 5, n_permutations = 19)
 
-  expect_equal(result, expected)
+  expect_moran_results(result, expected)
+  moran_info <- S4Vectors::metadata(sd_table(result, "patches"))$SpaceMosaic$moranTest
+  expect_identical(moran_info$assay_name, "residuals")
+  expect_identical(moran_info$k, 5)
+  expect_identical(moran_info$alternative, "greater")
 })
 
 test_that("moranTest.sd on a gene-subsetted table matches moranTest.spe", {
@@ -405,19 +525,70 @@ test_that("moranTest.sd on a gene-subsetted table matches moranTest.spe", {
     obj$spe, predictor_cols = "distance_to_fibroblast", method = "limma",
     return_residuals = TRUE, verbose = FALSE
   )
-  de_sd <- patchDE.sd(
+  sd_gene_sub <- patchDE.sd(
     obj$sd, predictor_cols = "distance_to_fibroblast", method = "limma",
     return_residuals = TRUE, verbose = FALSE
   )
-  sd_gene_sub <- de_sd$sd
-  spatialdataR::table(sd_gene_sub) <- sd_table(sd_gene_sub)[1:10, ]
+  spatialdataR::table(sd_gene_sub, "table") <- sd_table(sd_gene_sub)[1:10, ]
 
   set.seed(99)
   expected <- moranTest.spe(de_spe$spe[1:10, ], k = 5, n_permutations = 19)
   set.seed(99)
   result <- moranTest.sd(sd_gene_sub, k = 5, n_permutations = 19)
 
-  expect_equal(result, expected)
+  # The patch table keeps every gene of patchDE.sd(); untested ones are NA.
+  expect_moran_results(result, expected)
+  observed <- SummarizedExperiment::assay(sd_table(result, "patches"), "moran_observed")
+  expect_identical(nrow(observed), nrow(spe))
+  expect_true(all(is.na(observed[-(1:10), ])))
+})
+
+test_that("moranTest.sd gives the patch table rows when patchDE.sd has not been run", {
+  obj <- with_patch(rep(c("1", "2"), length.out = ncol(spe)))
+  sce <- sd_table(obj$sd)
+  SummarizedExperiment::assay(sce, "residuals") <-
+    as.matrix(SummarizedExperiment::assay(sce, "logcounts"))
+  spatialdataR::table(obj$sd, "table") <- sce
+  spe_res <- obj$spe
+  SummarizedExperiment::assay(spe_res, "residuals") <-
+    as.matrix(SummarizedExperiment::assay(spe_res, "logcounts"))
+
+  set.seed(99)
+  expected <- moranTest.spe(spe_res, k = 5, n_permutations = 19)
+  set.seed(99)
+  result <- moranTest.sd(obj$sd, k = 5, n_permutations = 19)
+
+  expect_identical(rownames(sd_table(result, "patches")), rownames(spe))
+  expect_moran_results(result, expected)
+})
+
+test_that("patchDE.sd replaces earlier DE, meta-analysis and Moran results", {
+  obj <- with_patch(rep(c("1", "2"), length.out = ncol(spe)))
+
+  set.seed(1)
+  sd_all <- patchDE.sd(
+    obj$sd, predictor_cols = "distance_to_fibroblast", resid_mse = TRUE,
+    return_residuals = TRUE, verbose = FALSE
+  ) |>
+    patchMetaAnalysis.sd(embedding_name = "Z", summarize_subgroups = TRUE,
+                         cellmeta_cols = "distance_to_fibroblast") |>
+    moranTest.sd(k = 5, n_permutations = 19)
+  before <- sd_table(sd_all, "patches")
+  expect_true(all(c("resid_mse", "moran_status") %in%
+                    SummarizedExperiment::assayNames(before)))
+
+  result <- patchDE.sd(
+    sd_all, predictor_cols = "total", verbose = FALSE
+  )
+  patches <- sd_table(result, "patches")
+
+  expect_identical(
+    SummarizedExperiment::assayNames(patches),
+    paste0(c("est_", "se_", "pval_"), "total")
+  )
+  expect_false("W" %in% SingleCellExperiment::reducedDimNames(patches))
+  expect_false(any(startsWith(names(SummarizedExperiment::colData(patches)), "moran_")))
+  expect_identical(names(S4Vectors::metadata(patches)$SpaceMosaic), "patchDE")
 })
 
 test_that("the `table` argument selects which table is used and modified", {
@@ -449,17 +620,20 @@ test_that("the `table` argument selects which table is used and modified", {
   expect_null(sd_table(by_name, "table")$patch)
 
   # patchDE.sd records the table, and patchMetaAnalysis.sd reuses it.
-  de_sd <- patchDE.sd(
+  sd_de <- patchDE.sd(
     by_name, predictor_cols = "distance_to_fibroblast", table = "table2",
     verbose = FALSE
   )
   de_spe <- patchDE.spe(
     expected, predictor_cols = "distance_to_fibroblast", verbose = FALSE
   )
-  expect_identical(de_sd$table, "table2")
-  expect_equal(de_sd$de, de_spe$de)
-  expect_equal(
-    patchMetaAnalysis.sd(de_sd, embedding_name = "Z"),
+  expect_identical(
+    S4Vectors::metadata(sd_table(sd_de, "patches"))$SpaceMosaic$patchDE$table,
+    "table2"
+  )
+  expect_de_assays(sd_de, de_spe$de)
+  expect_meta_results(
+    patchMetaAnalysis.sd(sd_de, embedding_name = "Z"),
     patchMetaAnalysis.spe(de_spe, embedding_name = "Z")
   )
 })
@@ -480,7 +654,13 @@ test_that(".sd wrappers give informative errors on invalid input", {
   expect_error(patchDE.sd(sd, predictor_cols = "distance_to_fibroblast",
                           patch_column = "nope"),
                "not found in colData")
+  sd_no_patch_table <- spe_to_spatialdata(with_patch(rep("1", ncol(spe)))$spe)
+  expect_error(patchDE.sd(sd_no_patch_table,
+                          predictor_cols = "distance_to_fibroblast"),
+               "has no table 'patches'")
   expect_error(patchMetaAnalysis.sd(list(de = list())),
-               "must be a list with `de` and `sd` elements")
+               "must be a SpatialData object")
+  expect_error(patchMetaAnalysis.sd(with_patch(rep("1", ncol(spe)))$sd),
+               "run patchDE.sd\\(\\) first")
   expect_error(moranTest.sd(sd), "not found in assay names")
 })
