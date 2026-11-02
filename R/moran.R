@@ -67,6 +67,15 @@
 #'   constant or non-finite residuals return missing statistics with an
 #'   explanatory status rather than stopping the remaining calculations.
 #'
+#' @details
+#' Write the residual vector within one gene and patch as `r` and its centered
+#' values as `z = r - mean(r)`. The spatial weights matrix `W` is symmetric and
+#' binary, with `S0 = sum(W)`. Global Moran's I is
+#' \deqn{I_{\mathrm{global}} = \frac{n}{S_0}
+#'   \frac{\mathbf{z}^{\top} W\mathbf{z}}{\mathbf{z}^{\top}\mathbf{z}}.}
+#'
+#' @seealso [getMoranLocal()] for cell-level lag and local Moran diagnostics.
+#'
 #' @examples
 #' xy <- cbind(x = 1:5, y = rep(0, 5))
 #' residuals <- c(-2, -1, 0, 1, 2)
@@ -84,54 +93,18 @@ getMoranGlobal <- function(residuals, xy, patch = NULL, k = 10L,
                       p_adjust_method = "BH",
                       adjustment_scope = c("global", "patch", "gene"),
                       verbose = TRUE) {
-  if (is.numeric(residuals) && is.null(dim(residuals))) {
-    residuals <- matrix(residuals, ncol = 1L)
-    colnames(residuals) <- "residual"
-  } else if (is.matrix(residuals)) {
-    if (!is.numeric(residuals)) {
-      stop("residuals must be a numeric vector or matrix.")
-    }
-    residuals <- as.matrix(residuals)
-    if (is.null(colnames(residuals))) {
-      colnames(residuals) <- paste0("gene_", seq_len(ncol(residuals)))
-    }
-  } else {
-    stop("residuals must be a numeric vector or matrix.")
-  }
-  if (ncol(residuals) < 1L || anyDuplicated(colnames(residuals))) {
-    stop("residuals must have at least one uniquely named column.")
-  }
-  if (!is.matrix(xy) || !is.numeric(xy) || ncol(xy) != 2L ||
-      any(!is.finite(xy))) {
-    stop("xy must be a numeric matrix with exactly two finite columns.")
-  }
-  if (nrow(residuals) != nrow(xy)) {
-    stop("nrow(residuals) must equal nrow(xy).")
-  }
-  if (length(k) != 1L || !is.numeric(k) || !is.finite(k) || k < 1 ||
-      k != floor(k)) {
-    stop("k must be a positive integer.")
-  }
+  inputs <- .prepareMoranInputs(residuals, xy, patch, k, verbose)
+  residuals <- inputs$residuals
+  patch <- inputs$patch
+  k <- inputs$k
+  patch_names <- inputs$patch_names
+
   if (length(n_permutations) != 1L || !is.numeric(n_permutations) ||
       !is.finite(n_permutations) || n_permutations < 0 ||
       n_permutations != floor(n_permutations)) {
     stop("n_permutations must be a non-negative integer.")
   }
-  if (!is.logical(verbose) || length(verbose) != 1L || is.na(verbose)) {
-    stop("verbose must be TRUE or FALSE.")
-  }
-  k <- as.integer(k)
   n_permutations <- as.integer(n_permutations)
-
-  if (is.null(patch)) {
-    patch <- rep("all", nrow(residuals))
-  } else if (length(patch) != nrow(residuals)) {
-    stop("length(patch) must equal nrow(residuals).")
-  }
-  patch_names <- unique(as.character(patch[!is.na(patch)]))
-  if (length(patch_names) == 0L) {
-    stop("patch must contain at least one non-missing patch ID.")
-  }
 
   alternative <- match.arg(alternative)
   adjustment_scope <- match.arg(adjustment_scope)
@@ -456,4 +429,58 @@ getMoranGlobal <- function(residuals, xy, patch = NULL, k = 10L,
     alternative = alternative,
     n_permutations = n_permutations
   )
+}
+
+
+#' Prepare shared global and local Moran inputs
+#'
+#' @inheritParams getMoranGlobal
+#' @return A list containing the residual matrix, patch assignments, effective
+#'   requested k and non-missing patch identifiers.
+#' @noRd
+.prepareMoranInputs <- function(residuals, xy, patch, k, verbose) {
+  if (is.numeric(residuals) && is.null(dim(residuals))) {
+    residuals <- matrix(residuals, ncol = 1L)
+    colnames(residuals) <- "residual"
+  } else if (is.matrix(residuals)) {
+    if (!is.numeric(residuals)) {
+      stop("residuals must be a numeric vector or matrix.")
+    }
+    residuals <- as.matrix(residuals)
+    if (is.null(colnames(residuals))) {
+      colnames(residuals) <- paste0("gene_", seq_len(ncol(residuals)))
+    }
+  } else {
+    stop("residuals must be a numeric vector or matrix.")
+  }
+  if (ncol(residuals) < 1L || anyDuplicated(colnames(residuals))) {
+    stop("residuals must have at least one uniquely named column.")
+  }
+  if (!is.matrix(xy) || !is.numeric(xy) || ncol(xy) != 2L ||
+      any(!is.finite(xy))) {
+    stop("xy must be a numeric matrix with exactly two finite columns.")
+  }
+  if (nrow(residuals) != nrow(xy)) {
+    stop("nrow(residuals) must equal nrow(xy).")
+  }
+  if (length(k) != 1L || !is.numeric(k) || !is.finite(k) || k < 1 ||
+      k != floor(k)) {
+    stop("k must be a positive integer.")
+  }
+  if (!is.logical(verbose) || length(verbose) != 1L || is.na(verbose)) {
+    stop("verbose must be TRUE or FALSE.")
+  }
+  k <- as.integer(k)
+
+  if (is.null(patch)) {
+    patch <- rep("all", nrow(residuals))
+  } else if (length(patch) != nrow(residuals)) {
+    stop("length(patch) must equal nrow(residuals).")
+  }
+  patch_names <- unique(as.character(patch[!is.na(patch)]))
+  if (length(patch_names) == 0L) {
+    stop("patch must contain at least one non-missing patch ID.")
+  }
+
+  list(residuals = residuals, patch = patch, k = k, patch_names = patch_names)
 }

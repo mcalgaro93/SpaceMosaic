@@ -784,3 +784,55 @@ getMoranGlobal.spe <- function(spe, assay_name = 'residuals' , patch_column = "p
                                           verbose = verbose)
                   return(res)
                       }
+
+
+#' Calculate local Moran diagnostics for a SpatialExperiment
+#'
+#' Extract residuals, coordinates and patch assignments from a
+#' \code{SpatialExperiment} and call [getMoranLocal()]. No local significance
+#' tests are performed. Subset genes or complete patches before calling to
+#' limit the cell-level output. Cell identifiers are taken from
+#' \code{colnames(spe)}.
+#'
+#' @inheritParams getMoranGlobal.spe
+#' @inheritParams getMoranLocal
+#' @param verbose Logical; report the workload and show progress over patches.
+#' @return The cell-level data frame described in [getMoranLocal()].
+#'   `cell_index` refers to the columns of the supplied `spe`.
+#' @seealso [getMoranLocal()], [getMoranGlobal.spe()]
+#' @examples
+#' library(SpatialExperiment)
+#' spe <- SpatialExperiment(
+#'   assays = list(residuals = matrix(c(-3, -1, 1, 3), nrow = 1,
+#'                  dimnames = list("gene", paste0("cell_", 1:4)))),
+#'   spatialCoords = cbind(x = c(0, 1, 3, 7), y = rep(0, 4))
+#' )
+#' spe$patch <- "A"
+#' getMoranLocal.spe(spe, k = 1, verbose = FALSE)
+#' @export
+getMoranLocal.spe <- function(spe, assay_name = "residuals",
+                              patch_column = "patch", k = 10L,
+                              verbose = TRUE) {
+  if (!is(spe, "SpatialExperiment")) {
+    stop("'spe' must be a SpatialExperiment object.")
+  }
+  if (!is.character(assay_name) || length(assay_name) != 1L || is.na(assay_name)) {
+    stop("'assay_name' must be a single character string.")
+  }
+  if (!assay_name %in% assayNames(spe)) {
+    stop(sprintf("'%s' not found in assay names of 'spe'. Available assays: %s",
+                 assay_name, paste(assayNames(spe), collapse = ", ")))
+  }
+  if (!is.character(patch_column) || length(patch_column) != 1L ||
+      is.na(patch_column)) {
+    stop("'patch_column' must be a single character string.")
+  }
+  if (!patch_column %in% colnames(colData(spe))) {
+    stop(sprintf("'%s' not found in colData(spe). Available: %s",
+                 patch_column, paste(colnames(colData(spe)), collapse = ", ")))
+  }
+
+  getMoranLocal(residuals = t(assay(spe, assay_name)),
+                xy = spatialCoords(spe), patch = colData(spe)[[patch_column]],
+                k = k, verbose = verbose)
+}

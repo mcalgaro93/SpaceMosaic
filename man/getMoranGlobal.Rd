@@ -94,6 +94,12 @@ by randomly permuting the residuals while keeping the spatial graph fixed.
 The empirical p-value is \code{(b + 1) / (n_permutations + 1)}, where \code{b} is the
 number of permuted statistics at least as extreme as the observed one. Thus,
 the smallest attainable p-value is \code{1 / (n_permutations + 1)}.
+
+Write the residual vector within one gene and patch as \code{r} and its centered
+values as \code{z = r - mean(r)}. The spatial weights matrix \code{W} is symmetric and
+binary, with \code{S0 = sum(W)}. Global Moran's I is
+\deqn{I_{\mathrm{global}} = \frac{n}{S_0}
+  \frac{\mathbf{z}^{\top} W\mathbf{z}}{\mathbf{z}^{\top}\mathbf{z}}.}
 }
 \examples{
 xy <- cbind(x = 1:5, y = rep(0, 5))
@@ -105,4 +111,7 @@ getMoranGlobal(residuals, xy, k = 2)
 set.seed(1)
 getMoranGlobal(residuals, xy, k = 2, n_permutations = 19)
 
+}
+\seealso{
+\code{\link[=getMoranLocal]{getMoranLocal()}} for cell-level lag and local Moran diagnostics.
 }

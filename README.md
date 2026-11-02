@@ -59,6 +59,8 @@ flowchart TD
 | 2a | `getPatchDiagnostics()` | Report patch size, within-patch variation in X, robust multi-k spatial connectivity, final membership stability, and assignment coverage |
 | 3 | `patchDE()` | Run fast OLS-based DE simultaneously for all genes within each patch |
 | 3a (optional) | `getMoranGlobal()` | Screen residual spatial autocorrelation within patches using Moran's I, optionally with permutation-based inference |
+| 3b (optional) | `getMoranLocal()` | Inspect cell-level spatial lags, local Moran statistics and descriptive quadrants for selected genes and patches |
+| 3c (optional) | `plotMoranResiduals()`, `plotMoranLocal()`, `plotMoranQuadrants()`, `plotMoranScatter()` | Create extensible ggplot maps of residuals, local Moran values and quadrants, and scatterplots from one complete gene-patch combination |
 | 4 | `getPatchAttributes()` | Summarize Z across cells in each patch to get a patch-level characteristics matrix W |
 | 5 | `patchMetaAnalysis()` | For each patch, find K nearest neighbors in W-space, compute a Bayesian posterior update, and detect spatial subgroups of significant patches |
 | 6 | `summarizeSubgroups()` | For each gene × subgroup, report effect sizes and enrichment of user-provided metadata variables |
