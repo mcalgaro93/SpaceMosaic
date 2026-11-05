@@ -940,11 +940,17 @@ neighborhood sizes on the same residuals. Changing `npatches` therefore changes
 both the fitted models and the diagnostic graphs, whereas changing `k` within
 a configuration changes only the diagnostic graphs.
 
-We reuse the 100-patch partition, regression residuals, and Moran results from 
-the preceding sections. For the other configurations, we keep the input cells, 
-predictor, embedding, and model settings unchanged. 
+The precomputed results are distributed with the package as
+`inst/extdata/moran_patch_neighborhood_grid.rds`. This RDS object contains the
+patch assignments, patch diagnostics, and Moran tables for all nine settings,
+along with the grid parameters, spatial coordinates, and session information.
+It can also be loaded independently of this report using `readRDS()` and
+`system.file("extdata", "moran_patch_neighborhood_grid.rds", package = "SpaceMosaic")`.
 
-```{r moran-patch-neighborhood-grid}
+The following code documents how to regenerate the object after running the
+preceding analysis. 
+
+```{r moran-patch-neighborhood-grid-compute, eval=FALSE}
 npatches_values <- c(50L, 100L, 200L)
 grid_k_values <- c(5L, 10L, 20L)
 patch_seed <- 123L
@@ -1005,6 +1011,30 @@ patch_grid_results <- lapply(npatches_values, function(npatches_value) {
 })
 names(patch_grid_results) <- as.character(npatches_values)
 
+saveRDS(
+    list(
+        patch_grid_results = patch_grid_results,
+        npatches_values = npatches_values,
+        grid_k_values = grid_k_values,
+        patch_seed = patch_seed,
+        grid_xy = grid_xy,
+        session_info = sessionInfo()
+    ),
+    file = file.path(pkgload::pkg_path(), "inst", "extdata",
+        "moran_patch_neighborhood_grid.rds"),
+    compress = "xz"
+)
+```
+
+```{r moran-patch-neighborhood-grid}
+moran_grid <- readRDS(system.file(
+    "extdata", "moran_patch_neighborhood_grid.rds", package = "SpaceMosaic"
+))
+patch_grid_results <- moran_grid$patch_grid_results
+npatches_values <- moran_grid$npatches_values
+grid_k_values <- moran_grid$grid_k_values
+grid_xy <- moran_grid$grid_xy
+
 moran_res_grid <- dplyr::bind_rows(lapply(patch_grid_results, `[[`, "moran"))
 moran_res_grid_ok <- moran_res_grid |>
     dplyr::filter(status == "ok")
@@ -1053,6 +1083,7 @@ As the number of patches increases, the percentage of patch-gene pairs with cons
 
 ```{r, eval=FALSE}
 # This chunk checks how many patch-gene pairs have all-zero counts, among those with constant residuals. It is not evaluated in the vignette to avoid long computation time.
+grid_counts <- t(assay(spe, "counts")[, use, drop = FALSE])
 constant_pairs <- moran_res_grid |>
     dplyr::filter(k == 10L, status == "constant residuals")
 
