@@ -14,13 +14,16 @@ vignette: >
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = TRUE,
-                     fig.width = 9, fig.height = 5)
+knitr::opts_chunk$set(
+    echo = TRUE, message = FALSE, warning = TRUE,
+    fig.width = 9, fig.height = 5
+)
 devtools::load_all()
 library(HDF5Array)
 library(SpatialExperiment)
 library(ggplot2)
 library(dplyr)
+library(tidytext)
 library(patchwork)
 ```
 
@@ -72,25 +75,27 @@ cell_types <- spe$tier1
 # Spatial distribution of epithelial and immune cells
 coords <- data.frame(xy, cell_types = as.character(cell_types))
 ggplot(coords, aes(x, y, color = ifelse(cell_types %in% c("Epithelial", "Immune"),
-                   cell_types, "Other"))) +
-  geom_point(size = 0.5) +
-  coord_fixed() +
-  theme_void() +
-  theme(legend.position = "bottom") +
-  scale_color_manual(values = c(
-    Epithelial = "blue",
-    Immune = "red",
-    Other = "grey80")) +
-  labs(color = "Cell Type") +
-  guides(color = guide_legend(override.aes = list(size = 3)))
+    cell_types, "Other"
+))) +
+    geom_point(size = 0.5) +
+    coord_fixed() +
+    theme_void() +
+    theme(legend.position = "bottom") +
+    scale_color_manual(values = c(
+        Epithelial = "blue",
+        Immune = "red",
+        Other = "grey80"
+    )) +
+    labs(color = "Cell Type") +
+    guides(color = guide_legend(override.aes = list(size = 3)))
 ```
 
 ```{r embedding-and-predictor, class.source = "fold-show"}
 # Compute Cellular Neighborhoods (Z)
 Z <- embedCellNeighborhoods(
-  mat = reducedDim(spe, "PCA"),
-  xy = xy,
-  ks = c(5, 50)
+    mat = reducedDim(spe, "PCA"),
+    xy = xy,
+    ks = c(5, 50)
 )
 
 # Global setup
@@ -107,20 +112,20 @@ use <- is_epithelial
 # Construct patches
 set.seed(123)
 patches_res <- getPatches(
-  xy = spatialCoords(spe)[use, ],
-  X = X[use],
-  Z = Z[use, ],
-  npatches = 100,
-  n_iters = 15,
-  log_iters = TRUE
+    xy = spatialCoords(spe)[use, ],
+    X = X[use],
+    Z = Z[use, ],
+    npatches = 100,
+    n_iters = 15,
+    log_iters = TRUE
 )
 patches <- patches_res$patch
 
 # Patch diagnostics
 diagnostics <- getPatchDiagnostics(
-  xy = as.matrix(spatialCoords(spe)[use, , drop = FALSE]),
-  X = X[use],
-  patches = patches_res
+    xy = as.matrix(spatialCoords(spe)[use, , drop = FALSE]),
+    X = X[use],
+    patches = patches_res
 )
 ```
 
@@ -133,13 +138,13 @@ retain the regression residuals for subsequent Moran analysis.
 ```{r de, class.source = "fold-show"}
 # Fit within-patch regression models and compute residuals
 de_res <- patchDE(
-  y = t(assay(spe, "counts")[, use]),
-  df = data.frame(X = X[use]), 
-  patch = patches, 
-  method = "hasty",
-  pearson = TRUE,
-  tot = colSums(assay(spe, "counts")[, use]),
-  return_residuals = TRUE
+    y = t(assay(spe, "counts")[, use]),
+    df = data.frame(X = X[use]),
+    patch = patches,
+    method = "hasty",
+    pearson = TRUE,
+    tot = colSums(assay(spe, "counts")[, use]),
+    return_residuals = TRUE
 )
 ```
 
@@ -148,11 +153,12 @@ de_res <- patchDE(
 ```{r moran, class.source = "fold-show"}
 # Test spatial autocorrelation of residuals
 moran_res <- getMoranGlobal(
-  residuals = de_res$residuals,
-  xy = spatialCoords(spe)[use, ],
-  patch = patches, 
-  k = 10, 
-  n_permutations = 0)
+    residuals = de_res$residuals,
+    xy = spatialCoords(spe)[use, ],
+    patch = patches,
+    k = 10,
+    n_permutations = 0
+)
 
 head(moran_res)
 ```
@@ -203,17 +209,17 @@ patch-gene pairs (related to non-expressed genes in those patches).
 idx <- which(!is.na(patches) & patches == 27)
 
 counts_adamts6 <- as.numeric(
-  assay(spe, "counts")["Adamts6", use, drop = FALSE]
+    assay(spe, "counts")["Adamts6", use, drop = FALSE]
 )[idx]
 
 residuals_adamts6 <- de_res$residuals[idx, "Adamts6"]
 
 data.frame(
-  n_cells = length(idx),
-  n_expressing = sum(counts_adamts6 > 0),
-  min_count = min(counts_adamts6),
-  max_count = max(counts_adamts6),
-  max_abs_residual = max(abs(residuals_adamts6))
+    n_cells = length(idx),
+    n_expressing = sum(counts_adamts6 > 0),
+    min_count = min(counts_adamts6),
+    max_count = max(counts_adamts6),
+    max_abs_residual = max(abs(residuals_adamts6))
 )
 ```
 
@@ -234,18 +240,21 @@ autocorrelation.
 #| fig-height: 5
 #| fig-width: 7
 moran_res_ok <- dplyr::filter(moran_res, status == "ok") |>
-  dplyr::mutate(delta_i = observed - expected,
-    patch = reorder(factor(patch), delta_i, median, decreasing = TRUE)
-  ) 
+    dplyr::mutate(
+        delta_i = observed - expected,
+        patch = reorder(factor(patch), delta_i, median, decreasing = TRUE)
+    )
 
 ggplot(moran_res_ok, aes(x = delta_i)) +
-  geom_histogram(binwidth = 0.01, fill = "cyan4", color = "white") +
-  # geom_density(aes(y = ..count.. * 0.01), color = "#D55E00", linewidth = 1) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
-  scale_y_sqrt() +
-  theme_minimal() +
-  labs(x = expression(paste(Delta, "I = Observed Moran's I - Expected Moran's I")),
-       y = "Count of patch-gene pairs")
+    geom_histogram(binwidth = 0.01, fill = "cyan4", color = "white") +
+    # geom_density(aes(y = ..count.. * 0.01), color = "#D55E00", linewidth = 1) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+    scale_y_sqrt() +
+    theme_minimal() +
+    labs(
+        x = expression(paste(Delta, "I = Observed Moran's I - Expected Moran's I")),
+        y = "Count of patch-gene pairs"
+    )
 ```
 
 ## Patch and gene level summaries
@@ -262,12 +271,14 @@ spatial structure that is not explained by the within-patch regression model.
 #| fig-width: 15
 
 ggplot(moran_res_ok, aes(patch, delta_i)) +
-  geom_boxplot(outlier.alpha = 0.25) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(x = "Patch (ordered by median)",
-       y = expression(paste(Delta, "I")))
+    geom_boxplot(outlier.alpha = 0.25) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(
+        x = "Patch (ordered by median)",
+        y = expression(paste(Delta, "I"))
+    )
 ```
 
 The most extreme patch-gene pairs can be simply extracted from the `moran_res`
@@ -275,9 +286,9 @@ table (first 10 patch-gene pairs are showed).
 
 ```{r top-genes}
 moran_res_ok |>
-  dplyr::arrange(desc(delta_i)) |>
-  dplyr::select(patch, gene, n_cells, delta_i) |>
-  head(10)
+    dplyr::arrange(desc(delta_i)) |>
+    dplyr::select(patch, gene, n_cells, delta_i) |>
+    head(10)
 ```
 
 To examine residual spatial autocorrelation from complementary perspectives, we
@@ -302,19 +313,20 @@ this threshold.
 threshold <- median(by(moran_res_ok$delta_i, moran_res_ok$patch, max))
 
 patch_moran_diagnostics_summary <- moran_res_ok |>
-  dplyr::group_by(patch) |>
-  dplyr::summarise(
-    n_genes_above_threshold = sum(delta_i > threshold),
-    median_delta_i = median(delta_i),
-    p75_delta_i = quantile(delta_i, 0.75),
-    p90_delta_i = quantile(delta_i, 0.9),
-    p95_delta_i = quantile(delta_i, 0.95),
-    p99_delta_i = quantile(delta_i, 0.99),
-    max_delta_i = max(delta_i)
-  )
+    dplyr::group_by(patch) |>
+    dplyr::summarise(
+        n_genes_above_threshold = sum(delta_i > threshold),
+        median_delta_i = median(delta_i),
+        p75_delta_i = quantile(delta_i, 0.75),
+        p90_delta_i = quantile(delta_i, 0.9),
+        p95_delta_i = quantile(delta_i, 0.95),
+        p99_delta_i = quantile(delta_i, 0.99),
+        max_delta_i = max(delta_i)
+    )
 
 patch_moran_diagnostics_summary |>
-  dplyr::arrange(desc(n_genes_above_threshold)) |> head(10)
+    dplyr::arrange(desc(n_genes_above_threshold)) |>
+    head(10)
 ```
 
 Patches with more genes above the threshold are candidates for further
@@ -329,18 +341,20 @@ elevated residual spatial autocorrelation in multiple patches.
 ```{r gene-summary}
 # Spatially autocorrelated genes across patches
 gene_moran_diagnostics_summary <- moran_res_ok |>
-  dplyr::group_by(gene) |>
-  dplyr::summarise(
-    n_patches_above_threshold = sum(delta_i > threshold),
-    median_delta_i = median(delta_i), 
-    p75_delta_i = quantile(delta_i, 0.75),
-    p90_delta_i = quantile(delta_i, 0.9),
-    p95_delta_i = quantile(delta_i, 0.95),
-    p99_delta_i = quantile(delta_i, 0.99),
-    max_delta_i = max(delta_i))
+    dplyr::group_by(gene) |>
+    dplyr::summarise(
+        n_patches_above_threshold = sum(delta_i > threshold),
+        median_delta_i = median(delta_i),
+        p75_delta_i = quantile(delta_i, 0.75),
+        p90_delta_i = quantile(delta_i, 0.9),
+        p95_delta_i = quantile(delta_i, 0.95),
+        p99_delta_i = quantile(delta_i, 0.99),
+        max_delta_i = max(delta_i)
+    )
 
 gene_moran_diagnostics_summary |>
-  dplyr::arrange(desc(n_patches_above_threshold)) |> head(10)
+    dplyr::arrange(desc(n_patches_above_threshold)) |>
+    head(10)
 ```
 
 Previous summaries highlighted **Fos** as one of the genes with the largest
@@ -359,22 +373,24 @@ colored by the corresponding $\Delta I$ values.
 ```{r patch-polys}
 # Inizialize patch-level diagnostics
 patch_data <- diagnostics$patch_diagnostics |>
-  dplyr::mutate(connectivity = ifelse(strict_component_fraction == 1, "Connected", "Fragmented"))
+    dplyr::mutate(connectivity = ifelse(strict_component_fraction == 1, "Connected", "Fragmented"))
 
 # Join the patch-level diagnostics to patch_moran_diagnostics_summary
 patch_data <- dplyr::left_join(
-  x = patch_data,
-  y = patch_moran_diagnostics_summary,
-  by = "patch")
+    x = patch_data,
+    y = patch_moran_diagnostics_summary,
+    by = "patch"
+)
 
 gene_of_interest <- "Fos"
 # Join the patch-level diagnostics to the delta_i values for Fos
 patch_data <- dplyr::left_join(
-  x = patch_data,
-  y = moran_res_ok |>
-    dplyr::filter(gene == gene_of_interest) |>
-    dplyr::select(patch, delta_i),
-  by = "patch") 
+    x = patch_data,
+    y = moran_res_ok |>
+        dplyr::filter(gene == gene_of_interest) |>
+        dplyr::select(patch, delta_i),
+    by = "patch"
+)
 
 # Get patch centroids for plotting
 centroids <- aggregate(spatialCoords(spe)[use, ], by = list(patch = patches), FUN = mean)
@@ -382,9 +398,9 @@ centroids <- aggregate(spatialCoords(spe)[use, ], by = list(patch = patches), FU
 # getPatchPolys() returns each patch's convex-hull vertices and joins the
 # supplied patch-level diagnostics to those vertices for plotting.
 poly_df <- getPatchPolys(
-  xy = spatialCoords(spe)[use, ],
-  patch = patches,
-  patch_data = patch_data
+    xy = spatialCoords(spe)[use, ],
+    patch = patches,
+    patch_data = patch_data
 )
 ```
 
@@ -392,30 +408,36 @@ poly_df <- getPatchPolys(
 #| fig-width: 12
 #| fig-height: 7
 ggplot(coords, aes(x = x, y = y)) +
-  geom_point(size = 0.1, color = "grey80") +
-  geom_polygon(data = poly_df, aes(group = patch, fill = n_genes_above_threshold),
-               alpha = 0.5) +
-  geom_text(data = centroids, aes(x = x, y = y, label = patch), size = 2) +
-  scale_fill_viridis_c(breaks = c(0, 1, 2, 4, 6, 8), guide = "legend") +
-  coord_fixed() +
-  theme_void() +
-  theme(legend.position = "bottom") +
-  labs(fill = expression(paste("Genes with ", Delta, "I > threshold"))) |
+    geom_point(size = 0.1, color = "grey80") +
+    geom_polygon(
+        data = poly_df, aes(group = patch, fill = n_genes_above_threshold),
+        alpha = 0.5
+    ) +
+    geom_text(data = centroids, aes(x = x, y = y, label = patch), size = 2) +
+    scale_fill_viridis_c(breaks = c(0, 1, 2, 4, 6, 8), guide = "legend") +
+    coord_fixed() +
+    theme_void() +
+    theme(legend.position = "bottom") +
+    labs(fill = expression(paste("Genes with ", Delta, "I > threshold"))) |
 
-ggplot(coords, aes(x = x, y = y)) +
-  geom_point(size = 0.1, color = "grey80") +
-  geom_polygon(data = poly_df, aes(group = patch, fill = delta_i, color = delta_i > threshold),
-               alpha = 0.5) +
-  geom_text(data = centroids, aes(x = x, y = y, label = patch), size = 2) +
-  scale_fill_viridis_c(begin = 0) +
-  scale_color_manual(values = c("FALSE" = "grey50", "TRUE" = "red")) +
-  coord_fixed() +
-  theme_void() +
-  theme(legend.position = "bottom") +
-  labs(subtitle = paste0("Focus on ", gene_of_interest, " gene"),
-       fill = expression(paste(Delta, "I for Fos")),
-       color = expression(paste(Delta, "I > threshold"))) +
-  guides(color = guide_legend(override.aes = list(size = 3)))
+    ggplot(coords, aes(x = x, y = y)) +
+        geom_point(size = 0.1, color = "grey80") +
+        geom_polygon(
+            data = poly_df, aes(group = patch, fill = delta_i, color = delta_i > threshold),
+            alpha = 0.5
+        ) +
+        geom_text(data = centroids, aes(x = x, y = y, label = patch), size = 2) +
+        scale_fill_viridis_c(begin = 0) +
+        scale_color_manual(values = c("FALSE" = "grey50", "TRUE" = "red")) +
+        coord_fixed() +
+        theme_void() +
+        theme(legend.position = "bottom") +
+        labs(
+            subtitle = paste0("Focus on ", gene_of_interest, " gene"),
+            fill = expression(paste(Delta, "I for Fos")),
+            color = expression(paste(Delta, "I > threshold"))
+        ) +
+        guides(color = guide_legend(override.aes = list(size = 3)))
 ```
 
 From \@ref(fig:patch-summary-diagnostic-plot), we can see that patches with
@@ -427,21 +449,25 @@ size or stability, but may reflect underlying biological processes.
 ```{r patch-summary-diagnostic-plot, fig.cap="Patch-level diagnostic summary. Each point represents a patch, with its x-coordinate showing the number of cells in the patch and its y-coordinate showing the within-patch standard deviation of immune-neighbor counts. Points are colored by membership stability and shaped by connectivity. Patches exceeding the threshold for Fos residual spatial autocorrelation are highlighted.", fig.align = 'center'}
 # Extract cells in patches above threshold for Fos
 ggplot(patch_data, aes(x = n_cells, y = x_sd)) +
-  geom_point(aes(fill = membership_stability, shape = connectivity, 
-    alpha = delta_i > threshold), size = 3) +
-  geom_text(data = subset(patch_data, delta_i > threshold), aes(label = patch), 
-    vjust = -1, size = 3) +
-  scale_fill_viridis_c(limits = c(0, 1), na.value = "grey70") +
-  scale_shape_manual(values = c(Connected = 21, Fragmented = 24)) +
-  scale_alpha_manual(values = c("TRUE" = 1, "FALSE" = 0.3)) +
-  theme_minimal() +
-  labs(
-    x = "Cells per patch",
-    y = "Within-patch SD of immune-neighbor count",
-    fill = "Membership stability",
-    alpha = expression(paste("Fos ", Delta, "I > threshold")),
-    shape = "Connectivity"
-  )
+    geom_point(aes(
+        fill = membership_stability, shape = connectivity,
+        alpha = delta_i > threshold
+    ), size = 3) +
+    geom_text(
+        data = subset(patch_data, delta_i > threshold), aes(label = patch),
+        vjust = -1, size = 3
+    ) +
+    scale_fill_viridis_c(limits = c(0, 1), na.value = "grey70") +
+    scale_shape_manual(values = c(Connected = 21, Fragmented = 24)) +
+    scale_alpha_manual(values = c("TRUE" = 1, "FALSE" = 0.3)) +
+    theme_minimal() +
+    labs(
+        x = "Cells per patch",
+        y = "Within-patch SD of immune-neighbor count",
+        fill = "Membership stability",
+        alpha = expression(paste("Fos ", Delta, "I > threshold")),
+        shape = "Connectivity"
+    )
 ```
 
 # Local Moran’s I
@@ -459,10 +485,10 @@ Keeping Fos as the gene of interest, we can compute local Moran’s I using the
 ```{r}
 # Calculate local Moran's I for Fos residuals
 moran_local <- getMoranLocal(
-  residuals = de_res$residuals[, gene_of_interest, drop = FALSE],
-  xy = spatialCoords(spe)[use, , drop = FALSE],
-  patch = patches,
-  k = 10
+    residuals = de_res$residuals[, gene_of_interest, drop = FALSE],
+    xy = spatialCoords(spe)[use, , drop = FALSE],
+    patch = patches,
+    k = 10
 )
 
 head(moran_local)
@@ -537,68 +563,85 @@ quadrants, and the Moran scatterplot, respectively.
 #| fig-height: 15
 #| message: false
 patches_above_threshold <- moran_res_ok |>
-  dplyr::filter(gene == gene_of_interest, delta_i > threshold) |>
-  dplyr::arrange(desc(delta_i)) |>
-  dplyr::pull(patch)
+    dplyr::filter(gene == gene_of_interest, delta_i > threshold) |>
+    dplyr::arrange(desc(delta_i)) |>
+    dplyr::pull(patch)
 
 patch_below_threshold <- moran_res_ok |>
-  dplyr::filter(gene == gene_of_interest, delta_i <= threshold) |>
-  dplyr::arrange(abs(delta_i)) |>
-  dplyr::pull(patch) |> 
-  head(1)
+    dplyr::filter(gene == gene_of_interest, delta_i <= threshold) |>
+    dplyr::arrange(abs(delta_i)) |>
+    dplyr::pull(patch) |>
+    head(1)
 
 # For each patch, create a map of the spatial distribution of Fos residuals
 patches_plot_list <- list()
 for (patch_id in c(patches_above_threshold, patch_below_threshold)) {
-  # Get cell coordinates and residuals for the gene of interest
-  moran_local_patch <- moran_local[moran_local$patch == patch_id & moran_local$status == "ok", ]
-  
-  p1 <- plotMoranResiduals(data = moran_local_patch, 
-                           standardize = TRUE, 
-                           size = 2, alpha = 1, 
-                           background = coords, polygons = poly_df, 
-                           background_alpha = 0.7,
-                           aspect = "free") +
-      scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
-                           midpoint = 0, limits = c(-2, 6)) +
-      # Add title and subtitle in the first panel
-      labs(title = paste0("Patch ", patch_id, 
-          ifelse(patch_id == patch_below_threshold, " (below threshold)", "")), 
-        subtitle = paste0("Observed Moran's I = ", 
-        round(moran_res_ok$observed[moran_res_ok$patch == patch_id & 
-              moran_res_ok$gene == gene_of_interest], 3)))
+    # Get cell coordinates and residuals for the gene of interest
+    moran_local_patch <- moran_local[moran_local$patch == patch_id & moran_local$status == "ok", ]
 
-  p2 <- plotMoranLocal(data = moran_local_patch,
-                       standardize = TRUE,
-                       size = 2, alpha = 1, 
-                       background = coords,
-                       polygons = poly_df,
-                       background_alpha = 0.7,
-                       aspect = "free") + 
-    scale_fill_gradient2(low = "purple", mid = "white", high = "brown", 
-                         midpoint = 0, limits = c(-9, 9)) 
+    p1 <- plotMoranResiduals(
+        data = moran_local_patch,
+        standardize = TRUE,
+        size = 2, alpha = 1,
+        background = coords, polygons = poly_df,
+        background_alpha = 0.7,
+        aspect = "free"
+    ) +
+        scale_fill_gradient2(
+            low = "blue", mid = "white", high = "red",
+            midpoint = 0, limits = c(-2, 6)
+        ) +
+        # Add title and subtitle in the first panel
+        labs(
+            title = paste0(
+                "Patch ", patch_id,
+                ifelse(patch_id == patch_below_threshold, " (below threshold)", "")
+            ),
+            subtitle = paste0(
+                "Observed Moran's I = ",
+                round(moran_res_ok$observed[moran_res_ok$patch == patch_id &
+                    moran_res_ok$gene == gene_of_interest], 3)
+            )
+        )
 
-  p3 <- plotMoranQuadrants(data = moran_local_patch, 
-                           size = 2, alpha = 1, 
-                           background = coords, 
-                           polygons = poly_df, 
-                           background_alpha = 0.7,
-                           aspect = "free") 
+    p2 <- plotMoranLocal(
+        data = moran_local_patch,
+        standardize = TRUE,
+        size = 2, alpha = 1,
+        background = coords,
+        polygons = poly_df,
+        background_alpha = 0.7,
+        aspect = "free"
+    ) +
+        scale_fill_gradient2(
+            low = "purple", mid = "white", high = "brown",
+            midpoint = 0, limits = c(-9, 9)
+        )
 
-  p4 <- plotMoranScatter(data = moran_local_patch, 
-                         standardize = TRUE,
-                         size = 2, alpha = 0.5) +
-    scale_x_continuous(limits = c(-2, 6)) +
-    scale_y_continuous(limits = c(-1.5, 2.5))
+    p3 <- plotMoranQuadrants(
+        data = moran_local_patch,
+        size = 2, alpha = 1,
+        background = coords,
+        polygons = poly_df,
+        background_alpha = 0.7,
+        aspect = "free"
+    )
 
-  patches_plot_list[[paste0("Patch ", patch_id)]] <- ((p1 | p2) / (p3 | p4)) + 
-    plot_layout(widths = c(1,1), heights = c(1,1))
+    p4 <- plotMoranScatter(
+        data = moran_local_patch,
+        standardize = TRUE,
+        size = 2, alpha = 0.5
+    ) +
+        scale_x_continuous(limits = c(-2, 6)) +
+        scale_y_continuous(limits = c(-1.5, 2.5))
+
+    patches_plot_list[[paste0("Patch ", patch_id)]] <- ((p1 | p2) / (p3 | p4)) +
+        plot_layout(widths = c(1, 1), heights = c(1, 1))
 }
 
-patchwork::wrap_plots(patches_plot_list, ncol = 3) + 
-  plot_layout(widths = 1, guides = "collect") & 
-  theme(legend.position = "bottom")
-
+patchwork::wrap_plots(patches_plot_list, ncol = 3) +
+    plot_layout(widths = 1, guides = "collect") &
+    theme(legend.position = "bottom")
 ```
 
 Note that the last patch in the figure is below the threshold, and its Moran
@@ -638,20 +681,20 @@ reference_k <- 10L
 
 # Reuse the existing k = 10 calculation; only the graph changes for k = 5, 20.
 moran_by_k <- lapply(k_values, function(k_value) {
-  if (k_value == reference_k) {
-    return(moran_res)
-  }
-  getMoranGlobal(
-    residuals = de_res$residuals,
-    xy = spatialCoords(spe)[use, , drop = FALSE],
-    patch = patches,
-    k = k_value,
-    n_permutations = 0
-  )
+    if (k_value == reference_k) {
+        return(moran_res)
+    }
+    getMoranGlobal(
+        residuals = de_res$residuals,
+        xy = spatialCoords(spe)[use, , drop = FALSE],
+        patch = patches,
+        k = k_value,
+        n_permutations = 0
+    )
 })
 
 moran_res_k <- dplyr::bind_rows(moran_by_k) |>
-  dplyr::mutate(delta_i = observed - expected)
+    dplyr::mutate(delta_i = observed - expected)
 ```
 
 We first check how many patch-gene pairs are available for each neighborhood
@@ -662,9 +705,9 @@ without reduction.
 
 ```{r moran-neighborhood-counts}
 moran_res_k |>
-  dplyr::count(k, status, name = "n_patch_gene_pairs") |>
-  group_by(k) |>
-  dplyr::mutate(pct = n_patch_gene_pairs / sum(n_patch_gene_pairs) * 100)
+    dplyr::count(k, status, name = "n_patch_gene_pairs") |>
+    group_by(k) |>
+    dplyr::mutate(pct = n_patch_gene_pairs / sum(n_patch_gene_pairs) * 100)
 ```
 
 Consistent with Figure \@ref(fig:moran-delta-i), Figure
@@ -685,16 +728,18 @@ moran_res_k_ok <- dplyr::filter(moran_res_k, status == "ok") |>
     dplyr::mutate(patch = reorder(factor(patch), delta_i, median, decreasing = TRUE))
 
 ggplot(moran_res_k_ok, aes(x = delta_i)) +
-  geom_histogram(aes(fill = as.factor(k)), binwidth = 0.01, color = "white") +
-  facet_grid(k ~ ., labeller = label_both) +
-  # geom_density(aes(y = ..count.. * 0.01, color = as.factor(k)), linewidth = 1) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
-  scale_y_sqrt() +
-  theme_minimal() +
-  theme(legend.position = "bottom") +
-  labs(x = expression(paste(Delta, "I = Observed Moran's I - Expected Moran's I")),
-       y = "Count of patch-gene pairs",
-       fill = "Neighborhood size (k)")
+    geom_histogram(aes(fill = as.factor(k)), binwidth = 0.01, color = "white") +
+    facet_grid(k ~ ., labeller = label_both) +
+    # geom_density(aes(y = ..count.. * 0.01, color = as.factor(k)), linewidth = 1) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+    scale_y_sqrt() +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    labs(
+        x = expression(paste(Delta, "I = Observed Moran's I - Expected Moran's I")),
+        y = "Count of patch-gene pairs",
+        fill = "Neighborhood size (k)"
+    )
 ```
 
 ## Concordance of the top patch-gene pairs across neighborhood sizes
@@ -716,18 +761,20 @@ top-ranked pairs are shared.
 ```{r moran_k_ranked}
 # Get the ranked lists of patch-gene pairs for each k
 moran_k_ranked <- moran_res_k_ok |>
-  dplyr::group_by(k) |>
-  dplyr::arrange(desc(delta_i), .by_group = TRUE) |>
-  dplyr::mutate(rank = dplyr::row_number()) |>
-  dplyr::ungroup() |>
-  dplyr::mutate(pair_id = paste0(patch, "_", gene)) |>
-  dplyr::select(k, pair_id, rank, delta_i)
+    dplyr::group_by(k) |>
+    dplyr::arrange(desc(delta_i), .by_group = TRUE) |>
+    dplyr::mutate(rank = dplyr::row_number()) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(pair_id = paste0(patch, "_", gene)) |>
+    dplyr::select(k, pair_id, rank, delta_i)
 ```
 
 Figure \@ref(fig:moran-k-cat) shows the three pairwise comparisons over the
 first 500 positions.
 
 ```{r moran-k-cat, fig.width=8, fig.height=5, fig.cap="Concordance at the top between rankings obtained with k = 5, 10, 20. Each curve shows the proportion of shared patch-gene pairs among the first m positions of two rankings."}
+#| fig-width: 8
+#| fig-height: 5
 # Get 3 lists of ranked patch-gene pairs, one for each k
 ranked_lists <- split(moran_k_ranked$pair_id, moran_k_ranked$k)
 max_depth <- 500
@@ -735,27 +782,33 @@ max_depth <- 500
 k_comparisons <- combn(names(ranked_lists), 2, simplify = FALSE)
 # Compute Concordance at the Top (CAT) for each pairwise comparison
 moran_k_cat <- dplyr::bind_rows(lapply(k_comparisons, function(ks) {
-  a <- ranked_lists[[ks[1]]]
-  b <- ranked_lists[[ks[2]]]
-  depths <- seq_len(max_depth)
-  data.frame(
-    depth = depths,
-    concordance = vapply(depths, function(m) {
-      length(intersect(a[seq_len(m)], b[seq_len(m)])) / m
-    }, numeric(1)),
-    comparison = paste0("k = ", ks[1], " vs ", ks[2])
-  )
+    a <- ranked_lists[[ks[1]]]
+    b <- ranked_lists[[ks[2]]]
+    depths <- seq_len(max_depth)
+    data.frame(
+        depth = depths,
+        concordance = vapply(depths, function(m) {
+            length(intersect(a[seq_len(m)], b[seq_len(m)])) / m
+        }, numeric(1)),
+        comparison = paste0("k = ", ks[1], " vs ", ks[2])
+    )
 }))
 
-ggplot(moran_k_cat, aes(x = depth, y = concordance,
-                      color = comparison)) +
-  geom_line() +
-  scale_y_continuous(limits = c(0, 1),
-                     labels = function(x) paste0(round(100 * x), "%")) +
-  theme_minimal() +
-  theme(legend.position = "bottom") +
-  labs(x = "Number of top-ranked patch-gene pairs (m)",
-       y = "Shared pairs / m", color = NULL)
+ggplot(moran_k_cat, aes(
+    x = depth, y = concordance,
+    color = comparison
+)) +
+    geom_line() +
+    scale_y_continuous(
+        limits = c(0, 1),
+        labels = function(x) paste0(round(100 * x), "%")
+    ) +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    labs(
+        x = "Number of top-ranked patch-gene pairs (m)",
+        y = "Shared pairs / m", color = NULL
+    )
 ```
 
 The highest-ranked pairs are sensitive to neighborhood choice, particularly when
@@ -784,12 +837,12 @@ patch-specific maximum $\Delta I$ values. This provides a dataset-specific
 reference for comparing the upper tails across patches and genes.
 
 ```{r}
-threshold_by_k <- 
-  moran_res_k_ok |>
-  dplyr::group_by(k, patch) |>
-  dplyr::summarise(max_delta_i = max(delta_i), .groups = "drop") |>
-  dplyr::group_by(k) |>
-  dplyr::summarise(threshold = median(max_delta_i), .groups = "drop")
+threshold_by_k <-
+    moran_res_k_ok |>
+    dplyr::group_by(k, patch) |>
+    dplyr::summarise(max_delta_i = max(delta_i), .groups = "drop") |>
+    dplyr::group_by(k) |>
+    dplyr::summarise(threshold = median(max_delta_i), .groups = "drop")
 threshold_by_k
 ```
 
@@ -798,13 +851,13 @@ above the threshold for each neighborhood size.
 
 ```{r }
 top_patches_by_k <- moran_res_k_ok |>
-  dplyr::group_by(k, patch) |>
-  dplyr::summarise(n_genes_above_threshold = sum(delta_i > threshold_by_k$threshold[threshold_by_k$k == unique(k)]), .groups = "drop") |>
-  dplyr::arrange(k, desc(n_genes_above_threshold)) |>
-  dplyr::group_by(k)
+    dplyr::group_by(k, patch) |>
+    dplyr::summarise(n_genes_above_threshold = sum(delta_i > threshold_by_k$threshold[threshold_by_k$k == unique(k)]), .groups = "drop") |>
+    dplyr::arrange(k, desc(n_genes_above_threshold)) |>
+    dplyr::group_by(k)
 
-top_patches_by_k |> 
-  dplyr::slice_head(n = 5)
+top_patches_by_k |>
+    dplyr::slice_head(n = 5)
 ```
 
 Figure \@ref(fig:top-patches-plot-k) shows the number of genes with residual
@@ -814,18 +867,24 @@ neighborhood size (k).
 ```{r top-patches-plot-k, fig.width=10, fig.height=5, fig.cap="Number of genes with residual spatial autocorrelation above the threshold for each patch, faceted by neighborhood size (k). Patches are ordered by the number of genes above the threshold.", fig.align = 'center'}
 #| fig-width: 10
 #| fig-height: 6
-ggplot(top_patches_by_k |> dplyr::filter(n_genes_above_threshold > 0), 
-  aes(x = reorder(patch, desc(n_genes_above_threshold)), 
-      y = n_genes_above_threshold, fill = as.factor(k))) +
-  geom_bar(stat = "identity", position = "dodge") +
-  facet_grid(k ~ ., labeller = label_both) +
-  geom_text(data = threshold_by_k, 
-    aes(label = paste0("Threshold = ", round(threshold, 2)), x = 60, y = 8)) +
-  theme_minimal() +
-  theme(legend.position = "bottom") +
-  scale_y_continuous(breaks = 1:10) +
-  labs(x = "Patch", y = "Number of genes above threshold", fill = "Neighborhood size (k)") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggplot(
+    top_patches_by_k |> dplyr::filter(n_genes_above_threshold > 0),
+    aes(
+        x = reorder(patch, desc(n_genes_above_threshold)),
+        y = n_genes_above_threshold, fill = as.factor(k)
+    )
+) +
+    geom_bar(stat = "identity", position = "dodge") +
+    facet_grid(k ~ ., labeller = label_both) +
+    geom_text(
+        data = threshold_by_k,
+        aes(label = paste0("Threshold = ", round(threshold, 2)), x = 60, y = 8)
+    ) +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    scale_y_continuous(breaks = 1:10) +
+    labs(x = "Patch", y = "Number of genes above threshold", fill = "Neighborhood size (k)") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
 Even if the data-driven threshold adapts to the neighborhood size, the patches
@@ -841,29 +900,586 @@ neighborhood size (k).
 
 ```{r}
 top_genes_by_k <- moran_res_k_ok |>
-  dplyr::group_by(k, gene) |>
-  dplyr::summarise(n_patches_above_threshold = sum(delta_i > threshold_by_k$threshold[threshold_by_k$k == unique(k)]), .groups = "drop") |>
-  dplyr::arrange(k, desc(n_patches_above_threshold)) |>
-  dplyr::group_by(k)
+    dplyr::group_by(k, gene) |>
+    dplyr::summarise(n_patches_above_threshold = sum(delta_i > threshold_by_k$threshold[threshold_by_k$k == unique(k)]), .groups = "drop") |>
+    dplyr::arrange(k, desc(n_patches_above_threshold)) |>
+    dplyr::group_by(k)
 top_genes_by_k |>
-  dplyr::slice_head(n = 5)
+    dplyr::slice_head(n = 5)
 ```
 
 ```{r top-genes-plot-k, fig.width=10, fig.height=5, fig.cap="Number of patches with residual spatial autocorrelation above the threshold for each gene, faceted by neighborhood size (k). Genes are ordered by the number of patches above the threshold.", fig.align = 'center'}
 #| fig-width: 10
 #| fig-height: 6
-ggplot(top_genes_by_k |> dplyr::filter(n_patches_above_threshold > 0), 
-  aes(x = reorder(gene, desc(n_patches_above_threshold)), 
-      y = n_patches_above_threshold, fill = as.factor(k))) +
-  geom_bar(stat = "identity", position = "dodge") +
-  facet_grid(k ~ ., labeller = label_both) +
-  geom_text(data = threshold_by_k, 
-    aes(label = paste0("Threshold = ", round(threshold, 2)), x = 50, y = 8)) +
-  theme_minimal() +
-  theme(legend.position = "bottom") +
-  scale_y_continuous(breaks = 1:10) +
-  labs(x = "Gene", y = "Number of patches above threshold", fill = "Neighborhood size (k)") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggplot(
+    top_genes_by_k |> dplyr::filter(n_patches_above_threshold > 0),
+    aes(
+        x = reorder(gene, desc(n_patches_above_threshold)),
+        y = n_patches_above_threshold, fill = as.factor(k)
+    )
+) +
+    geom_bar(stat = "identity", position = "dodge") +
+    facet_grid(k ~ ., labeller = label_both) +
+    geom_text(
+        data = threshold_by_k,
+        aes(label = paste0("Threshold = ", round(threshold, 2)), x = 50, y = 8)
+    ) +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    scale_y_continuous(breaks = 1:10) +
+    labs(x = "Gene", y = "Number of patches above threshold", fill = "Neighborhood size (k)") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Joint sensitivity to patch and neighborhood size
+
+We now compare a 3 x 3 grid of patch configurations (`npatches = 50, 100,
+200`) and Moran neighborhood sizes (`k = 5, 10, 20`). For each patch
+configuration, we fit the within-patch models once and evaluate all three
+neighborhood sizes on the same residuals. Changing `npatches` therefore changes
+both the fitted models and the diagnostic graphs, whereas changing `k` within
+a configuration changes only the diagnostic graphs.
+
+We reuse the 100-patch partition, regression residuals, and Moran results from 
+the preceding sections. For the other configurations, we keep the input cells, 
+predictor, embedding, and model settings unchanged. 
+
+```{r moran-patch-neighborhood-grid}
+npatches_values <- c(50L, 100L, 200L)
+grid_k_values <- c(5L, 10L, 20L)
+patch_seed <- 123L
+grid_xy <- spatialCoords(spe)[use, , drop = FALSE]
+grid_counts <- t(assay(spe, "counts")[, use, drop = FALSE])
+grid_tot <- colSums(assay(spe, "counts")[, use, drop = FALSE])
+
+# Keep patch assignments and diagnostics for subsequent spatial inspection.
+# New fitted residual matrices are used within each iteration, not retained.
+patch_grid_results <- lapply(npatches_values, function(npatches_value) {
+    # Re-use previous results for the 100-patch configuration
+    if (npatches_value == 100L) {
+        patch_result <- patches_res
+        patch_diagnostics <- diagnostics
+        moran_result <- dplyr::filter(moran_res_k, k %in% grid_k_values)
+    } else {
+        set.seed(patch_seed)
+        patch_result <- getPatches(
+            xy = grid_xy,
+            X = X[use],
+            Z = Z[use, , drop = FALSE],
+            npatches = npatches_value,
+            n_iters = 15,
+            log_iters = TRUE
+        )
+        patch_diagnostics <- getPatchDiagnostics(
+            xy = grid_xy,
+            X = X[use],
+            patches = patch_result
+        )
+        fit <- patchDE(
+            y = grid_counts,
+            df = data.frame(X = X[use]),
+            patch = patch_result$patch,
+            method = "hasty",
+            pearson = TRUE,
+            tot = grid_tot,
+            return_residuals = TRUE
+        )
+        moran_result <- dplyr::bind_rows(lapply(grid_k_values, function(k_value) {
+            getMoranGlobal(
+                residuals = fit$residuals,
+                xy = grid_xy,
+                patch = patch_result$patch,
+                k = k_value,
+                n_permutations = 0
+            )
+        }))
+    }
+    list(
+        patches = patch_result,
+        diagnostics = patch_diagnostics,
+        moran = dplyr::mutate(moran_result,
+            npatches = npatches_value,
+            delta_i = observed - expected
+        )
+    )
+})
+names(patch_grid_results) <- as.character(npatches_values)
+
+moran_res_grid <- dplyr::bind_rows(lapply(patch_grid_results, `[[`, "moran"))
+moran_res_grid_ok <- moran_res_grid |>
+    dplyr::filter(status == "ok")
+```
+
+## Patch sizes and availability of Moran results
+
+Before comparing distributions, we summarize the realized patch sizes and the
+status of all patch-gene calculations. 
+
+```{r moran-grid-diagnostics}
+patch_size_grid <- dplyr::bind_rows(lapply(npatches_values, function(n) {
+    patch_grid_results[[as.character(n)]]$diagnostics$patch_diagnostics |>
+        dplyr::mutate(npatches = n)
+}))
+
+patch_size_grid |>
+    dplyr::group_by(npatches) |>
+    dplyr::summarise(
+        n_realized_patches = dplyr::n(),
+        min_cells = min(n_cells),
+        median_cells = median(n_cells),
+        max_cells = max(n_cells),
+        .groups = "drop"
+    )
+
+moran_res_grid |>
+    dplyr::filter(k == 10) |>
+    dplyr::count(npatches, status, name = "n_patch_gene_pairs") |>
+    dplyr::group_by(npatches) |>
+    dplyr::mutate(pct = 100 * n_patch_gene_pairs / sum(n_patch_gene_pairs))
+
+# Check how many patch-gene pairs have reduced k or complete graphs
+# None in this case:
+# all patches have more than 20 cells, so requested k values are always available
+# moran_res_grid_ok |>
+#   dplyr::group_by(npatches, k) |>
+#   dplyr::summarise(
+#     n_reduced_k = sum(effective_k < k),
+#     n_complete_graph = sum(effective_k == n_cells - 1L),
+#     .groups = "drop"
+#   )
+```
+
+As the number of patches increases, the percentage of patch-gene pairs with constant residuals (status = "constant residuals") also increases. This is expected: smaller patches are more likely to contain no cells with detectable expression of a rarely expressed gene, resulting in all-zero residuals. For intuition, if a gene is detected in each cell independently with probability $p$, the probability of observing zero counts in every cell of a patch containing $n$ cells is $(1-p)^n$. For $p = 0.01$, this probability is approximately 0.61 for 50 cells and 0.13 for 200 cells. This simplified example illustrates the effect of patch size; in real data, expression also depends on cell composition and spatial organization.
+
+```{r, eval=FALSE}
+# This chunk checks how many patch-gene pairs have all-zero counts, among those with constant residuals. It is not evaluated in the vignette to avoid long computation time.
+constant_pairs <- moran_res_grid |>
+    dplyr::filter(k == 10L, status == "constant residuals")
+
+constant_residuals_summary <- dplyr::bind_rows(
+    lapply(names(patch_grid_results), function(config) {
+        patch <- as.character(
+            patch_grid_results[[config]]$patches$patch
+        )
+
+        pairs <- constant_pairs |>
+            dplyr::filter(npatches == as.integer(config))
+
+        # Index of cells in each patch and genes in each patch
+        cells_by_patch <- split(seq_along(patch), patch)
+        genes_by_patch <- split(pairs$gene, as.character(pairs$patch))
+
+        n_all_zero <- sum(vapply(names(genes_by_patch), function(id) {
+            counts <- grid_counts[
+                cells_by_patch[[id]],
+                genes_by_patch[[id]],
+                drop = FALSE
+            ]
+
+            # Count how many patch-gene pairs have all-zero counts
+            sum(colSums(counts) == 0)
+        }, numeric(1)))
+
+        n_constant <- nrow(pairs)
+
+        data.frame(
+            npatches = as.integer(config),
+            n_constant_pairs = n_constant,
+            pct_all_zero_among_constant = if (n_constant > 0L) {
+                round(100 * n_all_zero / n_constant, 2)
+            } else {
+                NA_real_
+            }
+        )
+    })
+)
+
+constant_residuals_summary
+```
+
+## Comparing global Moran distributions
+
+We compare the displacement $\Delta I = I - E(I)$, as in the preceding
+sections. Each distribution pools valid patch-gene pairs within one
+configuration.
+
+First, histograms show the full distributions on common axes. The vertical
+axis is density (shown on a square-root scale), rather than the number of
+pairs, to accommodate the different numbers of pairs across configurations.
+
+```{r moran-grid-density, fig.width=12, fig.height=8, fig.cap="Distributions of global residual Moran displacement across the nine configurations. Histograms use a common bin width and density normalization; the density axis is square-root transformed. Only pairs with status ok are included."}
+#| fig-width: 10
+#| fig-height: 6
+
+ggplot(moran_res_grid_ok, aes(x = delta_i)) +
+    geom_histogram(aes(fill = factor(k), y = after_stat(density)),
+        binwidth = 0.01, boundary = 0, color = "white"
+    ) +
+    facet_grid(k ~ npatches, labeller = label_both) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+    scale_y_sqrt() +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    labs(
+        x = expression(Delta * I), y = "Density (square-root scale)",
+        fill = "Neighborhood size (k)"
+    )
+```
+
+For a closer comparison of the upper tails, the next figure shows the empirical
+CDF, $F_n(t)$: the fraction of valid patch-gene pairs with $\Delta I \leq t$.
+At the same cumulative fraction, a curve further to the right indicates larger
+Moran displacements. Dashed horizontal guides mark the 90th, 95th, and 99th
+percentiles. The lower panels compare these percentiles directly.
+
+```{r moran-grid-ecdf, fig.width=12, fig.height=8, fig.cap="Upper-tail comparison of residual Moran displacement. Top panel: empirical CDFs by neighborhood size within each patch configuration, with guides at 90%, 95%, and 99%. Bottom panel: the corresponding empirical quantiles. Larger horizontal values indicate larger residual Moran displacements.", fig.width=8, fig.height=15}
+#| fig-width: 10
+#| fig-height: 6
+
+grid_tail_probs <- c(0.90, 0.95, 0.99)
+
+# type = 1 gives inverse-ECDF quantiles, matching the empirical step curves.
+grid_tail_quantiles <- moran_res_grid_ok |>
+    dplyr::group_by(npatches, k) |>
+    dplyr::reframe(
+        probability = grid_tail_probs,
+        delta_i = as.numeric(quantile(delta_i, grid_tail_probs, type = 1))
+    ) |>
+    dplyr::mutate(
+        percentile = factor(paste0(100 * probability, "%"),
+            levels = c("99%", "95%", "90%")
+        ),
+        k = factor(k, levels = grid_k_values)
+    )
+
+grid_tail_left <- min(
+    quantile(moran_res_grid_ok$delta_i, 0.85, type = 1),
+    grid_tail_quantiles$delta_i
+)
+grid_tail_right <- max(grid_tail_quantiles$delta_i)
+grid_tail_padding <- max(0.005, 0.06 * (grid_tail_right - grid_tail_left))
+grid_tail_xlim <- c(
+    grid_tail_left - grid_tail_padding,
+    grid_tail_right + grid_tail_padding
+)
+
+grid_ecdf_plot <- ggplot(
+    moran_res_grid_ok,
+    aes(x = delta_i, color = factor(k, levels = grid_k_values))
+) +
+    geom_hline(
+        yintercept = grid_tail_probs, linetype = "dashed",
+        color = "grey75", linewidth = 0.4
+    ) +
+    stat_ecdf(linewidth = 0.9) +
+    geom_point(
+        data = grid_tail_quantiles,
+        aes(y = probability), size = 2, show.legend = FALSE
+    ) +
+    facet_grid(~npatches, labeller = label_both, scales = "fixed") +
+    coord_cartesian(xlim = grid_tail_xlim, ylim = c(0.85, 1)) +
+    scale_y_continuous(
+        breaks = c(0.85, 0.90, 0.95, 0.99, 1),
+        labels = function(x) paste0(round(100 * x), "%")
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+        panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_blank()
+    ) +
+    labs(
+        x = NULL, y = "Cumulative fraction of patch-gene pairs",
+        color = "Neighborhood size (k)",
+        title = "Upper tail of residual spatial autocorrelation"
+    )
+
+grid_quantile_plot <- ggplot(
+    grid_tail_quantiles,
+    aes(x = delta_i, y = percentile, color = k, group = k)
+) +
+    geom_point(
+        size = 3,
+        show.legend = FALSE
+    ) +
+    facet_grid(~npatches, labeller = label_both, scales = "fixed") +
+    coord_cartesian(xlim = grid_tail_xlim) +
+    theme_minimal(base_size = 11) +
+    theme(
+        panel.grid.minor = element_blank(),
+        strip.text = element_blank(), strip.background = element_blank()
+    ) +
+    labs(
+        x = expression(Delta * I), y = "Empirical percentile",
+        color = "Neighborhood size (k)"
+    )
+
+(grid_ecdf_plot / grid_quantile_plot) +
+    patchwork::plot_layout(heights = c(2.3, 1), guides = "collect") &
+    theme(legend.position = "bottom")
+```
+
+The following table complements the plots with the median and upper quantiles
+of each distribution. 
+
+```{r moran-grid-summary}
+moran_grid_summary <- moran_res_grid_ok |>
+    dplyr::group_by(npatches, k) |>
+    dplyr::summarise(
+        n_valid_pairs = dplyr::n(),
+        median_delta_i = median(delta_i),
+        p90_delta_i = quantile(delta_i, 0.90, type = 1),
+        p95_delta_i = quantile(delta_i, 0.95, type = 1),
+        p99_delta_i = quantile(delta_i, 0.99, type = 1),
+        .groups = "drop"
+    )
+moran_grid_summary
+```
+
+## Concordance of the top patch-gene pairs across patch configurations and neighborhood sizes
+
+We can examine the consistency of the top patch-gene pairs across different k 
+for 50, 100, and 200 patches. The concordance-at-the-top (CAT) plot is used again to compare the rankings.
+
+```{r moran_k_grid_ranked}
+moran_k_grid_ranked <- moran_res_grid_ok |>
+    dplyr::group_by(npatches, k) |>
+    dplyr::arrange(desc(delta_i), .by_group = TRUE) |>
+    dplyr::mutate(rank = dplyr::row_number()) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(pair_id = paste0(patch, "_", gene)) |>
+    dplyr::select(npatches, k, pair_id, rank, delta_i)
+```
+
+In \@ref(fig:moran-k-grid-cat), the relative pattern of concordance is consistent across patch configurations: comparisons between adjacent neighborhood sizes show greater overlap than the comparison between k = 5 and k = 20. However, for each comparison, the proportion of shared pairs decreases as the number of patches increases, even when considering the same top fraction (1%) of valid patch-gene pairs. One possible explanation is that fitting the model within smaller, more homogeneous patches absorbs part of the broader spatial structure, weakening the residual signal and making the top-ranked sets less distinct.
+
+```{r moran-k-grid-cat, fig.width=10, fig.height=6, fig.cap="Concordance at the top between rankings obtained with k = 5, 10, 20 for each patch configuration. Each curve shows the proportion of shared patch-gene pairs among the first m positions of two rankings."}
+#| fig-width: 10
+#| fig-height: 6
+ranked_lists_grid <- split(moran_k_grid_ranked$pair_id, list(moran_k_grid_ranked$npatches, moran_k_grid_ranked$k))
+
+max_depth_grid <- 500
+# Combination are meaningful only within the same npatches configuration
+npatches_comparisons <- lapply(npatches_values, function(n) {
+    pairs <- combn(grid_k_values, 2, simplify = FALSE)
+    lapply(pairs, function(ks) {
+        a <- ranked_lists_grid[[paste0(n, ".", ks[1])]]
+        b <- ranked_lists_grid[[paste0(n, ".", ks[2])]]
+        # choose a data drive depth for the CAT plot
+        # e.g. 10% of the number of valid patch-gene pairs
+        depths <- seq_len(floor(0.01 * min(length(a))))
+        data.frame(
+            depth = depths,
+            concordance = vapply(depths, function(m) {
+                length(intersect(a[seq_len(m)], b[seq_len(m)])) / m
+            }, numeric(1)),
+            comparison = paste0("k = ", ks[1], " vs ", ks[2]),
+            npatches = n
+        )
+    })
+})
+
+ggplot(
+    dplyr::bind_rows(unlist(npatches_comparisons, recursive = FALSE)),
+    aes(x = depth, y = concordance, color = comparison)
+) +
+    geom_line() +
+    scale_y_continuous(
+        limits = c(0, 1),
+        labels = function(x) paste0(round(100 * x), "%")
+    ) +
+    facet_grid(~npatches, labeller = label_both, scales = "free_x") +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    labs(
+        x = "Number of top-ranked patch-gene pairs (m)",
+        y = "Shared pairs / m", color = NULL
+    )
+```
+
+## Patches and genes to investigate
+
+For each patch configuration, we can identify the patches and genes with the
+largest number of residual spatial autocorrelations above the threshold.
+
+As expected, the threshold decreases as the number of patches increases, in line of what we observed in \@ref(fig:moran-grid-density). The upper tail of the distribution is shorter for larger numbers of patches, which leads to a lower threshold.
+
+```{r}
+threshold_by_grid <-
+    moran_res_grid_ok |>
+    dplyr::group_by(npatches, k, patch) |>
+    dplyr::summarise(max_delta_i = max(delta_i), .groups = "drop") |>
+    dplyr::group_by(npatches, k) |>
+    dplyr::summarise(threshold = median(max_delta_i), .groups = "drop")
+threshold_by_grid
+```
+
+As the patch identifiers are not consistent across configurations of different sizes, 
+we summarize the number of genes above the threshold for each patch within each 
+`npatches` configuration in \@ref(fig:top-patches-plot-grid).
+
+```{r top-patches-plot-grid, fig.width=20, fig.height=7, fig.cap="Number of genes with residual spatial autocorrelation above the threshold for each patch, faceted by neighborhood size (k) and number of patches. Patches are ordered by the number of genes above the threshold within each patch size configuration.", fig.align = 'center'}
+#| fig-width: 20
+#| fig-height: 10
+top_patches_by_k_grid <- moran_res_grid_ok |>
+    dplyr::group_by(npatches, k, patch) |>
+    dplyr::summarise(n_genes_above_threshold = sum(delta_i > threshold_by_grid$threshold[threshold_by_grid$npatches == unique(npatches) & threshold_by_grid$k == unique(k)]), .groups = "drop") |>
+    dplyr::arrange(npatches, k, desc(n_genes_above_threshold)) |>
+    dplyr::group_by(npatches, k)
+
+ggplot(
+    top_patches_by_k_grid |> dplyr::filter(n_genes_above_threshold > 0),
+    aes(
+        x = tidytext::reorder_within(patch, desc(n_genes_above_threshold), npatches),
+        y = n_genes_above_threshold, fill = as.factor(k)
+    )
+) +
+    tidytext::scale_x_reordered() +
+    geom_col() +
+    facet_grid(k ~ npatches, labeller = label_both, scales = "free_x", space = "free") +
+    geom_text(
+        data = threshold_by_grid, aes(x = 30, y = 20, label = paste0("Threshold = ", round(threshold, 2))),
+        inherit.aes = FALSE, hjust = 1.05, vjust = 1.2
+    ) +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    labs(x = "Patch", y = "Number of genes above threshold", fill = "Neighborhood size (k)") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The larger numbers of genes above threshold for k = 20 and 200 patches should be interpreted in light of the lower cutoff (0.11, compared with 0.26 for k = 20 and 50 patches). Because the threshold is based on patch-specific maxima, a shorter upper tail can lower the cutoff and allow genes with smaller $\Delta I$ values to exceed it. For illustration, a value decreasing from 0.20 to 0.15 would move from below 0.26 to above 0.11. Thus, more genes above the configuration-specific threshold do not necessarily indicate stronger residual spatial autocorrelation.
+
+Figure \@ref(fig:top-genes-plot-grid) shows, the number of patches with residual
+spatial autocorrelation above the threshold for the top 10 genes within each patch size configuration, faceted by
+neighborhood size (k) and number of patches.
+
+```{r top-genes-plot-grid, fig.width=20, fig.height=7, fig.cap="Number of patches with residual spatial autocorrelation above the threshold for each gene, faceted by neighborhood size (k) and number of patches. Genes are ordered by the number of patches above the threshold within each patch size configuration.", fig.align = 'center'}
+#| fig-width: 7
+#| fig-height: 6
+top_genes_by_k_grid <- moran_res_grid_ok |>
+    dplyr::group_by(npatches, k, gene) |>
+    dplyr::summarise(n_patches_above_threshold = sum(delta_i > threshold_by_grid$threshold[threshold_by_grid$npatches == unique(npatches) & threshold_by_grid$k == unique(k)]), .groups = "drop") |>
+    dplyr::arrange(npatches, k, desc(n_patches_above_threshold)) |>
+    dplyr::group_by(npatches, k)
+top_genes_by_k_grid |>
+    dplyr::slice_head(n = 5)
+
+# Show the first 10 genes for each configuration, ordered by the number of patches above threshold
+ggplot(
+    top_genes_by_k_grid |> dplyr::slice_head(n = 10),
+    aes(
+        x = tidytext::reorder_within(gene, desc(n_patches_above_threshold), npatches),
+        y = n_patches_above_threshold, fill = as.factor(k)
+    )
+) +
+    tidytext::scale_x_reordered() +
+    geom_col() +
+    facet_grid(k ~ npatches, labeller = label_both, scales = "free_x", space = "free") +
+    geom_text(
+        data = threshold_by_grid, aes(x = 10, y = 20, label = paste0("Threshold = ", round(threshold, 2))),
+        inherit.aes = FALSE, hjust = 1.05, vjust = 1.2
+    ) +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    labs(x = "Gene", y = "Number of patches above threshold", fill = "Neighborhood size (k)") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Fos residual spatial autocorrelation across spatial scales
+
+We return to Fos to examine whether the regions with elevated residual spatial
+autocorrelation remain recognizable across patch configurations and
+neighborhood sizes. First, we compare the distribution of $\Delta I$ across
+patches for each of the nine settings.
+
+```{r moran-grid-fos-boxplot, fig.width=10, fig.height=4, fig.cap="Residual Moran displacement for Fos across the nine configurations. Each point represents one patch; boxplots summarize the valid results within each configuration."}
+fos_moran_grid <- moran_res_grid |>
+    dplyr::filter(gene == "Fos") |>
+    dplyr::mutate(
+        patch = as.character(patch),
+        k = factor(k, levels = grid_k_values)
+    )
+
+ggplot(
+    dplyr::filter(fos_moran_grid, status == "ok"),
+    aes(x = k, y = delta_i)
+) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+    geom_boxplot(width = 0.55, outlier.shape = NA, fill = "grey95") +
+    geom_point(aes(color = k),
+        alpha = 0.45, size = 1.2,
+        position = position_jitter(width = 0.15, height = 0, seed = 123),
+        show.legend = FALSE
+    ) +
+    facet_grid(~npatches, labeller = label_both) +
+    theme_minimal() +
+    labs(
+        x = "Neighborhood size (k)", y = expression(Delta * I),
+        title = "Fos residual spatial autocorrelation"
+    )
+```
+
+We then map the same results onto the tissue. Columns show the patch
+configurations and rows show the neighborhood sizes, with a common color scale
+throughout. Comparing the same tissue regions allows us to assess whether
+elevated values persist, become more localized, or attenuate as the spatial
+scale changes.
+
+```{r moran-grid-fos-polygons}
+# Construct each configuration's polygons once, then annotate them for each k.
+fos_grid_polygons <- dplyr::bind_rows(lapply(npatches_values, function(n) {
+    polygons <- getPatchPolys(
+        xy = grid_xy,
+        patch = patch_grid_results[[as.character(n)]]$patches$patch
+    )
+    polygons$patch <- as.character(polygons$patch)
+
+    dplyr::bind_rows(lapply(grid_k_values, function(k_value) {
+        annotations <- fos_moran_grid |>
+            dplyr::filter(npatches == n, as.character(k) == as.character(k_value)) |>
+            dplyr::transmute(
+                patch,
+                delta_i = ifelse(status == "ok", delta_i, NA_real_)
+            )
+
+        dplyr::left_join(polygons, annotations, by = "patch") |>
+            dplyr::mutate(npatches = n, k = k_value)
+    }))
+})) |>
+    dplyr::mutate(k = factor(k, levels = grid_k_values))
+
+fos_fill_limits <- range(c(
+    0, fos_moran_grid$delta_i[fos_moran_grid$status == "ok"]
+), na.rm = TRUE)
+```
+
+```{r moran-grid-fos-map, fig.width=11, fig.height=10, fig.cap="Spatial distribution of Fos residual Moran displacement. Columns show the requested number of patches and rows show k. All panels share the same spatial extent and color scale. Polygons show patch convex hulls; patches without a valid Moran result are grey."}
+ggplot() +
+    geom_point(
+        data = coords, aes(x = x, y = y),
+        color = "grey90", size = 0.15
+    ) +
+    geom_polygon(
+        data = fos_grid_polygons,
+        aes(x = x, y = y, group = patch, fill = delta_i),
+        color = "grey65", linewidth = 0.15
+    ) +
+    facet_grid(k ~ npatches, labeller = label_both) +
+    scale_fill_gradient2(
+        low = "blue", mid = "white", high = "red",
+        midpoint = 0, limits = fos_fill_limits,
+        na.value = "grey75"
+    ) +
+    coord_fixed() +
+    theme_void() +
+    theme(
+        legend.position = "bottom",
+        strip.text = element_text(size = 11),
+        panel.spacing = grid::unit(0.6, "lines")
+    ) +
+    labs(
+        title = "Fos residual spatial autocorrelation across spatial scales",
+        fill = expression(Delta * I)
+    )
 ```
 
 # Session information
