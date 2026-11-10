@@ -25,6 +25,7 @@ test_that("getPatchDiagnostics calculates core diagnostics and assignment summar
   )
   expect_equal(diagnostics$patch_diagnostics$n_cells, c(2, 2))
   expect_equal(diagnostics$patch_diagnostics$x_sd, c(sqrt(2), sqrt(8)))
+  expect_equal(diagnostics$patch_diagnostics$x_ss, c(2, 8))
   expect_equal(
     diagnostics$patch_diagnostics$membership_stability,
     c(1, 0.5)
@@ -91,10 +92,12 @@ test_that("multivariable X produces one standard deviation per variable", {
   patch_diagnostics <- diagnostics$patch_diagnostics
 
   expect_true(all(c(
-    "x_sd_exposure", "x_sd_depth"
+    "x_sd_exposure", "x_sd_depth", "x_ss_exposure", "x_ss_depth"
   ) %in% names(patch_diagnostics)))
   expect_equal(patch_diagnostics$x_sd_exposure, c(1, 2))
   expect_equal(patch_diagnostics$x_sd_depth, c(0, 1))
+  expect_equal(patch_diagnostics$x_ss_exposure, c(2, 8))
+  expect_equal(patch_diagnostics$x_ss_depth, c(0, 2))
   expect_true(all(is.na(
     patch_diagnostics$membership_stability
   )))
@@ -153,6 +156,8 @@ test_that("single-cell patches are connected without graph edges", {
 
   expect_equal(diagnostics$strict_component_fraction, 1)
   expect_equal(diagnostics$min_connectivity_k, 0L)
+  expect_true(is.na(diagnostics$x_sd))
+  expect_equal(diagnostics$x_ss, 0)
   expect_equal(nrow(result$connectivity_curve), 0L)
 
   result_with_other_cells <- getPatchDiagnostics(
@@ -208,6 +213,7 @@ test_that("all-unassigned input returns an empty patch table", {
   )
 
   expect_equal(nrow(diagnostics$patch_diagnostics), 0)
+  expect_true("x_ss" %in% names(diagnostics$patch_diagnostics))
   expect_equal(diagnostics$assignment_summary$n_assigned_cells, 0)
   expect_equal(diagnostics$assignment_summary$fraction_unassigned, 1)
   expect_equal(diagnostics$assignment_summary$n_nonempty_patches, 0)
@@ -234,6 +240,7 @@ test_that("diagnostic table is compatible with getPatchPolys", {
   expect_true(all(c(
     "n_cells",
     "x_sd",
+    "x_ss",
     "strict_component_fraction",
     "min_connectivity_k",
     "membership_stability"

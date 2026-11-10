@@ -50,6 +50,7 @@ Suggests:
     HDF5Array,
     knitr,
     MerfishData,
+    mclust,
     patchwork,
     rmarkdown,
     shiny,
