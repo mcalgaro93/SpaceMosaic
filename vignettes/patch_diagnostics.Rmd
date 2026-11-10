@@ -463,7 +463,7 @@ distributions across seeds. The adjusted Rand index (ARI) compares the cell
 assignments from two runs. A value of one means the assignments agree. Each
 comparison uses cells assigned in both runs.
 
-```{r seed-agreement, fig.width=8, fig.height=7, fig.cap="Pairwise ARI for patch assignments from ten random seeds."}
+```{r seed-agreement, fig.width=8, fig.height=7, fig.cap="Pairwise ARI for patch assignments from ten random seeds. The color scale is fixed from 0 to 1."}
 # Calculate all pairwise agreement values.
 agreement <- expand.grid(seed1 = seeds, seed2 = seeds)
 agreement$ari <- vapply(seq_len(nrow(agreement)), function(i) {
@@ -477,9 +477,9 @@ agreement$ari <- vapply(seq_len(nrow(agreement)), function(i) {
 ggplot(agreement, aes(factor(seed1, levels = seeds),
                       factor(seed2, levels = seeds), fill = ari)) +
   geom_tile(color = "white") +
-  geom_text(aes(label = sprintf("%.2f", ari), color = ari < 0.8)) +
+  geom_text(aes(label = sprintf("%.2f", ari), color = ari < 0.5)) +
   coord_equal() +
-  scale_fill_viridis_c() +
+  scale_fill_viridis_c(limits = c(0, 1)) +
   scale_color_manual(values = c(`TRUE` = "white", `FALSE` = "black"), guide = "none") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +

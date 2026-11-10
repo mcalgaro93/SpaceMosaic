@@ -24,11 +24,40 @@ library(patchwork)
 # Aim
 
 The [patch diagnostics vignette](patch_diagnostics.Rmd) shows that patch
-assignments vary across seeds. Here we test how this variation affects
-differential expression (DE) and meta analysis. We use the mouse colon immune
-surveillance example from the [`mouse_colon` vignette](mouse_colon.Rmd). For
-each seed, we build patches with the default 15 iterations. We then run DE and
-meta analysis.
+assignments change with the random seed. Here we ask how this affects
+differential expression (DE) and meta analysis. We use the immune surveillance
+example from the [`mouse_colon` vignette](mouse_colon.Rmd) and run the full
+analysis with ten random seeds. All other settings are fixed, and
+`getPatches()` uses the default 15 iterations.
+
+## Questions
+
+1. **Patches.** How similar are the patch assignments across seeds (ARI)?
+2. **Genes.** Do the same genes come out on top? Do their maps look alike?
+3. **Raw vs meta Z.** `patchDE()` gives a raw Z score per gene and patch.
+   `patchMetaAnalysis()` combines each patch with its neighbor patches and
+   gives a meta Z score. Is the variation across seeds already present in raw
+   Z, or is it added by the meta analysis?
+4. **Ensemble.** Can we combine the seeds into one more stable map?
+5. **Null.** How many $|Z| > 2$ pairs do we get when X is unrelated to
+   expression?
+
+## Take-home messages
+
+- Patch assignments are similar across seeds, with some differences. Strong
+  genes, such as `Axin2` and `Irf8`, are found in every run and in similar
+  places.
+- Weaker genes can change a lot between seeds. In the most variable gene, one
+  run has a single patch with a very large raw Z. The meta analysis spreads it
+  to the neighboring patches, so many patches get a large meta Z in that run.
+- Meta Z gives more $|Z| > 2$ pairs than raw Z. The meta analysis gives a
+  similar increase in the null runs, so part of this increase comes from the
+  method itself.
+- In the null with a rotated immune pattern, the fraction of $|Z| > 2$ pairs is
+  similar to the real data. A significance test for an immune effect therefore
+  needs a null reference, such as Z scores calibrated against null runs.
+- The ensemble across seeds (median Z) removes run-specific patterns. The
+  calibration question above applies to it as well.
 
 # Data and settings
 
@@ -71,7 +100,7 @@ dist_thresh <- 15; count_thresh <- 6.65
 
 We calculate patch diagnostics for every seed, and then
 apply the same filtering thresholds as Scenario 1 in `mouse_colon.Rmd`.
-Unassigned cells and filtered patches do not enter DE.
+Unassigned cells and filtered patches are excluded from DE.
 
 ```{r patch-runs}
 runs <- patch_data <- vector("list", length(seeds))
@@ -191,8 +220,8 @@ ggplot(plot_data, aes(min_dist)) +
 We apply the same thresholds in every run.
 
 ```{r de-runs}
-filtered <- meta_z <- vector("list", length(seeds))
-names(filtered) <- names(meta_z) <- as.character(seeds)
+filtered <- meta_z <- raw_z <- vector("list", length(seeds))
+names(filtered) <- names(meta_z) <- names(raw_z) <- as.character(seeds)
 for (i in seq_along(seeds)) {
   key <- as.character(seeds[i])
   pd <- patch_data[[key]]
@@ -216,6 +245,9 @@ for (i in seq_along(seeds)) {
   W <- getPatchAttributes(Z = Z_use, patch = patch)
   meta <- patchMetaAnalysis(DEobj = de, W = W, k = 10)
   meta_z[[key]] <- meta$X$ests / meta$X$ses
+  # Keep the per-patch DE Z scores before meta analysis.
+  raw_z[[key]] <- de$X$ests[, colnames(meta_z[[key]]), drop = FALSE] /
+    de$X$ses[, colnames(meta_z[[key]]), drop = FALSE]
 
   run_info[[i]]$retained <- length(keep)
   run_info[[i]]$cells_for_DE <- sum(!is.na(patch))
@@ -229,10 +261,10 @@ Most patches pass the filters. On average, each run excludes
 
 # Patch assignment agreement
 
-Patch labels differ across runs. ARI compares cell assignments without matching
-patch labels. We show results before and after filtering.
+Patch labels differ across runs. ARI compares which cells are grouped together,
+independent of the patch labels. We show results before and after filtering.
 
-```{r assignment-ari, fig.width=16, fig.height=9, fig.cap="ARI between seed pairs. The top row shows heatmaps; the bottom row shows the 45 pair values. Before filtering is on the left."}
+```{r assignment-ari, fig.width=16, fig.height=9, fig.cap="ARI between seed pairs. The top row shows heatmaps on a fixed 0 to 1 color scale. The bottom row shows the 45 pair values. Before filtering is on the left."}
 pairs <- combn(as.character(seeds), 2, simplify = FALSE)
 ari <- do.call(rbind, lapply(pairs, function(pair) {
   data.frame(seed1 = pair[1], seed2 = pair[2],
@@ -264,9 +296,9 @@ p_heat <- lapply(stages, function(stage) {
          aes(factor(seed1, levels = seeds), factor(seed2, levels = seeds),
              fill = ari)) +
     geom_tile(color = "white") +
-    geom_text(aes(label = sprintf("%.2f", ari), color = seed1 != seed2),
+    geom_text(aes(label = sprintf("%.2f", ari), color = ari < 0.5),
               size = 3) +
-    scale_fill_viridis_c(limits = range(ari_map$ari)) +
+    scale_fill_viridis_c(limits = c(0, 1)) +
     scale_color_manual(values = c(`TRUE` = "white", `FALSE` = "black"),
                        guide = "none") +
     theme_minimal() +
@@ -285,13 +317,11 @@ p_hist <- lapply(stages, function(stage) {
   plot_layout(heights = c(1.5, 1), guides = "collect")
 ```
 
-The mean rises from
-`r sprintf("%.2f", mean(ari$before))` to
-`r sprintf("%.2f", mean(ari$after))`. 
-The median ARI remains the same (`r sprintf("%.2f", median(ari$before))`).
-Each filtered pair uses cells retained in
-both runs. Below, we compare genes by name and map results to the same cell
-coordinates.
+Filtering raises the mean ARI from `r sprintf("%.2f", mean(ari$before))` to
+`r sprintf("%.2f", mean(ari$after))`, and the median stays at
+`r sprintf("%.2f", median(ari$before))`. Each filtered pair uses the cells
+retained in both runs. In the following sections, we compare genes by name and
+map patch results back to cells.
 
 # DE and meta analysis agreement
 
@@ -358,11 +388,11 @@ rownames(gene_summary) <- NULL
 head(gene_summary, 20)
 ```
 
-Each row is one gene. `top50_g` records the number of runs in which the gene ranks among the top 50.
-For each run, we compute the fraction of retained patches with \(|Z| > 2\),
-and `median_fraction` is the median of these ten fractions.
-`median_up` is based on \(Z > 2\), while `median_down` is based on \(Z < -2\).
-A gene may have both positive and negative patches.
+Each row is one gene. `top50_g` is the number of runs in which the gene is
+among the top 50. `median_fraction` is the median, across runs, of the fraction
+of retained patches with $|Z| > 2$. `median_up` and `median_down` are the same
+median for $Z > 2$ and $Z < -2$. A gene can have both positive and negative
+patches.
 For `Axin2`, the median fractions are approximately `r round(100 * gene_summary$median_up[gene_summary$gene == "Axin2"])`% up and `r round(100 * gene_summary$median_down[gene_summary$gene == "Axin2"])`% down.
 
 ```{r top50-frequency, fig.cap="Frequency of each gene's inclusion among top 50 lists."}
@@ -377,7 +407,10 @@ In these runs, `r sum(gene_summary$top50_g == length(seeds))` genes appear in
 the top 50 every time.
 
 The next plot shows the up and down fractions for the ten genes that appear
-most often in the top 50.
+most often in the top 50. For one gene in one run, the up fraction is the
+fraction of retained patches with $Z > 2$, where expression rises with X. The
+down fraction is the fraction with $Z < -2$, where expression falls with X.
+Each point is one run. Flat lines mean the gene behaves the same in every run.
 
 ```{r directions, fig.width=16, fig.height=8, fig.cap="Fraction of patches with Z above 2 or below minus 2 for ten frequent top 50 genes."}
 # Show each seed's directional fractions for recurrent genes.
@@ -411,10 +444,10 @@ and Z scores vary within those areas.
 
 ```{r spatial-gene, fig.width=16, fig.height=8, fig.cap="Axin2 meta analysis Z scores across ten seeds. Grey cells were excluded from DE."}
 # Map patch Z scores to the same cell coordinates.
-gene_map <- function(gene) {
-  map <- do.call(rbind, lapply(names(meta_z), function(seed) {
+gene_map <- function(gene, zlist = meta_z) {
+  map <- do.call(rbind, lapply(names(zlist), function(seed) {
     patch <- filtered[[seed]]
-    zmat <- meta_z[[seed]]
+    zmat <- zlist[[seed]]
     patch_col <- match(as.character(patch), colnames(zmat))
     stopifnot(all(!is.na(patch_col[!is.na(patch)])))
     data.frame(x = xy_use[, 1], y = xy_use[, 2], seed = seed,
@@ -456,22 +489,27 @@ variation <- variation[order(-variation$range_frac, variation$gene), ]
 rownames(variation) <- NULL
 head(variation[, c("gene", "top50_g", "min_frac", "max_frac",
                    "range_frac", "min_net", "max_net")], 10)
+
+# The most variable gene is used again in later sections.
+variable_gene <- variation$gene[1]
 ```
 
-The next map shows the gene with the largest change in the fraction of patches
-with $|Z| > 2$ among genes that entered the top 50.
+We call `r variable_gene` the variable gene: among genes that entered the top
+50 at least once, it has the largest change in the fraction of patches with
+$|Z| > 2$ across seeds. The next maps show its meta Z scores.
 
-```{r variable-gene-map, fig.width=18, fig.height=10, fig.cap="Z scores for a variable gene. Each seed has its own color scale. Black borders mark the lowest and highest fractions with absolute Z above 2."}
-variable_gene <- variation$gene[1]
-variable_map <- gene_map(variable_gene)
+```{r variable-gene-map, fig.width=18, fig.height=10, fig.cap=paste0(variable_gene, " meta Z scores. Each seed has its own color scale. Black borders mark the lowest and highest fractions with absolute Z above 2.")}
 variable_frac <- frac_mat[match(variable_gene, genes), ]
 low_seed <- which.min(variable_frac)
 high_seed <- which.max(variable_frac)
 
 # Show strong patches clearly and mark the two extreme runs.
-seed_maps <- lapply(seq_along(seeds), function(i) {
+seed_maps <- function(zlist) {
+  variable_map <- gene_map(variable_gene, zlist)
+  lapply(seq_along(seeds), function(i) {
   seed <- as.character(seeds[i])
   map <- variable_map[variable_map$seed == seed, ]
+  frac_i <- mean(abs(zlist[[seed]][variable_gene, ]) > 2, na.rm = TRUE)
   limit <- max(2, abs(map$z), na.rm = TRUE)
   tag <- if (i == low_seed) " low" else if (i == high_seed) " high" else ""
   edge <- if (nzchar(tag)) "black" else "grey80"
@@ -495,19 +533,33 @@ seed_maps <- lapply(seq_along(seeds), function(i) {
           legend.position = "bottom",
           legend.title = element_text(size = 7),
           legend.text = element_text(size = 6)) +
-    labs(title = paste0(seed, ": ", sprintf("%.1f%%", 100 * variable_frac[i]), tag))
-})
-wrap_plots(seed_maps, ncol = 5)
+    labs(title = paste0(seed, ": ", sprintf("%.1f%%", 100 * frac_i), tag))
+  })
+}
+wrap_plots(seed_maps(meta_z), ncol = 5)
 ```
 
 For `r variable_gene`, the fraction of patches with $|Z| > 2$ ranges from
 `r sprintf("%.2f", variation$min_frac[1])` to
 `r sprintf("%.2f", variation$max_frac[1])` across seeds. Panel titles give this
-fraction for each seed. Black borders mark the lowest and highest runs. Patches
-with $|Z| \leq 2$ are faded. Each panel has its own Z scale; use its legend to
-read the color values.
+fraction for each seed. Black borders mark the lowest and highest runs (by
+meta Z). Patches with $|Z| \leq 2$ are faded. Each panel has its own Z scale;
+use its legend to read the color values.
 
-```{r variable-gene-distribution, fig.width=18, fig.height=6, fig.cap="Patch Z scores for the variable gene across seeds. Red lines mark Z = -2 and Z = 2."}
+The same maps with raw Z scores show where the variation starts. Borders mark
+the same two runs as above.
+
+```{r variable-gene-map-raw, fig.width=18, fig.height=10, fig.cap=paste0(variable_gene, " raw Z scores. Same layout as the meta Z maps above.")}
+wrap_plots(seed_maps(raw_z), ncol = 5)
+```
+
+If the raw maps already differ between runs, the variation comes from the patch
+assignment. If the raw maps have only a few strong patches but the meta maps
+have large strong areas, the meta analysis spreads these few patches to their
+neighbors. Section [Raw and meta Z scores of `r variable_gene`](#variable-raw-meta)
+checks this patch by patch.
+
+```{r variable-gene-distribution, fig.width=18, fig.height=6, fig.cap=paste0(variable_gene, " meta Z scores across seeds. Red lines mark Z = -2 and Z = 2.")}
 # Use one Z score per retained patch.
 z_dist <- do.call(rbind, lapply(seq_along(seeds), function(i) {
   data.frame(seed = as.character(seeds[i]),
@@ -524,8 +576,383 @@ ggplot(z_dist, aes(z)) +
   labs(x = "Patch Z score", y = "Number of patches")
 ```
 
-Seed 31415 has more patches above $Z = 2$ and a longer positive tail. Most
-patches for seed 271828 fall between the red lines.
+Each panel is the histogram of the meta Z scores of `r variable_gene` across
+retained patches in one run. Seed `r as.character(seeds[high_seed])` has the most patches
+outside the red lines, and seed `r as.character(seeds[low_seed])` has the fewest.
+
+# Raw and meta Z scores
+
+The results above use meta Z scores. `patchDE()` gives a raw Z score for each
+patch from its own cells. `patchMetaAnalysis()` combines this estimate with
+those of the 10 nearest patches in W space and gives the meta Z score.
+Comparing the two shows where the variation across seeds comes from. If raw Z
+already varies, the variation comes from the patch assignment. If only meta Z
+varies, it comes from the meta analysis.
+
+We compare the two scores in three steps:
+
+1. all genes in one run: how the meta analysis changes each Z score;
+2. all genes across runs ([Agreement across seeds](#agreement-across-seeds)):
+   how stable each gene's map is, for raw and meta Z;
+3. one gene, `r variable_gene`, patch by patch.
+
+```{r raw-meta-counts}
+# Fraction of gene and patch pairs with |Z| > 2 in each run.
+z_counts <- do.call(rbind, lapply(names(meta_z), function(seed) {
+  data.frame(seed = seed,
+             raw_Z2 = mean(abs(raw_z[[seed]]) > 2, na.rm = TRUE),
+             meta_Z2 = mean(abs(meta_z[[seed]]) > 2, na.rm = TRUE))
+}))
+z_counts
+```
+
+`raw_Z2` and `meta_Z2` are the fractions of gene and patch pairs with
+$|Z| > 2$. Meta Z gives more such pairs than raw Z in every run. For
+reference, a standard normal Z has $|Z| > 2$ with probability
+`r sprintf("%.1f%%", 200 * pnorm(-2))`. Section
+[Null calibration](#null-calibration) measures this fraction in null runs of
+these data.
+
+The scatter plot below shows each gene and patch pair in one run. Points on the
+grey diagonal have the same raw and meta Z. Points that move away from it
+vertically are changed by the neighbor patches.
+
+```{r raw-meta-scatter, fig.width=7, fig.height=6, fig.cap="Raw and meta Z scores for one seed. Each point is a gene and patch pair. Dashed lines mark Z = -2 and Z = 2."}
+s1 <- names(meta_z)[1]
+stopifnot(identical(dimnames(raw_z[[s1]]), dimnames(meta_z[[s1]])))
+sc <- data.frame(raw = as.numeric(raw_z[[s1]]),
+                 meta = as.numeric(meta_z[[s1]]))
+sc <- sc[is.finite(sc$raw) & is.finite(sc$meta), ]
+ggplot(sc, aes(raw, meta)) +
+  geom_bin2d(bins = 80) +
+  geom_abline(color = "grey40") +
+  geom_hline(yintercept = c(-2, 2), linetype = "dashed", color = "red") +
+  geom_vline(xintercept = c(-2, 2), linetype = "dashed", color = "red") +
+  scale_fill_viridis_c(trans = "log10") +
+  theme_minimal() +
+  labs(title = paste("Seed", s1), x = "Raw Z", y = "Meta Z", fill = "Pairs")
+```
+
+## Agreement across seeds
+
+We map each run's Z scores to cells. For each gene, we compute the
+correlation of cell Z scores between every pair of runs and take the mean of
+the `r choose(length(seeds), 2)` pairs. A value near 1 means the gene's map changes little across seeds.
+
+```{r cell-agreement}
+# Cell by seed matrix of Z scores for one gene. Excluded cells are NA.
+cell_z <- function(zlist, gene) {
+  vapply(names(zlist), function(seed) {
+    z <- zlist[[seed]]
+    as.numeric(z[gene, match(as.character(filtered[[seed]]), colnames(z))])
+  }, numeric(nrow(xy_use)))
+}
+seed_cor <- function(zlist) {
+  vapply(genes, function(g) {
+    r <- suppressWarnings(cor(cell_z(zlist, g), use = "pairwise.complete.obs"))
+    mean(r[upper.tri(r)], na.rm = TRUE)
+  }, numeric(1))
+}
+raw_top50 <- lapply(raw_z, function(z) {
+  score <- rowMeans(abs(z) > 2, na.rm = TRUE)
+  head(names(score)[order(-score, names(score), na.last = TRUE)], 50)
+})
+agreement <- data.frame(
+  gene = genes,
+  raw_cor = seed_cor(raw_z),
+  meta_cor = seed_cor(meta_z),
+  raw_top50 = rowSums(vapply(raw_top50, function(x) genes %in% x,
+                             logical(length(genes)))),
+  meta_top50 = top50_g
+)
+summary(agreement[, c("raw_cor", "meta_cor")])
+```
+
+`raw_cor` and `meta_cor` are this mean correlation for raw and meta Z scores.
+For raw Z, the mean correlation ranges from
+`r sprintf("%.2f", min(agreement$raw_cor, na.rm = TRUE))` to
+`r sprintf("%.2f", max(agreement$raw_cor, na.rm = TRUE))` across genes, with a
+median of `r sprintf("%.2f", median(agreement$raw_cor, na.rm = TRUE))`. For
+meta Z, it ranges more widely, from
+`r sprintf("%.2f", min(agreement$meta_cor, na.rm = TRUE))` to
+`r sprintf("%.2f", max(agreement$meta_cor, na.rm = TRUE))`, with a median of
+`r sprintf("%.2f", median(agreement$meta_cor, na.rm = TRUE))`. Raw values are
+high for most genes, because patches from two seeds share many cells and the
+raw Z of a patch depends on its own cells.
+
+```{r cell-agreement-genes}
+agreement[agreement$gene %in% c(head(gene_summary$gene, 10), variable_gene), ]
+```
+
+The table shows the ten frequent top 50 genes and `r variable_gene`.
+`raw_top50` and `meta_top50` count the runs, out of `r length(seeds)`, in
+which the gene ranks among the top 50 genes. As in the previous section, genes
+are ranked by the fraction of retained patches with $|Z| > 2$, computed from
+raw or meta Z scores.
+
+```{r cell-agreement-plot, fig.width=8, fig.height=5, fig.cap="Mean correlation of cell Z scores across seed pairs. Each point is a gene. Labeled genes are the ten frequent top 50 genes and the variable gene. The dashed line marks equal agreement for raw and meta Z scores."}
+lab <- agreement$gene %in% c(head(gene_summary$gene, 10), variable_gene)
+ggplot(agreement, aes(raw_cor, meta_cor)) +
+  geom_point(color = "grey60", size = 0.8) +
+  geom_point(data = agreement[lab, ], color = "#D55E00") +
+  ggrepel::geom_text_repel(data = agreement[lab, ], aes(label = gene),
+                           size = 3) +
+  geom_abline(linetype = "dashed") +
+  theme_minimal() +
+  labs(x = "Raw Z: mean correlation across seeds",
+       y = "Meta Z: mean correlation across seeds")
+```
+
+Points below the dashed line are genes whose meta map changes more across
+seeds than their raw map.
+
+## Raw and meta Z scores of `r variable_gene` {#variable-raw-meta}
+
+Each panel is one run. Each point is one retained patch, with its raw Z on the
+x axis and its meta Z on the y axis. A point at the right has a strong signal
+in its own cells. A point at the top has a strong signal after combining with
+its neighbor patches.
+
+```{r variable-gene-raw-meta, fig.width=18, fig.height=8, fig.cap=paste0("Raw and meta Z scores of ", variable_gene, ". Each point is a retained patch. Dashed lines mark Z = -2 and Z = 2.")}
+vg <- do.call(rbind, lapply(names(meta_z), function(seed) {
+  data.frame(seed = seed, raw = raw_z[[seed]][variable_gene, ],
+             meta = meta_z[[seed]][variable_gene, ])
+}))
+vg$seed <- factor(vg$seed, levels = as.character(seeds))
+ggplot(vg, aes(raw, meta)) +
+  geom_point(size = 1.2, alpha = 0.7) +
+  geom_hline(yintercept = c(-2, 2), linetype = "dashed", color = "red") +
+  geom_vline(xintercept = c(-2, 2), linetype = "dashed", color = "red") +
+  facet_wrap(~seed, ncol = 5) +
+  theme_minimal() +
+  labs(title = variable_gene, x = "Raw Z", y = "Meta Z")
+```
+
+```{r variable-gene-counts}
+# Patches with |Z| > 2 per run, for raw and meta Z.
+vg_counts <- do.call(rbind, lapply(split(vg, vg$seed), function(d) {
+  data.frame(seed = d$seed[1], n_patches = nrow(d),
+             raw_Z2 = sum(abs(d$raw) > 2, na.rm = TRUE),
+             meta_Z2 = sum(abs(d$meta) > 2, na.rm = TRUE),
+             max_raw = max(d$raw, na.rm = TRUE))
+}))
+rownames(vg_counts) <- NULL
+vg_counts
+```
+
+The table counts the patches with $|Z| > 2$ in each run. In seed
+`r as.character(seeds[high_seed])`, `r vg_counts$raw_Z2[high_seed]` patches have
+$|\text{raw } Z| > 2$, but `r vg_counts$meta_Z2[high_seed]` have
+$|\text{meta } Z| > 2$; the largest raw Z is
+`r sprintf("%.1f", vg_counts$max_raw[high_seed])`. In seed
+`r as.character(seeds[low_seed])`, these counts are `r vg_counts$raw_Z2[low_seed]` and
+`r vg_counts$meta_Z2[low_seed]`. When a few patches have large raw Z and many
+more have large meta Z, the meta analysis spreads a few strong patches to their
+neighbors. With fixed-effect meta analysis, one patch with a very large raw Z
+can dominate every patch that uses it as a neighbor.
+
+# Ensemble across seeds
+
+Here we combine the `r length(seeds)` runs for each cell. Each cell gets the Z
+score of its patch in each run. For each gene, we show three maps:
+
+- **median raw Z**: the median of the cell's raw Z scores across runs;
+- **median meta Z**: the same for meta Z;
+- **meta agreement**: the fraction of runs in which the cell has a strong meta
+  signal in the same direction as its median, that is $|Z| > 2$ and the same
+  sign as the median meta Z. A value of 1 means every run finds a strong signal
+  of the same sign at this cell. A value near 0 means the median comes from
+  weak or mixed signals.
+
+Each fraction uses the runs in which the cell was retained.
+
+```{r ensemble, fig.width=15, fig.height=12, fig.cap="Ensemble maps. Columns show the median raw Z, the median meta Z, and the meta agreement, which is the fraction of runs with |meta Z| > 2 and the same sign as the median meta Z."}
+ens_genes <- unique(c("Axin2", "Irf8", variable_gene))
+ens_panel <- function(v, title, limits = NULL, diverging = TRUE) {
+  d <- data.frame(x = xy_use[, 1], y = xy_use[, 2], v = v)
+  p <- ggplot(d, aes(x, y, color = v)) +
+    geom_point(size = 0.12) +
+    coord_fixed() +
+    theme_void() +
+    labs(title = title, color = NULL)
+  if (diverging) {
+    p + scale_color_gradient2(low = "#0072B2", mid = "white", high = "#D55E00",
+                              midpoint = 0, limits = limits,
+                              na.value = "grey80")
+  } else {
+    p + scale_color_viridis_c(limits = c(0, 1), na.value = "grey80")
+  }
+}
+ens_plots <- lapply(ens_genes, function(g) {
+  m_raw <- cell_z(raw_z, g)
+  m_meta <- cell_z(meta_z, g)
+  med_raw <- apply(m_raw, 1, median, na.rm = TRUE)
+  med_meta <- apply(m_meta, 1, median, na.rm = TRUE)
+  agree <- rowMeans(sign(m_meta) == sign(med_meta) & abs(m_meta) > 2,
+                    na.rm = TRUE)
+  agree[!is.finite(med_meta)] <- NA
+  lim <- c(-1, 1) * max(abs(c(med_raw, med_meta)), na.rm = TRUE)
+  list(ens_panel(med_raw, paste(g, "median raw Z"), lim),
+       ens_panel(med_meta, paste(g, "median meta Z"), lim),
+       ens_panel(agree, paste(g, "meta agreement"), diverging = FALSE))
+})
+wrap_plots(unlist(ens_plots, recursive = FALSE), ncol = 3)
+```
+
+# Null calibration
+
+To interpret the fraction of $|Z| > 2$ pairs, we need its value when
+expression is unrelated to X. We obtain it from null runs. Each null run
+replaces X with a null version, keeps the expression and cell positions, and
+repeats the full pipeline: patches, filtering, DE, and meta analysis.
+
+We use two null versions of X:
+
+- **shuffle**: X is shuffled across epithelial cells. The null X has no
+  spatial structure, so this run tests the DE model on its own.
+- **rot180**: the immune cells are rotated by 180 degrees about the tissue
+  center, and X and the immune distance are recomputed from the rotated
+  positions. The null X keeps the spatial clustering of the real X at a new
+  position relative to the epithelial expression. This run tests the full
+  pipeline with a spatially structured X.
+
+A shuffle run near `r sprintf("%.1f%%", 200 * pnorm(-2))` shows that the DE
+model is calibrated. The difference between the rot180 and shuffle runs shows
+how many extra $|Z| > 2$ pairs a spatially structured X produces.
+
+```{r null-setup}
+# Add "flip_x" or "flip_y" for more null runs.
+null_transforms <- c("shuffle", "rot180")
+null_seed <- seeds[1]
+center <- apply(xy, 2, function(v) mean(range(v)))
+move_xy <- function(p, type) {
+  p <- as.matrix(p)
+  switch(type,
+         rot180 = sweep(-p, 2, 2 * center, "+"),
+         flip_x = cbind(2 * center[1] - p[, 1], p[, 2]),
+         flip_y = cbind(p[, 1], 2 * center[2] - p[, 2]))
+}
+
+# Moran's I with row-standardized weights on 10 nearest epithelial neighbors.
+nn10 <- FNN::get.knn(xy_use, k = 10)$nn.index
+moran_I <- function(v) {
+  z <- v - mean(v)
+  sum(z * rowMeans(matrix(z[nn10], nrow = nrow(nn10)))) / sum(z^2)
+}
+
+null_inputs <- lapply(null_transforms, function(type) {
+  if (type == "shuffle") {
+    # Shuffle X across cells. Immune cells do not move.
+    set.seed(null_seed)
+    return(list(X = sample(X_use), min_dist = dist_to_immune))
+  }
+  imm <- move_xy(xy[is_immune, , drop = FALSE], type)
+  # Same rule as X: immune cells among the 100 nearest neighbors. The pool
+  # contains each query cell itself, so we take 101 and drop the first.
+  pool <- rbind(as.matrix(xy[!is_immune, , drop = FALSE]), imm)
+  pool_immune <- rep(c(FALSE, TRUE), c(sum(!is_immune), nrow(imm)))
+  idx <- FNN::get.knnx(pool, xy_use, k = 101)$nn.index[, -1]
+  list(X = rowSums(matrix(pool_immune[idx], nrow = nrow(idx))),
+       min_dist = FNN::get.knnx(imm, xy_use, k = 1)$nn.dist[, 1])
+})
+names(null_inputs) <- null_transforms
+
+x_check <- data.frame(
+  X = c("real", null_transforms),
+  mean = c(mean(X_use), sapply(null_inputs, function(n) mean(n$X))),
+  sd = c(sd(X_use), sapply(null_inputs, function(n) sd(n$X))),
+  moran_I = c(moran_I(X_use), sapply(null_inputs, function(n) moran_I(n$X))),
+  cor_with_real = c(1, sapply(null_inputs, function(n) cor(n$X, X_use))),
+  row.names = NULL
+)
+x_check
+```
+
+A suitable null X has a mean, SD, and Moran's I (spatial autocorrelation)
+similar to the real X, and a correlation with the real X close to 0.
+
+```{r null-runs}
+# Same patching, filtering, DE, and meta analysis as the real runs.
+run_pipeline <- function(Xv, min_dist, seed) {
+  set.seed(seed)
+  fit <- getPatches(xy = xy_use, X = Xv, Z = Z_use, npatches = npatches,
+                    n_iters = n_iters, log_iters = TRUE, verbose = FALSE)
+  pd <- getPatchDiagnostics(xy = xy_use, X = Xv, patches = fit)$patch_diagnostics
+  pd$min_dist <- as.numeric(tapply(min_dist, fit$patch, min)[as.character(pd$patch)])
+  pd$mean_counts <- as.numeric(tapply(log_tot, fit$patch, mean)[as.character(pd$patch)])
+  keep <- with(pd, patch[
+    mean_counts > count_thresh & min_dist < dist_thresh &
+      n_cells >= min_cells & is.finite(x_sd) & x_sd >= min_x_sd &
+      !is.na(membership_stability) & membership_stability >= min_stability
+  ])
+  stopifnot(length(keep) >= 2)
+  patch <- fit$patch
+  patch[!(patch %in% keep)] <- NA
+  de <- patchDE(y = y, df = data.frame(X = Xv), patch = patch,
+                pearson = TRUE, tot = tot, verbose = FALSE)
+  meta <- patchMetaAnalysis(DEobj = de, W = getPatchAttributes(Z_use, patch),
+                            k = 10)
+  mz <- meta$X$ests / meta$X$ses
+  list(retained = length(keep),
+       raw = de$X$ests[, colnames(mz), drop = FALSE] /
+         de$X$ses[, colnames(mz), drop = FALSE],
+       meta = mz)
+}
+null_runs <- lapply(null_inputs, function(n) {
+  run_pipeline(n$X, n$min_dist, null_seed)
+})
+
+null_summary <- do.call(rbind, c(
+  list(data.frame(run = paste("real, seed", null_seed),
+                  retained = ncol(meta_z[[as.character(null_seed)]]),
+                  raw_Z2 = mean(abs(raw_z[[as.character(null_seed)]]) > 2, na.rm = TRUE),
+                  meta_Z2 = mean(abs(meta_z[[as.character(null_seed)]]) > 2, na.rm = TRUE))),
+  lapply(names(null_runs), function(type) {
+    r <- null_runs[[type]]
+    data.frame(run = paste("null", type), retained = r$retained,
+               raw_Z2 = mean(abs(r$raw) > 2, na.rm = TRUE),
+               meta_Z2 = mean(abs(r$meta) > 2, na.rm = TRUE))
+  })
+))
+null_summary
+```
+
+`raw_Z2` and `meta_Z2` are the fractions of gene and patch pairs with
+$|Z| > 2$; a standard normal Z gives `r sprintf("%.3f", 2 * pnorm(-2))`. The
+shuffle run gives `r sprintf("%.3f", null_summary$raw_Z2[null_summary$run == "null shuffle"])`
+for raw Z and `r sprintf("%.3f", null_summary$meta_Z2[null_summary$run == "null shuffle"])`
+for meta Z. The rot180 run gives
+`r sprintf("%.3f", null_summary$raw_Z2[null_summary$run == "null rot180"])` and
+`r sprintf("%.3f", null_summary$meta_Z2[null_summary$run == "null rot180"])`,
+and the real run gives `r sprintf("%.3f", null_summary$raw_Z2[1])` and
+`r sprintf("%.3f", null_summary$meta_Z2[1])`. The figure below shows the full Z
+distributions.
+
+```{r null-distribution, fig.width=12, fig.height=7, fig.cap="Z scores in the real run and the null runs. The black curve is the standard normal density."}
+z_long <- function(z, run, stage) {
+  z <- as.numeric(z)
+  data.frame(run = run, stage = stage, z = z[is.finite(z)])
+}
+real_key <- as.character(null_seed)
+null_z <- rbind(
+  z_long(raw_z[[real_key]], "real", "raw"),
+  z_long(meta_z[[real_key]], "real", "meta"),
+  do.call(rbind, lapply(names(null_runs), function(type) rbind(
+    z_long(null_runs[[type]]$raw, paste("null", type), "raw"),
+    z_long(null_runs[[type]]$meta, paste("null", type), "meta")
+  )))
+)
+null_z$stage <- factor(null_z$stage, levels = c("raw", "meta"))
+ggplot(null_z, aes(z)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = 0.25,
+                 fill = "#56B4E9", color = "white") +
+  stat_function(fun = dnorm) +
+  geom_vline(xintercept = c(-2, 2), linetype = "dashed", color = "red") +
+  facet_grid(stage ~ run) +
+  coord_cartesian(xlim = c(-8, 8)) +
+  theme_minimal() +
+  labs(x = "Z score", y = "Density")
+```
 
 # Session info
 
