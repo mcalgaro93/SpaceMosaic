@@ -15,7 +15,7 @@
 #' @param standardize Logical; divide centered residuals by
 #'   `sqrt(mean(residual_centered^2))` for map colors or scatterplot coordinates
 #'   only. In the scatterplot, divide the spatial lag by the same residual
-#'   scale. For `plotMoranLocal()`, instead use `lag_scaled` to express local
+#'   scale. For `plotMoranLocal()`, instead use `local_i_scaled` to express local
 #'   statistics on a scale whose within-patch mean equals global Moran's I.
 #'   Default FALSE.
 #' @param size Non-negative numeric point size, passed to `ggplot2`.
@@ -46,16 +46,16 @@
 #' local association, not statistical significance. Values are not restricted
 #' to the interval from -1 to 1. With the binary, non-row-standardized weights used by
 #' [getMoranLocal()], magnitudes also depend on the number of graph neighbors.
-#' With `standardize = TRUE`, plot
-#' `residual_centered * lag_scaled / mean(residual_centered^2)` instead.
+#' With `standardize = TRUE`, plot the `local_i_scaled` column returned by
+#' [getMoranLocal()] directly; this column is required in the input data.
 #' This multiplies `local_i` by `n / S0`, the inverse mean number of graph
 #' neighbors, so the mean displayed value equals the observed global Moran's I.
 #' It does not normalize weights separately for each cell or remove differences
 #' in graph geometry, and displayed values can still exceed the interval from
 #' -1 to 1. Plot data retain the input columns and include `local_i_plot`,
 #' the displayed values; input local statistics and quadrants are unchanged.
-#' For multiple patches, standardization is performed separately within each
-#' patch, so each patch's mean displayed value equals its own global Moran's I.
+#' [getMoranLocal()] computes scaled values separately within each patch, so
+#' each patch's mean displayed value equals its own global Moran's I.
 #' All selected patches share one fill scale and are shown together in their
 #' original spatial coordinates, without adding graph links between patches.
 #' Use common fill limits when comparing separate maps across genes or patches.
@@ -145,13 +145,9 @@ plotMoranLocal <- function(data, standardize = FALSE, size = 1, alpha = 1,
   if (!is.logical(standardize) || length(standardize) != 1L || is.na(standardize)) {
     stop("standardize must be TRUE or FALSE.")
   }
-  columns <- c("x", "y", "local_i", if (standardize) "lag_scaled")
-  data <- .prepareMoranPlotData(data, columns, size, alpha)
-  data$local_i_plot <- data$local_i
-  if (standardize) {
-    m2 <- stats::ave(data$residual_centered^2, as.character(data$patch), FUN = mean)
-    data$local_i_plot <- data$residual_centered * data$lag_scaled / m2
-  }
+  value_column <- if (standardize) "local_i_scaled" else "local_i"
+  data <- .prepareMoranPlotData(data, c("x", "y", value_column), size, alpha)
+  data$local_i_plot <- data[[value_column]]
   limit <- max(abs(data$local_i_plot))
   # Keep a non-degenerate scale when every local statistic is zero.
   if (limit == 0) limit <- 1
@@ -273,7 +269,8 @@ plotMoranScatter <- function(data, standardize = FALSE, size = 1, alpha = 0.7) {
   if ("k" %in% names(data) && (anyNA(data$k) || length(unique(data$k)) != 1L)) {
     stop("data must come from a single spatial graph configuration.")
   }
-  numeric_columns <- intersect(c("x", "y", "residual_centered", "lag_scaled", "local_i"), required)
+  numeric_columns <- intersect(c("x", "y", "residual_centered", "lag_scaled",
+                                 "local_i", "local_i_scaled"), required)
   for (column in numeric_columns) {
     if (!is.numeric(data[[column]]) || any(!is.finite(data[[column]]))) {
       stop("Column '", column, "' must contain finite numeric values.")

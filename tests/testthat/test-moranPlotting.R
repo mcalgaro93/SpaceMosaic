@@ -76,6 +76,7 @@ test_that("standardized local maps average to global Moran and match scatter pro
   p <- plotMoranLocal(d, standardize = TRUE)
   global <- getMoranGlobal(r, xy, k = 5, verbose = FALSE)
   expect_equal(mean(p$data$local_i_plot), global$observed)
+  expect_equal(p$data$local_i_plot, d$local_i_scaled)
   scatter <- plotMoranScatter(d, standardize = TRUE)$data
   expect_equal(p$data$local_i_plot, scatter$residual_plot * scatter$lag_plot)
   expect_identical(p$data[names(d)], d)
@@ -110,11 +111,16 @@ test_that("local maps require finite numeric local statistics", {
   }
   without_lag <- d[, setdiff(names(d), "lag_scaled")]
   expect_s3_class(plotMoranLocal(without_lag), "ggplot")
-  expect_error(plotMoranLocal(without_lag, standardize = TRUE),
-               "Missing columns in data: lag_scaled", fixed = TRUE)
-  d$lag_scaled[1] <- Inf
-  expect_error(plotMoranLocal(d, standardize = TRUE),
-               "Column 'lag_scaled' must contain finite numeric values", fixed = TRUE)
+  expect_s3_class(plotMoranLocal(without_lag, standardize = TRUE), "ggplot")
+  without_scaled <- d[, setdiff(names(d), "local_i_scaled")]
+  expect_s3_class(plotMoranLocal(without_scaled), "ggplot")
+  expect_error(plotMoranLocal(without_scaled, standardize = TRUE),
+               "Missing columns in data: local_i_scaled", fixed = TRUE)
+  for (invalid in list(NA_real_, NaN, Inf, -Inf, "1")) {
+    d$local_i_scaled <- invalid
+    expect_error(plotMoranLocal(d, standardize = TRUE),
+                 "Column 'local_i_scaled' must contain finite numeric values", fixed = TRUE)
+  }
 })
 
 test_that("maps place context and selected patch outlines behind the cells", {

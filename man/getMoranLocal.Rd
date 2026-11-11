@@ -29,7 +29,7 @@ and then original cell position. Columns include \code{cell_index} (input row
 number), \code{cell_id} (residual row names, coordinate row names, or input row
 numbers as character strings), \code{patch}, \code{gene}, \code{x}, \code{y}, \code{n_cells},
 \code{residual}, \code{residual_centered}, \code{lag_centered}, \code{lag_scaled}, \code{local_i},
-\code{quadrant}, \code{k}, \code{effective_k}, \code{complete_graph},
+\code{local_i_scaled}, \code{quadrant}, \code{k}, \code{effective_k}, \code{complete_graph},
 and \code{status}.
 
 Unassigned cells are retained with status \code{"unassigned cell"}. Patch-gene
@@ -64,6 +64,10 @@ cells. Note that binary weights are not normalized by row, so this is not a
 neighbor average.}
 \item{\code{local_i}}{\code{z * lag_centered / m2}, local Moran's I
 (this corresponds to the \code{mlvar = TRUE} convention in \code{spdep}).}
+\item{\code{local_i_scaled}}{\code{(n / S0) * local_i}, local contributions whose
+within-patch mean equals observed global Moran's I. This adjusts for the
+mean number of graph neighbors, but does not remove differences in graph
+geometry or restrict values to the interval from -1 to 1.}
 \item{\code{lag_scaled}}{\code{(n / S0) * lag_centered}. A scatterplot with
 \code{residual_centered} on the x-axis and \code{lag_scaled} on the y-axis has a
 regression slope through the origin equal to the observed global
@@ -75,7 +79,8 @@ describe signs, not statistical significance.}
 }
 
 The local statistics satisfy \code{sum(local_i) / S0 = I_global}. Global Moran's
-I can also be recovered as \code{sum(residual_centered * lag_scaled) / sum(residual_centered^2)}.
+I also equals \code{mean(local_i_scaled)} and can be recovered as
+\code{sum(residual_centered * lag_scaled) / sum(residual_centered^2)}.
 
 A graph is built once per patch and reused across genes. Subset genes and
 cells before calling this function to limit the size of its cell-level
@@ -92,6 +97,7 @@ residuals <- c(-3, -1, 1, 3)
 local <- getMoranLocal(residuals, xy, k = 1, verbose = FALSE)
 global <- getMoranGlobal(residuals, xy, k = 1, verbose = FALSE)
 with(local, sum(residual_centered * lag_scaled) / sum(residual_centered^2))
+mean(local$local_i_scaled)
 global$observed
 plot(local$residual_centered, local$lag_scaled,
      xlab = "Centered residual", ylab = "Globally scaled spatial lag")

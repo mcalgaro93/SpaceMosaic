@@ -8,6 +8,7 @@ test_that("local Moran matches a hand-calculated chain graph", {
   expect_equal(result$residual_centered, r)
   expect_equal(result$lag_centered, c(-1, -2, 2, 1))
   expect_equal(result$local_i, c(0.6, 0.4, 0.4, 0.6))
+  expect_equal(result$local_i_scaled, c(6, 4, 4, 6) / 15)
   expect_equal(result$lag_scaled, (4 / 6) * result$lag_centered)
   expect_equal(with(result, sum(residual_centered * lag_scaled) / sum(residual_centered^2)), 1 / 3)
   expect_equal(sum(result$local_i) / 6, 1 / 3)
@@ -30,6 +31,7 @@ test_that("local statistics and scatterplot slopes reproduce global Moran", {
                    local$gene == global$gene[i], ]
       W <- SpaceMosaic:::.buildContiguityGraph(xy[d$cell_index, , drop = FALSE], k = k)
       expect_equal(sum(d$local_i) / sum(W), global$observed[i])
+      expect_equal(mean(d$local_i_scaled), global$observed[i])
       # Fitted slope in the displayed scatterplot has the same value.
       expect_equal(sum(d$residual_centered * d$lag_scaled) / sum(d$residual_centered^2),
                    global$observed[i])
@@ -54,6 +56,7 @@ test_that("local Moran is scale invariant while centered residuals and lags reta
   expect_equal(transformed$lag_centered, 4 * original$lag_centered)
   expect_equal(transformed$lag_scaled, 4 * original$lag_scaled)
   expect_equal(transformed$local_i, original$local_i)
+  expect_equal(transformed$local_i_scaled, original$local_i_scaled)
   expect_identical(transformed$quadrant, original$quadrant)
 
   # Equivalent to the former standardized-residual formulation.
@@ -77,7 +80,7 @@ test_that("local Moran retains invalid combinations without changing the graph",
   expect_true(all(a$status[a$gene == "invalid"] == "non-finite residuals"))
   expect_true(all(result$status[result$cell_index %in% 4:6] == "fewer than three cells"))
   invalid <- result$status != "ok"
-  for (field in c("residual_centered", "lag_centered", "lag_scaled", "local_i")) {
+  for (field in c("residual_centered", "lag_centered", "lag_scaled", "local_i", "local_i_scaled")) {
     expect_true(all(is.na(result[[field]][invalid])))
   }
   expect_true(all(is.na(result$quadrant[invalid])))
@@ -92,6 +95,7 @@ test_that("quadrants distinguish discordance and leave zero axes unclassified", 
   result <- getMoranLocal(c(-1, 0, 1), xy[1:3, ], k = 1, verbose = FALSE)
   expect_true(all(is.na(result$quadrant)))
   expect_equal(result$local_i, rep(0, 3))
+  expect_equal(result$local_i_scaled, rep(0, 3))
 })
 
 test_that("complete graphs are flagged without discarding valid calculations", {
@@ -101,12 +105,14 @@ test_that("complete graphs are flagged without discarding valid calculations", {
     "using k = 2", fixed = TRUE
   )
   expect_true(all(result$complete_graph))
+  expect_equal(mean(result$local_i_scaled), -1 / 2)
   expect_true(all(result$status == "ok"))
   expect_equal(with(result, sum(residual_centered * lag_scaled) / sum(residual_centered^2)), -1 / 2)
   expect_identical(result$effective_k, rep(2L, 3))
 
   result <- getMoranLocal(c(-1, 0, 1), xy, k = 2, verbose = FALSE)
   expect_true(all(result$complete_graph))
+  expect_equal(mean(result$local_i_scaled), -1 / 2)
   expect_equal(with(result, sum(residual_centered * lag_scaled) / sum(residual_centered^2)), -1 / 2)
 })
 

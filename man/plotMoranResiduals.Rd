@@ -53,7 +53,7 @@ individual cells: their lag values refer to the complete original patch.}
 \item{standardize}{Logical; divide centered residuals by
 \code{sqrt(mean(residual_centered^2))} for map colors or scatterplot coordinates
 only. In the scatterplot, divide the spatial lag by the same residual
-scale. For \code{plotMoranLocal()}, instead use \code{lag_scaled} to express local
+scale. For \code{plotMoranLocal()}, instead use \code{local_i_scaled} to express local
 statistics on a scale whose within-patch mean equals global Moran's I.
 Default FALSE.}
 
@@ -103,16 +103,16 @@ values indicate discordant signs (High-Low or Low-High). Colors describe
 local association, not statistical significance. Values are not restricted
 to the interval from -1 to 1. With the binary, non-row-standardized weights used by
 \code{\link[=getMoranLocal]{getMoranLocal()}}, magnitudes also depend on the number of graph neighbors.
-With \code{standardize = TRUE}, plot
-\code{residual_centered * lag_scaled / mean(residual_centered^2)} instead.
+With \code{standardize = TRUE}, plot the \code{local_i_scaled} column returned by
+\code{\link[=getMoranLocal]{getMoranLocal()}} directly; this column is required in the input data.
 This multiplies \code{local_i} by \code{n / S0}, the inverse mean number of graph
 neighbors, so the mean displayed value equals the observed global Moran's I.
 It does not normalize weights separately for each cell or remove differences
 in graph geometry, and displayed values can still exceed the interval from
 -1 to 1. Plot data retain the input columns and include \code{local_i_plot},
 the displayed values; input local statistics and quadrants are unchanged.
-For multiple patches, standardization is performed separately within each
-patch, so each patch's mean displayed value equals its own global Moran's I.
+\code{\link[=getMoranLocal]{getMoranLocal()}} computes scaled values separately within each patch, so
+each patch's mean displayed value equals its own global Moran's I.
 All selected patches share one fill scale and are shown together in their
 original spatial coordinates, without adding graph links between patches.
 Use common fill limits when comparing separate maps across genes or patches.

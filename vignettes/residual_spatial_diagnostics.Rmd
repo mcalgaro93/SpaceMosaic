@@ -56,7 +56,7 @@ In particular, we show:
 - how residual autocorrelation varies with different patch sizes and the number
   of neighbors used to define the spatial graphs used to compute the statistics.
 
-# Set up patches and differential expression
+## Set up patches and differential expression
 
 We reuse the "Immune Surveillance" scenario from `vignette("mouse_colon")`: *how
 does the transcriptional state of the colon epithelium change as a function of
@@ -663,14 +663,14 @@ determines which within-patch spatial relationships enter the statistic.
 Sensitivity to these choices helps us assess whether the residual patterns
 identified above persist across spatial scales.
 
+## Varying the neighborhood 
+
 We begin by varying only the number of neighbors used for Moran's I, keeping the
 current 100-patch partition and the fitted regression residuals fixed. This
 isolates the effect of the diagnostic graph: the expression data, patch
 membership, regression model, and residual values are identical in all
 comparisons. Changing the patch configuration would also require refitting the
 within-patch models and will be considered separately.
-
-## Varying the neighborhood at fixed patches and residuals
 
 We compare `k = 5, 10, 20`, using `k = 10` as the reference from the preceding
 sections.
@@ -697,11 +697,14 @@ moran_res_k <- dplyr::bind_rows(moran_by_k) |>
     dplyr::mutate(delta_i = observed - expected)
 ```
 
-We first check how many patch-gene pairs are available for each neighborhood
-size. When the requested `k` exceeds the available neighbors, it is reduced to
-`n_cells - 1` rather than excluding the patch. In this dataset, all patches have
-more than 20 cells, so all three requested neighborhood sizes can be used
-without reduction.
+
+### Summarizing residual spatial autocorrelation
+
+The number of patch-gene pairs remains stable across all three neighborhood 
+sizes. Note that, when the requested `k` exceeds the available neighbors, it is 
+reduced to `n_cells - 1` rather than excluding the patch. In this dataset, all 
+patches have more than 20 cells, so all three requested neighborhood sizes can 
+be used without reduction.
 
 ```{r moran-neighborhood-counts}
 moran_res_k |>
@@ -742,7 +745,7 @@ ggplot(moran_res_k_ok, aes(x = delta_i)) +
     )
 ```
 
-## Concordance of the top patch-gene pairs across neighborhood sizes
+### Concordance of the top patch-gene pairs
 
 The distributions above describe how the magnitude of residual spatial
 autocorrelation changes with `k`, but do not show whether the same patch-gene
@@ -825,7 +828,7 @@ graph that takes into account dynamically varying neighborhood sizes based on
 local cell density or other biological factors (e.g., adaptive k-nearest
 neighbors, delaunay triangulation, or spatially weighted graphs).
 
-## Patches and genes to investigate
+### Patch and gene level summaries
 
 To better understand how the highest residual spatial autocorrelations
 distribute across patches and genes, we can compare the patches with the highest
@@ -931,7 +934,107 @@ ggplot(
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-# Joint sensitivity to patch and neighborhood size
+### Visualizing residual spatial structure in patches
+
+To investigate how the spatial structure of Fos residuals changes with 
+neighborhood size, we can compute local Moran's I for each of the three 
+neighborhood sizes and visualize the results.
+
+```{r moran-local-k}
+# Calculate local Moran's I for Fos residuals with different k values
+moran_local_by_k <- lapply(c(5, 10, 20), function(k) {
+    getMoranLocal(
+        residuals = de_res$residuals[, gene_of_interest, drop = FALSE],
+        xy = spatialCoords(spe)[use, , drop = FALSE],
+        patch = patches,
+        k = k
+    )
+})
+names(moran_local_by_k) <- k_values
+```
+
+Figure \@ref(fig:patch-residuals-k-plot) shows the spatial structure of Fos
+residuals in patch 49 taken as an example across different neighborhood sizes. 
+With k = 20 the dilution of the local Moran's I is evident in the top-right 
+panel, where the local Moran's I values are lower and more uniform across cells.
+
+```{r patch-residuals-k-plot, fig.cap="Spatial structure of Fos residuals in patch 43 where delta I exceeds the threshold. For each k, the top row shows the spatial distribution of residuals and local Moran's I, bottom row shows the residual–lag quadrants and the Moran scatterplot.", fig.width = 12, fig.height = 5, message = FALSE}
+#| fig-width: 12
+#| fig-height: 5
+#| message: false
+patch_id <- 43
+# For each patch, create a map of the spatial distribution of Fos residuals
+k_plot_list <- list()
+for (k in k_values) {
+    # Get cell coordinates and residuals for the gene of interest
+    moran_local_patch <- moran_local_by_k[[as.character(k)]] 
+    moran_local_patch <- moran_local_patch[moran_local_patch$patch == patch_id & 
+        moran_local_patch$status == "ok", ]
+
+    p1 <- plotMoranResiduals(
+        data = moran_local_patch,
+        standardize = TRUE,
+        size = 2, alpha = 1,
+        background = coords, polygons = poly_df,
+        background_alpha = 0.7,
+        aspect = "free"
+    ) +
+        scale_fill_gradient2(
+            low = "blue", mid = "white", high = "red",
+            midpoint = 0, limits = c(-2, 6)
+        ) +
+        # Add title and subtitle in the first panel
+        labs(
+            title = paste0("K = ", k, ", Patch ", patch_id),
+            subtitle = paste0(
+                "Observed Moran's I = ",
+                round(moran_res_k_ok$observed[moran_res_k_ok$patch == patch_id &
+                    moran_res_k_ok$gene == gene_of_interest & 
+                    moran_res_k_ok$k == k], 3)
+            )
+        )
+
+    p2 <- plotMoranLocal(
+        data = moran_local_patch,
+        standardize = TRUE,
+        size = 2, alpha = 1,
+        background = coords,
+        polygons = poly_df,
+        background_alpha = 0.7,
+        aspect = "free"
+    ) +
+        scale_fill_gradient2(
+            low = "purple", mid = "white", high = "brown",
+            midpoint = 0, limits = c(-9, 15)
+        )
+
+    p3 <- plotMoranQuadrants(
+        data = moran_local_patch,
+        size = 2, alpha = 1,
+        background = coords,
+        polygons = poly_df,
+        background_alpha = 0.7,
+        aspect = "free"
+    )
+
+    p4 <- plotMoranScatter(
+        data = moran_local_patch,
+        standardize = TRUE,
+        size = 2, alpha = 0.5
+    ) +
+        scale_x_continuous(limits = c(-2, 6)) +
+        scale_y_continuous(limits = c(-1.5, 2.5))
+
+    k_plot_list[[paste0("k_", k)]] <- ((p1 | p2) / (p3 | p4)) +
+        plot_layout(widths = c(1, 1), heights = c(1, 1))
+}
+
+patchwork::wrap_plots(k_plot_list, ncol = 3) +
+    plot_layout(widths = 1, guides = "collect") &
+    theme(legend.position = "bottom")
+```
+
+## Varying the patch size and the neighborhood
 
 We now compare a 3 x 3 grid of patch configurations (`npatches = 50, 100,
 200`) and Moran neighborhood sizes (`k = 5, 10, 20`). For each patch
@@ -965,6 +1068,7 @@ patch_grid_results <- lapply(npatches_values, function(npatches_value) {
     if (npatches_value == 100L) {
         patch_result <- patches_res
         patch_diagnostics <- diagnostics
+        residuals <- de_res$residuals
         moran_result <- dplyr::filter(moran_res_k, k %in% grid_k_values)
     } else {
         set.seed(patch_seed)
@@ -990,9 +1094,10 @@ patch_grid_results <- lapply(npatches_values, function(npatches_value) {
             tot = grid_tot,
             return_residuals = TRUE
         )
+        residuals <- fit$residuals
         moran_result <- dplyr::bind_rows(lapply(grid_k_values, function(k_value) {
             getMoranGlobal(
-                residuals = fit$residuals,
+                residuals = residuals,
                 xy = grid_xy,
                 patch = patch_result$patch,
                 k = k_value,
@@ -1003,6 +1108,7 @@ patch_grid_results <- lapply(npatches_values, function(npatches_value) {
     list(
         patches = patch_result,
         diagnostics = patch_diagnostics,
+        residuals = residuals[, "Fos", drop = FALSE],
         moran = dplyr::mutate(moran_result,
             npatches = npatches_value,
             delta_i = observed - expected
@@ -1040,10 +1146,15 @@ moran_res_grid_ok <- moran_res_grid |>
     dplyr::filter(status == "ok")
 ```
 
-## Patch sizes and availability of Moran results
+### Summarizing residual spatial autocorrelation
 
 Before comparing distributions, we summarize the realized patch sizes and the
 status of all patch-gene calculations. 
+
+Unsurprisingly, the number of cells per patch decreases as the number of patches 
+increases. Note that the patch with the fewest cells has 22 cells in the 
+200-patch configuration, so all requested neighborhood sizes are available for 
+all patches. 
 
 ```{r moran-grid-diagnostics}
 patch_size_grid <- dplyr::bind_rows(lapply(npatches_values, function(n) {
@@ -1060,7 +1171,20 @@ patch_size_grid |>
         max_cells = max(n_cells),
         .groups = "drop"
     )
+```
 
+As the number of patches increases, the percentage of patch-gene pairs with 
+constant residuals (`status = "constant residuals"`) also increases. This is 
+expected: smaller patches are more likely to contain no cells with detectable 
+expression of a rarely expressed gene, resulting in all-zero residuals. For 
+intuition, if a gene is detected in each cell independently with probability 
+$p$, the probability of observing zero counts in every cell of a patch 
+containing $n$ cells is $(1-p)^n$. For $p = 0.01$, this probability is 
+approximately 0.61 for 50 cells and 0.13 for 200 cells. This simplified example 
+illustrates the effect of patch size; in real data, expression also depends on 
+cell composition and spatial organization.
+
+```{r moran-grid-status}
 moran_res_grid |>
     dplyr::filter(k == 10) |>
     dplyr::count(npatches, status, name = "n_patch_gene_pairs") |>
@@ -1079,10 +1203,10 @@ moran_res_grid |>
 #   )
 ```
 
-As the number of patches increases, the percentage of patch-gene pairs with constant residuals (status = "constant residuals") also increases. This is expected: smaller patches are more likely to contain no cells with detectable expression of a rarely expressed gene, resulting in all-zero residuals. For intuition, if a gene is detected in each cell independently with probability $p$, the probability of observing zero counts in every cell of a patch containing $n$ cells is $(1-p)^n$. For $p = 0.01$, this probability is approximately 0.61 for 50 cells and 0.13 for 200 cells. This simplified example illustrates the effect of patch size; in real data, expression also depends on cell composition and spatial organization.
-
 ```{r, eval=FALSE}
-# This chunk checks how many patch-gene pairs have all-zero counts, among those with constant residuals. It is not evaluated in the vignette to avoid long computation time.
+# This chunk checks how many patch-gene pairs have all-zero counts, among those 
+# with constant residuals. It is not evaluated in the vignette to avoid long 
+# computation time.
 grid_counts <- t(assay(spe, "counts")[, use, drop = FALSE])
 constant_pairs <- moran_res_grid |>
     dplyr::filter(k == 10L, status == "constant residuals")
@@ -1127,8 +1251,6 @@ constant_residuals_summary <- dplyr::bind_rows(
 
 constant_residuals_summary
 ```
-
-## Comparing global Moran distributions
 
 We compare the displacement $\Delta I = I - E(I)$, as in the preceding
 sections. Each distribution pools valid patch-gene pairs within one
@@ -1266,10 +1388,11 @@ moran_grid_summary <- moran_res_grid_ok |>
 moran_grid_summary
 ```
 
-## Concordance of the top patch-gene pairs across patch configurations and neighborhood sizes
+### Concordance of the top patch-gene pairs
 
 We can examine the consistency of the top patch-gene pairs across different k 
-for 50, 100, and 200 patches. The concordance-at-the-top (CAT) plot is used again to compare the rankings.
+for 50, 100, and 200 patches. The concordance-at-the-top (CAT) plot is used 
+again to compare the rankings.
 
 ```{r moran_k_grid_ranked}
 moran_k_grid_ranked <- moran_res_grid_ok |>
@@ -1281,14 +1404,21 @@ moran_k_grid_ranked <- moran_res_grid_ok |>
     dplyr::select(npatches, k, pair_id, rank, delta_i)
 ```
 
-In \@ref(fig:moran-k-grid-cat), the relative pattern of concordance is consistent across patch configurations: comparisons between adjacent neighborhood sizes show greater overlap than the comparison between k = 5 and k = 20. However, for each comparison, the proportion of shared pairs decreases as the number of patches increases, even when considering the same top fraction (1%) of valid patch-gene pairs. One possible explanation is that fitting the model within smaller, more homogeneous patches absorbs part of the broader spatial structure, weakening the residual signal and making the top-ranked sets less distinct.
+In \@ref(fig:moran-k-grid-cat), the relative pattern of concordance is 
+consistent across patch configurations: comparisons between adjacent 
+neighborhood sizes show greater overlap than the comparison between k = 5 and 
+k = 20. However, for each comparison, the proportion of shared pairs decreases 
+as the number of patches increases, even when considering the same top fraction 
+(1%) of valid patch-gene pairs. One possible explanation is that fitting the 
+model within smaller, more homogeneous patches absorbs part of the broader 
+spatial structure, weakening the residual signal and making the top-ranked sets 
+less distinct.
 
 ```{r moran-k-grid-cat, fig.width=10, fig.height=6, fig.cap="Concordance at the top between rankings obtained with k = 5, 10, 20 for each patch configuration. Each curve shows the proportion of shared patch-gene pairs among the first m positions of two rankings."}
 #| fig-width: 10
 #| fig-height: 6
 ranked_lists_grid <- split(moran_k_grid_ranked$pair_id, list(moran_k_grid_ranked$npatches, moran_k_grid_ranked$k))
 
-max_depth_grid <- 500
 # Combination are meaningful only within the same npatches configuration
 npatches_comparisons <- lapply(npatches_values, function(n) {
     pairs <- combn(grid_k_values, 2, simplify = FALSE)
@@ -1327,12 +1457,15 @@ ggplot(
     )
 ```
 
-## Patches and genes to investigate
+### Patch and gene level summaries
 
 For each patch configuration, we can identify the patches and genes with the
 largest number of residual spatial autocorrelations above the threshold.
 
-As expected, the threshold decreases as the number of patches increases, in line of what we observed in \@ref(fig:moran-grid-density). The upper tail of the distribution is shorter for larger numbers of patches, which leads to a lower threshold.
+As expected, the threshold decreases as the number of patches increases, in line 
+of what we observed in \@ref(fig:moran-grid-density). The upper tail of the 
+distribution is shorter for larger numbers of patches, which leads to a lower 
+threshold.
 
 ```{r}
 threshold_by_grid <-
@@ -1344,9 +1477,9 @@ threshold_by_grid <-
 threshold_by_grid
 ```
 
-As the patch identifiers are not consistent across configurations of different sizes, 
-we summarize the number of genes above the threshold for each patch within each 
-`npatches` configuration in \@ref(fig:top-patches-plot-grid).
+As the patch identifiers are not consistent across configurations of different 
+sizes, we summarize the number of genes above the threshold for each patch 
+within each `npatches` configuration in \@ref(fig:top-patches-plot-grid).
 
 ```{r top-patches-plot-grid, fig.width=20, fig.height=7, fig.cap="Number of genes with residual spatial autocorrelation above the threshold for each patch, faceted by neighborhood size (k) and number of patches. Patches are ordered by the number of genes above the threshold within each patch size configuration.", fig.align = 'center'}
 #| fig-width: 20
@@ -1377,11 +1510,19 @@ ggplot(
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-The larger numbers of genes above threshold for k = 20 and 200 patches should be interpreted in light of the lower cutoff (0.11, compared with 0.26 for k = 20 and 50 patches). Because the threshold is based on patch-specific maxima, a shorter upper tail can lower the cutoff and allow genes with smaller $\Delta I$ values to exceed it. For illustration, a value decreasing from 0.20 to 0.15 would move from below 0.26 to above 0.11. Thus, more genes above the configuration-specific threshold do not necessarily indicate stronger residual spatial autocorrelation.
+The larger numbers of genes above threshold for k = 20 and 200 patches should be 
+interpreted in light of the lower cutoff (0.11, compared with 0.26 for k = 20 
+and 50 patches). Because the threshold is based on patch-specific maxima, a 
+shorter upper tail can lower the cutoff and allow genes with smaller $\Delta I$ 
+values to exceed it. For illustration, a value decreasing from 0.20 to 0.15 
+would move from below 0.26 to above 0.11. Thus, more genes above the 
+configuration-specific threshold do not necessarily indicate stronger residual 
+spatial autocorrelation.
 
 Figure \@ref(fig:top-genes-plot-grid) shows, the number of patches with residual
-spatial autocorrelation above the threshold for the top 10 genes within each patch size configuration, faceted by
-neighborhood size (k) and number of patches.
+spatial autocorrelation above the threshold for the genes (top 10 for 
+visualization) within each patch size configuration, faceted by neighborhood 
+size (k) and number of patches.
 
 ```{r top-genes-plot-grid, fig.width=20, fig.height=7, fig.cap="Number of patches with residual spatial autocorrelation above the threshold for each gene, faceted by neighborhood size (k) and number of patches. Genes are ordered by the number of patches above the threshold within each patch size configuration.", fig.align = 'center'}
 #| fig-width: 7
@@ -1415,7 +1556,7 @@ ggplot(
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-## Fos residual spatial autocorrelation across spatial scales
+### Fos residual spatial autocorrelation across spatial scales
 
 We return to Fos to examine whether the regions with elevated residual spatial
 autocorrelation remain recognizable across patch configurations and
@@ -1484,7 +1625,7 @@ fos_fill_limits <- range(c(
 ```
 
 ```{r moran-grid-fos-map, fig.width=11, fig.height=10, fig.cap="Spatial distribution of Fos residual Moran displacement. Columns show the requested number of patches and rows show k. All panels share the same spatial extent and color scale. Polygons show patch convex hulls; patches without a valid Moran result are grey."}
-ggplot() +
+fos_grid_map <- ggplot() +
     geom_point(
         data = coords, aes(x = x, y = y),
         color = "grey90", size = 0.15
@@ -1510,6 +1651,100 @@ ggplot() +
     labs(
         title = "Fos residual spatial autocorrelation across spatial scales",
         fill = expression(Delta * I)
+    )
+
+fos_grid_map
+```
+
+Now we zoom into the patch with the largest Fos residual spatial autocorrelation
+for npatches = 50 and k = 10. We reuse the global map and its color scale, adding
+each patch's $\Delta I$ at its centroid.
+
+```{r moran-grid-fos-zoom, fig.width=11, fig.height=10}
+fos_patch_of_interest <- fos_moran_grid |>
+    dplyr::filter(npatches == 50, k == 10, status == "ok") |>
+    dplyr::slice_max(delta_i, n = 1, with_ties = FALSE) |>
+    dplyr::pull(patch)
+
+reference_polygon <- fos_grid_polygons |>
+    dplyr::filter(npatches == 50, k == 10, patch == fos_patch_of_interest) |>
+    dplyr::select(x, y)
+
+fos_zoom_x <- range(reference_polygon$x) + c(-50, 50)
+fos_zoom_y <- range(reference_polygon$y) + c(-50, 50)
+
+fos_centroids <- fos_grid_polygons |>
+    dplyr::filter(is.finite(delta_i)) |>
+    dplyr::group_by(npatches, k, patch, delta_i) |>
+    dplyr::summarise(x = mean(x), y = mean(y), .groups = "drop")
+
+fos_grid_map +
+    geom_text(
+        data = fos_centroids,
+        aes(x = x, y = y, label = round(delta_i, 2)),
+        size = 3, na.rm = TRUE
+    ) +
+    coord_fixed(
+        xlim = fos_zoom_x, ylim = fos_zoom_y
+    ) +
+    geom_polygon(
+        data = reference_polygon,
+        aes(x = x, y = y),
+        color = "black", linewidth = 0.5, fill = NA
+    ) +
+    labs(title = "Fos residual spatial autocorrelation: region of interest")
+```
+
+We next show cell-level local Moran's I in the same region, leaving patch
+outlines unfilled. All panels use a common color scale for `local_i_scaled`.
+These contributions are adjusted for the mean number of graph neighbors and
+average to the observed global Moran's I within each patch. Differences in graph
+geometry remain.
+Cells without a valid local statistic are grey.
+
+```{r moran-grid-fos-local, fig.width=11, fig.height=10}
+fos_local_grid <- dplyr::bind_rows(lapply(npatches_values, function(n) {
+    dplyr::bind_rows(lapply(grid_k_values, function(k_value) {
+        getMoranLocal(
+            residuals = patch_grid_results[[as.character(n)]]$residuals[, "Fos", drop = FALSE],
+            xy = grid_xy,
+            patch = patch_grid_results[[as.character(n)]]$patches$patch,
+            k = k_value, verbose = FALSE
+        ) |>
+            dplyr::mutate(npatches = n, k = factor(k, levels = grid_k_values))
+    }))
+})) 
+
+ggplot() +
+    geom_point(data = coords, aes(x = x, y = y), color = "grey90", size = 0.15) +
+    geom_point(
+        data = fos_local_grid, aes(x = x, y = y, fill = local_i_scaled),
+        shape = 21, color = "grey30", stroke = 0.15, size = 2, alpha = 1
+    ) +
+    geom_polygon(
+        data = fos_grid_polygons, aes(x = x, y = y, group = patch),
+        fill = NA, color = "grey65", linewidth = 0.2
+    ) +
+    geom_polygon(
+        data = reference_polygon, aes(x = x, y = y),
+        fill = NA, color = "black", linewidth = 0.5
+    ) +
+    geom_text(
+        data = fos_centroids, aes(x = x, y = y, label = round(delta_i, 2)), size = 3
+    ) +
+    facet_grid(k ~ npatches, labeller = label_both) +
+    scale_fill_gradient2(
+        low = "blue", mid = "white", high = "red", midpoint = 0
+    ) +
+    coord_fixed(xlim = fos_zoom_x, ylim = fos_zoom_y) +
+    theme_void() +
+    theme(
+        legend.position = "bottom", strip.text = element_text(size = 11),
+        panel.spacing = grid::unit(0.6, "lines")
+    ) +
+    labs(
+        title = "Fos scaled local Moran's I: region of interest",
+        fill = "Scaled local Moran's I", caption = "Patch labels show global Delta I."
     )
 ```
 

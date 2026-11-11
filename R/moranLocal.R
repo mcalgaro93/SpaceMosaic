@@ -27,6 +27,10 @@
 #'     neighbor average.}
 #'   \item{`local_i`}{`z * lag_centered / m2`, local Moran's I 
 #'     (this corresponds to the `mlvar = TRUE` convention in `spdep`).}
+#'   \item{`local_i_scaled`}{`(n / S0) * local_i`, local contributions whose
+#'     within-patch mean equals observed global Moran's I. This adjusts for the
+#'     mean number of graph neighbors, but does not remove differences in graph
+#'     geometry or restrict values to the interval from -1 to 1.}
 #'   \item{`lag_scaled`}{`(n / S0) * lag_centered`. A scatterplot with
 #'     `residual_centered` on the x-axis and `lag_scaled` on the y-axis has a
 #'     regression slope through the origin equal to the observed global
@@ -38,8 +42,8 @@
 #' }
 #'
 #' The local statistics satisfy `sum(local_i) / S0 = I_global`. Global Moran's
-#' I can also be recovered as `sum(residual_centered * lag_scaled) /
-#' sum(residual_centered^2)`. 
+#' I also equals `mean(local_i_scaled)` and can be recovered as
+#' `sum(residual_centered * lag_scaled) / sum(residual_centered^2)`.
 #'
 #' A graph is built once per patch and reused across genes. Subset genes and
 #' cells before calling this function to limit the size of its cell-level
@@ -55,7 +59,7 @@
 #'   number), `cell_id` (residual row names, coordinate row names, or input row
 #'   numbers as character strings), `patch`, `gene`, `x`, `y`, `n_cells`,
 #'   `residual`, `residual_centered`, `lag_centered`, `lag_scaled`, `local_i`,
-#'   `quadrant`, `k`, `effective_k`, `complete_graph`,
+#'   `local_i_scaled`, `quadrant`, `k`, `effective_k`, `complete_graph`,
 #'   and `status`.
 #'
 #'   Unassigned cells are retained with status `"unassigned cell"`. Patch-gene
@@ -73,6 +77,7 @@
 #' local <- getMoranLocal(residuals, xy, k = 1, verbose = FALSE)
 #' global <- getMoranGlobal(residuals, xy, k = 1, verbose = FALSE)
 #' with(local, sum(residual_centered * lag_scaled) / sum(residual_centered^2))
+#' mean(local$local_i_scaled)
 #' global$observed
 #' plot(local$residual_centered, local$lag_scaled,
 #'      xlab = "Centered residual", ylab = "Globally scaled spatial lag")
@@ -131,7 +136,7 @@ getMoranLocal <- function(residuals, xy, patch = NULL, k = 10L,
         status <- "constant residuals"
       }
 
-      z <- lag_centered <- lag_scaled <- local_i <- rep(NA_real_, n_cells)
+      z <- lag_centered <- lag_scaled <- local_i <- local_i_scaled <- rep(NA_real_, n_cells)
       quadrant <- rep(NA_character_, n_cells)
       if (status == "ok") {
         prepared <- .prepareMoran(values, W, s0 = s0)
@@ -140,6 +145,7 @@ getMoranLocal <- function(residuals, xy, patch = NULL, k = 10L,
         lag_centered <- as.numeric(W %*% z)
         lag_scaled <- (n_cells / s0) * lag_centered
         local_i <- z * lag_centered / m2
+        local_i_scaled <- (n_cells / s0) * local_i
         quadrant[z > 0 & lag_centered > 0] <- "High-High"
         quadrant[z < 0 & lag_centered < 0] <- "Low-Low"
         quadrant[z > 0 & lag_centered < 0] <- "High-Low"
@@ -153,7 +159,7 @@ getMoranLocal <- function(residuals, xy, patch = NULL, k = 10L,
         x = xy[cell_index, 1], y = xy[cell_index, 2],
         n_cells = if (unassigned) NA_integer_ else n_cells,
         residual = values, residual_centered = z, lag_centered = lag_centered,
-        lag_scaled = lag_scaled, local_i = local_i,
+        lag_scaled = lag_scaled, local_i = local_i, local_i_scaled = local_i_scaled,
         quadrant = quadrant,
         k = k, effective_k = effective_k, complete_graph = complete_graph,
         status = status, stringsAsFactors = FALSE
