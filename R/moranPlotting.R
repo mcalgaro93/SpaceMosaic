@@ -1,14 +1,16 @@
 #' Plot cell-level Moran diagnostics
 #'
 #' Create residual maps, local Moran maps, quadrant maps and Moran scatterplots from
-#' [getMoranLocal()] results for one complete gene-patch combination. These
+#' [getMoranLocal()] results for one gene. Spatial maps accept one or more
+#' complete patches; `plotMoranScatter()` requires a single complete patch. These
 #' functions do not rebuild the spatial graph or recalculate local statistics.
 #' Each returns a `ggplot` object that can be extended with layers, scales,
 #' labels and themes. The optional package `ggplot2` is required only when
 #' plotting.
 #'
 #' @param data Data frame returned by [getMoranLocal()], subset to one gene and
-#'   one complete patch. All rows must have status `"ok"`. Do not filter out
+#'   one or more complete patches. `plotMoranScatter()` requires a single patch.
+#'   All rows must have status `"ok"`. Do not filter out
 #'   individual cells: their lag values refer to the complete original patch.
 #' @param standardize Logical; divide centered residuals by
 #'   `sqrt(mean(residual_centered^2))` for map colors or scatterplot coordinates
@@ -25,7 +27,7 @@
 #' @param background_alpha Numeric background point opacity between zero and
 #'   one, independent of `alpha`. Default 0.3.
 #' @param polygons Optional output of [getPatchPolys()], with columns `x`, `y`
-#'   and `patch`. Only vertices matching the selected patch are drawn.
+#'   and `patch`. Only vertices matching the selected patches are drawn.
 #' @param aspect Spatial map aspect ratio: `"fixed"` (default) preserves equal
 #'   distances on both axes; `"free"` allows the panel to fill the available
 #'   space, potentially stretching the spatial geometry.
@@ -35,6 +37,7 @@
 #' centered at zero. With `standardize = TRUE`, only the plotting variable is
 #' rescaled; local Moran statistics and quadrants are unchanged. Plot data
 #' retain the input columns and include the additional column `residual_plot`.
+#' Standardization is performed separately within each patch.
 #'
 #' `plotMoranLocal()` maps the unmodified `local_i` values by default, with a diverging
 #' fill scale centered at zero and symmetric limits. Positive values indicate
@@ -51,7 +54,11 @@
 #' in graph geometry, and displayed values can still exceed the interval from
 #' -1 to 1. Plot data retain the input columns and include `local_i_plot`,
 #' the displayed values; input local statistics and quadrants are unchanged.
-#' Use common fill limits when comparing maps across genes or patches.
+#' For multiple patches, standardization is performed separately within each
+#' patch, so each patch's mean displayed value equals its own global Moran's I.
+#' All selected patches share one fill scale and are shown together in their
+#' original spatial coordinates, without adding graph links between patches.
+#' Use common fill limits when comparing separate maps across genes or patches.
 #'
 #' `plotMoranQuadrants()` maps descriptive quadrants with the same palette used
 #' by `plotMoranScatter()`. Cells with a missing quadrant (on a zero axis) are
@@ -70,7 +77,9 @@
 #' `residual_plot` and `lag_plot`, the displayed coordinates. For visual
 #' comparisons, also use common axis limits and panel proportions.
 #'
-#' Spatial maps use a fixed aspect ratio by default; set `aspect = "free"` to
+#' All spatial maps show selected patches together in their original coordinates
+#' with a shared fill scale. Spatial maps use a fixed aspect ratio by default;
+#' set `aspect = "free"` to
 #' allow flexible panel proportions. Both options zoom to the selected cells,
 #' even when a larger background is supplied. All four plots use point fill,
 #' leaving point color available for borders. Replace the fill scale to customize the
@@ -106,7 +115,8 @@ plotMoranResiduals <- function(data, standardize = FALSE, size = 1, alpha = 1,
   }
   data$residual_plot <- data$residual_centered
   if (standardize) {
-    data$residual_plot <- data$residual_plot / sqrt(mean(data$residual_plot^2))
+    m2 <- stats::ave(data$residual_centered^2, as.character(data$patch), FUN = mean)
+    data$residual_plot <- data$residual_plot / sqrt(m2)
   }
   limit <- max(abs(data$residual_plot))
 
@@ -139,7 +149,7 @@ plotMoranLocal <- function(data, standardize = FALSE, size = 1, alpha = 1,
   data <- .prepareMoranPlotData(data, columns, size, alpha)
   data$local_i_plot <- data$local_i
   if (standardize) {
-    m2 <- mean(data$residual_centered^2)
+    m2 <- stats::ave(data$residual_centered^2, as.character(data$patch), FUN = mean)
     data$local_i_plot <- data$residual_centered * data$lag_scaled / m2
   }
   limit <- max(abs(data$local_i_plot))
@@ -190,6 +200,9 @@ plotMoranQuadrants <- function(data, size = 1, alpha = 1,
 #' @export
 plotMoranScatter <- function(data, standardize = FALSE, size = 1, alpha = 0.7) {
   data <- .prepareMoranPlotData(data, c("lag_scaled", "quadrant"), size, alpha)
+  if (length(unique(data$patch)) != 1L) {
+    stop("plotMoranScatter() requires one assigned patch.")
+  }
   if (!is.logical(standardize) || length(standardize) != 1L || is.na(standardize)) {
     stop("standardize must be TRUE or FALSE.")
   }
@@ -243,14 +256,18 @@ plotMoranScatter <- function(data, standardize = FALSE, size = 1, alpha = 0.7) {
     stop("Missing columns in data: ", paste(missing, collapse = ", "), ".")
   }
   if (anyNA(data$patch) || anyNA(data$gene) ||
-      length(unique(data$patch)) != 1L || length(unique(data$gene)) != 1L) {
-    stop("data must contain exactly one gene and one assigned patch.")
+      length(unique(data$gene)) != 1L) {
+    stop("data must contain exactly one gene and one or more assigned patches.")
   }
   if (anyNA(data$status) || any(data$status != "ok")) {
     stop("All rows must have status 'ok'; this gene-patch combination cannot be plotted.")
   }
-  if (anyNA(data$n_cells) || any(data$n_cells != nrow(data)) ||
-      nrow(data) < 3L || anyNA(data$cell_index) || anyDuplicated(data$cell_index)) {
+  patch_rows <- split(seq_len(nrow(data)), as.character(data$patch))
+  incomplete <- any(vapply(patch_rows, function(rows) {
+    length(rows) < 3L || anyNA(data$n_cells[rows]) ||
+      any(data$n_cells[rows] != length(rows))
+  }, logical(1)))
+  if (incomplete || anyNA(data$cell_index) || anyDuplicated(data$cell_index)) {
     stop("data must contain every cell exactly once for the complete selected patch.")
   }
   if ("k" %in% names(data) && (anyNA(data$k) || length(unique(data$k)) != 1L)) {
@@ -262,7 +279,9 @@ plotMoranScatter <- function(data, standardize = FALSE, size = 1, alpha = 0.7) {
       stop("Column '", column, "' must contain finite numeric values.")
     }
   }
-  if (sum(data$residual_centered^2) == 0) {
+  if (any(vapply(patch_rows, function(rows) {
+    sum(data$residual_centered[rows]^2) == 0
+  }, logical(1)))) {
     stop("Centered residuals must have positive variation.")
   }
   if ("quadrant" %in% columns &&
@@ -302,7 +321,7 @@ plotMoranScatter <- function(data, standardize = FALSE, size = 1, alpha = 0.7) {
     polygons <- .prepareMoranMapCoordinates(polygons, "polygons")
     if (!"patch" %in% names(polygons)) stop("polygons must contain a 'patch' column.")
     polygons <- polygons[!is.na(polygons$patch) &
-                           as.character(polygons$patch) == as.character(data$patch[1]), , drop = FALSE]
+                           as.character(polygons$patch) %in% as.character(data$patch), , drop = FALSE]
     if (!nrow(polygons)) stop("polygons contains no vertices for the selected patch.")
     plot <- plot + ggplot2::geom_polygon(
       data = polygons, ggplot2::aes(group = !!as.name("patch")),

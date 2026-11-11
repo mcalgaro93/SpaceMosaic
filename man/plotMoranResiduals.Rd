@@ -46,7 +46,8 @@ plotMoranScatter(data, standardize = FALSE, size = 1, alpha = 0.7)
 }
 \arguments{
 \item{data}{Data frame returned by \code{\link[=getMoranLocal]{getMoranLocal()}}, subset to one gene and
-one complete patch. All rows must have status \code{"ok"}. Do not filter out
+one or more complete patches. \code{plotMoranScatter()} requires a single patch.
+All rows must have status \code{"ok"}. Do not filter out
 individual cells: their lag values refer to the complete original patch.}
 
 \item{standardize}{Logical; divide centered residuals by
@@ -64,7 +65,7 @@ Default FALSE.}
 Drawn in grey behind the selected cells. Additional columns are ignored.}
 
 \item{polygons}{Optional output of \code{\link[=getPatchPolys]{getPatchPolys()}}, with columns \code{x}, \code{y}
-and \code{patch}. Only vertices matching the selected patch are drawn.}
+and \code{patch}. Only vertices matching the selected patches are drawn.}
 
 \item{background_size}{Non-negative numeric point size for background
 cells, independent of \code{size}. Default 0.5.}
@@ -81,7 +82,8 @@ A \code{ggplot} object. The input data frame is not modified.
 }
 \description{
 Create residual maps, local Moran maps, quadrant maps and Moran scatterplots from
-\code{\link[=getMoranLocal]{getMoranLocal()}} results for one complete gene-patch combination. These
+\code{\link[=getMoranLocal]{getMoranLocal()}} results for one gene. Spatial maps accept one or more
+complete patches; \code{plotMoranScatter()} requires a single complete patch. These
 functions do not rebuild the spatial graph or recalculate local statistics.
 Each returns a \code{ggplot} object that can be extended with layers, scales,
 labels and themes. The optional package \code{ggplot2} is required only when
@@ -92,6 +94,7 @@ plotting.
 centered at zero. With \code{standardize = TRUE}, only the plotting variable is
 rescaled; local Moran statistics and quadrants are unchanged. Plot data
 retain the input columns and include the additional column \code{residual_plot}.
+Standardization is performed separately within each patch.
 
 \code{plotMoranLocal()} maps the unmodified \code{local_i} values by default, with a diverging
 fill scale centered at zero and symmetric limits. Positive values indicate
@@ -108,7 +111,11 @@ It does not normalize weights separately for each cell or remove differences
 in graph geometry, and displayed values can still exceed the interval from
 -1 to 1. Plot data retain the input columns and include \code{local_i_plot},
 the displayed values; input local statistics and quadrants are unchanged.
-Use common fill limits when comparing maps across genes or patches.
+For multiple patches, standardization is performed separately within each
+patch, so each patch's mean displayed value equals its own global Moran's I.
+All selected patches share one fill scale and are shown together in their
+original spatial coordinates, without adding graph links between patches.
+Use common fill limits when comparing separate maps across genes or patches.
 
 \code{plotMoranQuadrants()} maps descriptive quadrants with the same palette used
 by \code{plotMoranScatter()}. Cells with a missing quadrant (on a zero axis) are
@@ -127,7 +134,9 @@ own standard deviation. Plot data retain the input columns and include
 \code{residual_plot} and \code{lag_plot}, the displayed coordinates. For visual
 comparisons, also use common axis limits and panel proportions.
 
-Spatial maps use a fixed aspect ratio by default; set \code{aspect = "free"} to
+All spatial maps show selected patches together in their original coordinates
+with a shared fill scale. Spatial maps use a fixed aspect ratio by default;
+set \code{aspect = "free"} to
 allow flexible panel proportions. Both options zoom to the selected cells,
 even when a larger background is supplied. All four plots use point fill,
 leaving point color available for borders. Replace the fill scale to customize the
